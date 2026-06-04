@@ -659,7 +659,18 @@ def allow_private_network(response):
     response.headers['Access-Control-Allow-Private-Network'] = 'true'
     return response
 
-PORT = 5008
+def _env_int(name, default):
+    try:
+        return int(str(os.environ.get(name, '')).strip() or default)
+    except Exception:
+        return default
+
+
+def _workers_disabled():
+    return str(os.environ.get('QIHANG_DISABLE_WORKERS', '')).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+PORT = _env_int('QIHANG_PORT', 5008)
 
 
 @app.route('/health', methods=['GET'])
@@ -8276,7 +8287,10 @@ if __name__ == '__main__':
 
     print(f'✅ 报关服务已启动：http://localhost:{PORT}')
     print(f'   按 Ctrl+C 停止服务')
-    _start_sales_sync_worker()
+    if _workers_disabled():
+        print('[WORKERS] workers disabled by QIHANG_DISABLE_WORKERS')
+    else:
+        _start_sales_sync_worker()
     try:
         from waitress import serve
         serve(app, host='0.0.0.0', port=PORT, threads=16,
