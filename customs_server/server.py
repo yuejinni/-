@@ -1231,7 +1231,13 @@ def _save_jdy_config(updates):
     from ai_identify import _load_config, _CONFIG_FILE
     import json
     cfg = _load_config()
+    secret_keys = {
+        'jdy_app_secret', 'jdy_client_secret',
+        'jdy2_app_secret', 'jdy2_client_secret',
+    }
     for k, v in updates.items():
+        if k in secret_keys and isinstance(v, str) and not v.strip():
+            continue
         if v is not None:
             cfg[k] = v
     with open(_CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -1836,10 +1842,12 @@ def jdy_config_set():
             updates[f'jdy{pfx}_client_id']     = data['client_id']
         if data.get('app_key'):
             updates[f'jdy{pfx}_app_key']       = data['app_key']
-        if data.get('app_secret'):
-            updates[f'jdy{pfx}_app_secret']    = data['app_secret']
-        if data.get('client_secret'):
-            updates[f'jdy{pfx}_client_secret'] = data['client_secret']
+        app_secret = str(data.get('app_secret') or '').strip()
+        client_secret = str(data.get('client_secret') or '').strip()
+        if app_secret:
+            updates[f'jdy{pfx}_app_secret']    = app_secret
+        if client_secret:
+            updates[f'jdy{pfx}_client_secret'] = client_secret
         if data.get('db_id'):
             updates[f'jdy{pfx}_db_id']         = data['db_id']
             updates[f'jdy{pfx}_outer_instance_id'] = data['db_id']

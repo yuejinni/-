@@ -5238,20 +5238,16 @@ async function loadSettings() {
       document.getElementById('s-app-key').value   = jdy.app_key    || '';
       document.getElementById('s-db-id').value     = jdy.db_id      || '';
       document.getElementById('s-domain').value    = jdy.domain     || '';
-      if (jdy.app_secret_masked)
-        document.getElementById('s-app-secret').placeholder = jdy.app_secret_masked;
-      if (jdy.client_secret_masked)
-        document.getElementById('s-client-secret').placeholder = jdy.client_secret_masked;
+      setSecretInputState('s-app-secret', jdy.app_secret_masked);
+      setSecretInputState('s-client-secret', jdy.client_secret_masked);
       // 账套 2
       document.getElementById('s2-name').value      = jdy.name2      || '箱包';
       document.getElementById('s2-client-id').value = jdy.client_id2 || '';
       document.getElementById('s2-app-key').value   = jdy.app_key2   || '';
       document.getElementById('s2-db-id').value     = jdy.db_id2     || '';
       document.getElementById('s2-domain').value    = jdy.domain2    || '';
-      if (jdy.app_secret_masked2)
-        document.getElementById('s2-app-secret').placeholder = jdy.app_secret_masked2;
-      if (jdy.client_secret_masked2)
-        document.getElementById('s2-client-secret').placeholder = jdy.client_secret_masked2;
+      setSecretInputState('s2-app-secret', jdy.app_secret_masked2);
+      setSecretInputState('s2-client-secret', jdy.client_secret_masked2);
     }
     if (ai.success) {
       document.getElementById('s-qw-model').value   = ai.qianwen_model  || 'qwen-vl-max';
@@ -5711,6 +5707,19 @@ async function cleanupSalesCache() {
       status.textContent = '清理失败：' + e.message;
       status.style.color = '#d93025';
     }
+  }
+}
+
+function setSecretInputState(id, masked) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = '';
+  if (masked) {
+    el.placeholder = '已配置，不显示明文；留空则不修改';
+    el.title = `已配置：${masked}；留空则不修改`;
+  } else {
+    el.placeholder = '未配置，请输入后保存';
+    el.title = '未配置';
   }
 }
 
