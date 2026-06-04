@@ -1205,13 +1205,14 @@ def ai_identify():
 
 def _runtime_config_candidates():
     candidates = []
-    env_path = os.environ.get('QIHANG_CONFIG_FILE')
+    env_path = os.environ.get('QIHANG_CONFIG_PATH') or os.environ.get('QIHANG_CONFIG_FILE')
     if env_path:
         candidates.append(env_path)
     candidates.extend([
+        os.path.join(os.getcwd(), 'ai_config.json'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ai_config.json'),
         os.path.join(_DATA_BASE, 'ai_config.json'),
         os.path.join(_EXE_DIR, 'ai_config.json'),
-        os.path.join(os.getcwd(), 'ai_config.json'),
     ])
     try:
         from ai_identify import _CONFIG_FILE
@@ -1248,6 +1249,31 @@ def _load_runtime_config():
         except Exception:
             pass
     return {}
+
+
+def _runtime_config_debug():
+    path = _runtime_config_file()
+    cfg = _load_runtime_config()
+    keys = {
+        'jdy_app_key': bool(cfg.get('jdy_app_key')),
+        'jdy_client_id': bool(cfg.get('jdy_client_id')),
+        'jdy_db_id': bool(cfg.get('jdy_db_id')),
+        'jdy_domain': bool(cfg.get('jdy_domain')),
+        'jdy_app_secret': bool(cfg.get('jdy_app_secret')),
+        'jdy_client_secret': bool(cfg.get('jdy_client_secret')),
+        'jdy2_app_key': bool(cfg.get('jdy2_app_key')),
+        'jdy2_client_id': bool(cfg.get('jdy2_client_id')),
+        'jdy2_db_id': bool(cfg.get('jdy2_db_id')),
+        'jdy2_domain': bool(cfg.get('jdy2_domain')),
+        'jdy2_app_secret': bool(cfg.get('jdy2_app_secret')),
+        'jdy2_client_secret': bool(cfg.get('jdy2_client_secret')),
+    }
+    return {
+        'path': path,
+        'exists': os.path.exists(path),
+        'cwd': os.getcwd(),
+        'has_keys': keys,
+    }
 
 
 def _save_runtime_config(cfg):
@@ -1880,6 +1906,7 @@ def jdy_config_get():
             'client_secret_masked2': _mask(cfg2.get('client_secret', '')),
             'has_config2': bool(cfg2.get('client_id') and cfg2.get('app_key')
                                 and cfg2.get('app_secret') and cfg2.get('db_id')),
+            'config_debug': _runtime_config_debug(),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -7609,7 +7636,12 @@ def sales_cache_refresh():
 
 @app.route('/sales-sync-config', methods=['GET'])
 def sales_sync_config_get():
-    return jsonify({'success': True, 'config': _sales_sync_config(), 'state': _sales_sync_state})
+    return jsonify({
+        'success': True,
+        'config': _sales_sync_config(),
+        'state': _sales_sync_state,
+        'config_debug': _runtime_config_debug(),
+    })
 
 
 @app.route('/sales-sync-config', methods=['POST'])
