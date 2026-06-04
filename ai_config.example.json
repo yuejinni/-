@@ -1,0 +1,19 @@
+{
+  "qianwen_api_key": "",
+  "qianwen_model": "qwen-vl-max",
+  "excel_path": "",
+  "jdy_name": "祺航饰品",
+  "jdy_client_id": "",
+  "jdy_app_key": "",
+  "jdy_app_secret": "",
+  "jdy_client_secret": "",
+  "jdy_db_id": "",
+  "jdy_domain": "",
+  "jdy2_name": "祺航箱包",
+  "jdy2_client_id": "",
+  "jdy2_app_key": "",
+  "jdy2_app_secret": "",
+  "jdy2_client_secret": "",
+  "jdy2_db_id": "",
+  "jdy2_domain": ""
+}

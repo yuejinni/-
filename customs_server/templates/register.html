@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JDY 快速建档</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  background: #f0f2f5;
+  color: #333;
+  min-height: 100vh;
+}
+
+/* ── 顶栏 ──────────────────────────────────────────── */
+.topbar {
+  background: #1a2c5b;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  height: 48px;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topbar h1 { font-size: 16px; font-weight: 600; flex: 1; }
+.topbar select {
+  background: rgba(255,255,255,.15);
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.topbar select option { background: #1a2c5b; }
+
+/* ── 滚动内容区 ─────────────────────────────────────── */
+.content { padding: 12px; display: flex; flex-direction: column; gap: 12px; padding-bottom: 32px; }
+
+/* ── 通用卡片 ───────────────────────────────────────── */
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a2c5b;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card-title::before { content: ''; display: inline-block; width: 3px; height: 14px; background: #1a2c5b; border-radius: 2px; }
+
+/* ── 表单 ────────────────────────────────────────────── */
+.form-row { margin-bottom: 10px; }
+.form-row:last-child { margin-bottom: 0; }
+label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+input[type=text], input[type=number], select, textarea {
+  width: 100%;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color .15s;
+}
+input:focus, select:focus, textarea:focus { border-color: #1a2c5b; }
+textarea { resize: vertical; min-height: 60px; }
+.input-hint { font-size: 11px; color: #999; margin-top: 3px; }
+
+/* ── 图片上传区 ─────────────────────────────────────── */
+.photo-area {
+  border: 2px dashed #d9d9d9;
+  border-radius: 10px;
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color .15s;
+  position: relative;
+  overflow: hidden;
+}
+.photo-area:active { border-color: #1a2c5b; }
+.photo-area img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.photo-hint { font-size: 13px; color: #999; }
+.photo-icon { font-size: 36px; }
+#photo-input { display: none; }
+
+/* ── 按钮 ────────────────────────────────────────────── */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s, background .15s;
+}
+.btn:active { opacity: .85; }
+.btn-primary { background: #1a2c5b; color: #fff; }
+.btn-success { background: #52c41a; color: #fff; }
+.btn-outline { background: #fff; color: #1a2c5b; border: 1px solid #1a2c5b; font-weight: 400; }
+.btn-danger  { background: #ff4d4f; color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── AI 结果预览 ────────────────────────────────────── */
+.preview-block {
+  background: #f6f8ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  padding: 12px;
+}
+.preview-code {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a2c5b;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+.preview-row { font-size: 13px; color: #555; margin-bottom: 3px; }
+.preview-row span { color: #1a2c5b; font-weight: 500; }
+
+/* ── 状态提示 ────────────────────────────────────────── */
+.status-bar {
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #096dd9;
+  display: none;
+}
+.status-bar.error { background: #fff1f0; border-color: #ffa39e; color: #cf1322; }
+.status-bar.success { background: #f6ffed; border-color: #b7eb8f; color: #389e0d; }
+
+/* ── 加载动画 ───────────────────────────────────────── */
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 供应商搜索 ─────────────────────────────────────── */
+.sup-search { margin-bottom: 6px; }
+.sup-list { max-height: 200px; overflow-y: auto; border: 1px solid #d9d9d9; border-radius: 6px; display: none; }
+.sup-item {
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+.sup-item:last-child { border-bottom: none; }
+.sup-item:active { background: #f0f4ff; }
+.sup-item .name { font-weight: 500; }
+.sup-item .code { font-size: 11px; color: #999; margin-top: 2px; }
+.sup-selected {
+  padding: 8px 12px;
+  background: #f0f4ff;
+  border-radius: 6px;
+  font-size: 13px;
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+}
+.sup-selected .clear { color: #999; font-size: 18px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>📦 快速建档</h1>
+  <select id="account-sel" onchange="onAccountChange()">
+    <option value="account1">祺航饰品</option>
+    <option value="account2">祺航箱包</option>
+  </select>
+</div>
+
+<div class="content">
+
+  <!-- 状态提示 -->
+  <div class="status-bar" id="status-bar"></div>
+
+  <!-- 1. 供应商 -->
+  <div class="card">
+    <div class="card-title">供应商</div>
+    <div class="sup-search">
+      <input type="text" id="sup-search" placeholder="搜索供应商名称 / 档口号" oninput="filterSuppliers()" autocomplete="off">
+    </div>
+    <div class="sup-list" id="sup-list"></div>
+    <div class="sup-selected" id="sup-selected">
+      <div>
+        <div class="name" id="sup-sel-name"></div>
+        <div class="code" id="sup-sel-code"></div>
+      </div>
+      <span class="clear" onclick="clearSupplier()">✕</span>
+    </div>
+  </div>
+
+  <!-- 2. 分类 -->
+  <div class="card">
+    <div class="card-title">商品分类</div>
+    <div class="form-row">
+      <select id="cat-sel" onchange="onCatChange()">
+        <option value="">— 选择分类 —</option>
+      </select>
+      <div class="input-hint" id="cat-hint"></div>
+    </div>
+  </div>
+
+  <!-- 3. 商品照片 -->
+  <div class="card">
+    <div class="card-title">商品照片</div>
+    <div class="photo-area" id="photo-area" onclick="document.getElementById('photo-input').click()">
+      <div class="photo-icon">📷</div>
+      <div class="photo-hint">点击拍照 / 选择图片</div>
+    </div>
+    <input type="file" id="photo-input" accept="image/*" onchange="onPhotoChange(event)">
+  </div>
+
+  <!-- 4. AI 识别按钮 -->
+  <button class="btn btn-primary" id="btn-preview" onclick="doPreview()" disabled>
+    AI 识别 &amp; 预览编码
+  </button>
+
+  <!-- 5. 编码预览 + 编辑 -->
+  <div class="card" id="preview-card" style="display:none">
+    <div class="card-title">建档预览</div>
+    <div class="preview-block" style="margin-bottom:12px">
+      <div class="preview-code" id="prev-code">—</div>
+      <div class="preview-row">条码: <span id="prev-ean"></span></div>
+      <div class="preview-row">序号: <span id="prev-seq"></span></div>
+    </div>
+    <!-- 可编辑字段 -->
+    <div class="form-row">
+      <label>商品名称 *</label>
+      <input type="text" id="f-name" placeholder="AI 建议，可修改">
+    </div>
+    <div class="form-row">
+      <label>规格 / 颜色</label>
+      <input type="text" id="f-spec" placeholder="如：金色 约20cm">
+    </div>
+    <div class="form-row">
+      <label>单位</label>
+      <input type="text" id="f-unit" value="个" style="width:80px">
+    </div>
+    <div class="form-row">
+      <label>备注</label>
+      <textarea id="f-remark" rows="2" placeholder="选填"></textarea>
+    </div>
+  </div>
+
+  <!-- 6. 确认建档 -->
+  <button class="btn btn-success" id="btn-confirm" onclick="doConfirm()" style="display:none" disabled>
+    ✅ 确认建档，写入精斗云
+  </button>
+
+  <!-- 7. 成功结果 -->
+  <div class="card" id="result-card" style="display:none">
+    <div class="card-title">建档成功 🎉</div>
+    <div class="preview-block">
+      <div class="preview-code" id="res-code"></div>
+      <div class="preview-row">条码: <span id="res-ean"></span></div>
+      <div class="preview-row">商品名: <span id="res-name"></span></div>
+    </div>
+    <div style="height:10px"></div>
+    <button class="btn btn-outline" onclick="resetForm()">继续建下一个</button>
+  </div>
+
+</div>
+
+<script>
+// ── 常量 ──────────────────────────────────────────────────────────────────────
+const BASE = window.location.origin;  // http://host:5009
+let _account    = 'account1';
+let _suppliers  = [];
+let _categories = [];
+let _selSup     = null;   // {id, name, number, tax_no, transformed, categories}
+let _selCat     = null;   // {id, letter, code_2d, path}
+let _photoB64   = null;
+let _previewData = null;  // /preview 返回的数据
+
+// ── 初始化 ────────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadSuppliers(), loadCategories()]);
+}
+
+async function loadSuppliers() {
+  try {
+    const res = await fetch(`${BASE}/register/suppliers?account=${_account}`);
+    const data = await res.json();
+    _suppliers = data.suppliers || [];
+    renderSupList(_suppliers);
+  } catch(e) {
+    showStatus('加载供应商失败: ' + e.message, 'error');
+  }
+}
+
+async function loadCategories() {
+  try {
+    const res = await fetch(`${BASE}/register/categories?account=${_account}`);
+    const data = await res.json();
+    _categories = data.categories || [];
+    const sel = document.getElementById('cat-sel');
+    sel.innerHTML = '<option value="">— 选择分类 —</option>';
+    _categories.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.path + '  [' + c.letter + ']';
+      sel.appendChild(o);
+    });
+  } catch(e) {
+    showStatus('加载分类失败: ' + e.message, 'error');
+  }
+}
+
+function onAccountChange() {
+  _account = document.getElementById('account-sel').value;
+  clearSupplier();
+  init();
+}
+
+// ── 供应商 ────────────────────────────────────────────────────────────────────
+function renderSupList(sups) {
+  const ul = document.getElementById('sup-list');
+  ul.innerHTML = '';
+  sups.slice(0, 80).forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'sup-item';
+    div.innerHTML = `<div class="name">${s.name}</div>
+                     <div class="code">${s.tax_no}  →  ${s.transformed}</div>`;
+    div.onclick = () => selectSupplier(s);
+    ul.appendChild(div);
+  });
+  ul.style.display = sups.length ? 'block' : 'none';
+}
+
+function filterSuppliers() {
+  const q = document.getElementById('sup-search').value.trim().toLowerCase();
+  if (!q) {
+    renderSupList(_suppliers);
+    return;
+  }
+  const matched = _suppliers.filter(s =>
+    s.name.toLowerCase().includes(q) ||
+    s.tax_no.toLowerCase().includes(q) ||
+    s.transformed.toLowerCase().includes(q) ||
+    s.number.toLowerCase().includes(q)
+  );
+  renderSupList(matched);
+}
+
+function selectSupplier(s) {
+  _selSup = s;
+  document.getElementById('sup-search').value = '';
+  document.getElementById('sup-list').style.display = 'none';
+  document.getElementById('sup-sel-name').textContent = s.name;
+  document.getElementById('sup-sel-code').textContent = `${s.tax_no}  →  ${s.transformed}`;
+  document.getElementById('sup-selected').style.display = 'flex';
+  // 根据供应商过滤分类下拉
+  filterCategoriesBySup(s.categories);
+  checkReady();
+}
+
+function clearSupplier() {
+  _selSup = null;
+  document.getElementById('sup-search').value = '';
+  document.getElementById('sup-list').style.display = 'none';
+  document.getElementById('sup-selected').style.display = 'none';
+  // 恢复全部分类
+  loadCategories();
+  checkReady();
+}
+
+function filterCategoriesBySup(catLetters) {
+  if (!catLetters || catLetters.length === 0) return; // 未配置，不过滤
+  const sel = document.getElementById('cat-sel');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— 选择分类 —</option>';
+  _categories
+    .filter(c => catLetters.includes(c.letter))
+    .forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.path + '  [' + c.letter + ']';
+      sel.appendChild(o);
+    });
+  // 尝试还原选中
+  if (cur) sel.value = cur;
+  onCatChange();
+}
+
+// ── 分类 ──────────────────────────────────────────────────────────────────────
+function onCatChange() {
+  const id = document.getElementById('cat-sel').value;
+  _selCat = _categories.find(c => c.id === id) || null;
+  const hint = document.getElementById('cat-hint');
+  hint.textContent = _selCat
+    ? `分类字母: ${_selCat.letter}   code_2d: ${_selCat.code_2d}`
+    : '';
+  checkReady();
+}
+
+// ── 照片 ──────────────────────────────────────────────────────────────────────
+function onPhotoChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    _photoB64 = ev.target.result.split(',')[1];  // 去掉 data:image/...;base64,
+    // 显示缩略图
+    const area = document.getElementById('photo-area');
+    area.innerHTML = `<img src="${ev.target.result}" alt="商品照片">`;
+    checkReady();
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── 就绪检查 ─────────────────────────────────────────────────────────────────
+function checkReady() {
+  const ready = _selSup && _selCat;
+  document.getElementById('btn-preview').disabled = !ready;
+}
+
+// ── AI 识别 & 预览 ────────────────────────────────────────────────────────────
+async function doPreview() {
+  if (!_selSup || !_selCat) return;
+  const btn = document.getElementById('btn-preview');
+  btn.innerHTML = '<span class="spinner"></span>AI 识别中…';
+  btn.disabled = true;
+  hideStatus();
+
+  try {
+    const body = {
+      account:     _account,
+      tax_no:      _selSup.tax_no,
+      cat_id:      _selCat.id,
+      image_b64:   _photoB64 || '',
+    };
+    const res = await fetch(`${BASE}/register/preview`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    _previewData = data;
+
+    // 显示预览
+    document.getElementById('prev-code').textContent = data.product_number;
+    document.getElementById('prev-seq').textContent  = data.seq_next;
+    document.getElementById('prev-ean').textContent  = '（确认后生成）';
+
+    // AI 建议填入可编辑字段
+    const ai = data.ai_result || {};
+    document.getElementById('f-name').value = ai.name || '';
+    document.getElementById('f-spec').value = ai.spec || '';
+
+    document.getElementById('preview-card').style.display = 'block';
+    document.getElementById('btn-confirm').style.display  = 'block';
+    document.getElementById('btn-confirm').disabled = false;
+    document.getElementById('result-card').style.display  = 'none';
+
+    // 滚动到预览区
+    document.getElementById('preview-card').scrollIntoView({behavior: 'smooth', block: 'start'});
+
+  } catch(e) {
+    showStatus('识别失败: ' + e.message, 'error');
+  } finally {
+    btn.innerHTML = 'AI 识别 &amp; 预览编码';
+    btn.disabled = false;
+  }
+}
+
+// ── 确认建档 ──────────────────────────────────────────────────────────────────
+async function doConfirm() {
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) {
+    showStatus('请填写商品名称', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-confirm');
+  btn.innerHTML = '<span class="spinner"></span>写入精斗云…';
+  btn.disabled = true;
+  hideStatus();
+
+  try {
+    const body = {
+      account:      _account,
+      tax_no:       _selSup.tax_no,
+      cat_id:       _selCat.id,
+      product_name: name,
+      spec:         document.getElementById('f-spec').value.trim(),
+      unit:         document.getElementById('f-unit').value.trim(),
+      remark:       document.getElementById('f-remark').value.trim(),
+      supplier_id:  _selSup.id,
+    };
+    const res = await fetch(`${BASE}/register/confirm`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '建档失败');
+
+    // 成功
+    document.getElementById('res-code').textContent = data.product_number;
+    document.getElementById('res-ean').textContent  = data.ean13 || '—';
+    document.getElementById('res-name').textContent = name;
+    document.getElementById('result-card').style.display = 'block';
+    document.getElementById('preview-card').style.display = 'none';
+    document.getElementById('btn-confirm').style.display  = 'none';
+    showStatus(`建档成功！编码: ${data.product_number}  (重试${data.attempts}次)`, 'success');
+    document.getElementById('result-card').scrollIntoView({behavior: 'smooth'});
+
+  } catch(e) {
+    showStatus('建档失败: ' + e.message, 'error');
+    btn.innerHTML = '✅ 确认建档，写入精斗云';
+    btn.disabled = false;
+  }
+}
+
+// ── 重置 ──────────────────────────────────────────────────────────────────────
+function resetForm() {
+  _photoB64 = null;
+  _previewData = null;
+  document.getElementById('photo-area').innerHTML =
+    '<div class="photo-icon">📷</div><div class="photo-hint">点击拍照 / 选择图片</div>';
+  document.getElementById('photo-input').value = '';
+  ['f-name','f-spec','f-remark'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-unit').value = '个';
+  document.getElementById('preview-card').style.display = 'none';
+  document.getElementById('btn-confirm').style.display  = 'none';
+  document.getElementById('result-card').style.display  = 'none';
+  hideStatus();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+// ── 状态提示 ──────────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const bar = document.getElementById('status-bar');
+  bar.textContent = msg;
+  bar.className = 'status-bar ' + (type || '');
+  bar.style.display = 'block';
+}
+function hideStatus() {
+  document.getElementById('status-bar').style.display = 'none';
+}
+
+// ── 启动 ──────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

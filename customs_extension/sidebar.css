@@ -1,0 +1,363 @@
+/* ══════════════════════════════════════════════════
+   报关文件生成器 - 微信风格侧边栏
+   ══════════════════════════════════════════════════ */
+
+#customs-toggle-btn {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2147483646;
+  width: 36px;
+  height: 80px;
+  background: #07c160;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.15);
+  border: none;
+  padding: 0;
+  transition: width 0.2s;
+}
+#customs-toggle-btn:hover { background: #06ad56; width: 40px; }
+#customs-toggle-btn svg { width: 20px; height: 20px; fill: #fff; flex-shrink: 0; }
+
+/* ── 主面板 ── */
+#customs-sidebar {
+  position: fixed;
+  right: -380px;
+  top: 0;
+  width: 360px;
+  height: 100vh;
+  background: #f7f7f7;
+  z-index: 2147483645;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 16px rgba(0,0,0,0.18);
+  transition: right 0.25s cubic-bezier(.4,0,.2,1);
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: #333;
+  border-radius: 12px 0 0 12px;
+  overflow: hidden;
+}
+#customs-sidebar.open { right: 0; }
+
+/* ── 顶部标题栏 ── */
+.cs-header {
+  background: #07c160;
+  color: #fff;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.cs-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cs-header-title svg { width:18px; height:18px; fill:#fff; }
+.cs-close-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.85);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.cs-close-btn:hover { color: #fff; }
+
+/* ── Tab 栏 ── */
+.cs-tabs {
+  display: flex;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.cs-tab {
+  flex: 1;
+  padding: 9px 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: #888;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+.cs-tab.active {
+  color: #07c160;
+  border-bottom-color: #07c160;
+  font-weight: 600;
+}
+.cs-tab-panel {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.cs-tab-panel--active { display: flex; }
+
+/* ── AI 识别面板 ── */
+.cs-ai-section {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cs-ai-result {
+  background: #f0faf4;
+  border: 1px solid #b2dfcc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #333;
+}
+.cs-ai-result .ai-label { color: #888; }
+.cs-ai-result .ai-val   { font-weight: 600; color: #07c160; }
+.cs-ai-result .ai-warn  { color: #e67e22; font-weight: 600; }
+
+.cs-ai-divider {
+  text-align: center;
+  font-size: 11px;
+  color: #bbb;
+  margin: 8px 0 4px;
+}
+.cs-batch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.cs-batch-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: #f5f5f5;
+}
+
+.cs-ai-settings {
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.cs-ai-settings-toggle {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  font-family: inherit;
+}
+.cs-ai-settings-toggle:hover { color: #555; }
+
+/* ── 商品列表区域 ── */
+.cs-items-section {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: #f7f7f7;
+}
+.cs-items-section::-webkit-scrollbar { width: 4px; }
+.cs-items-section::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+.cs-section-label {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 6px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.cs-item-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cs-item-code {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a1a1a;
+  line-height: 1.3;
+  flex: 1;
+  word-break: break-all;
+}
+.cs-item-meta {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+}
+.cs-item-price {
+  font-size: 12px;
+  color: #07c160;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: right;
+}
+.cs-item-warn {
+  font-size: 11px;
+  color: #e67e22;
+}
+.cs-no-data {
+  text-align: center;
+  color: #aaa;
+  padding: 30px 0;
+  font-size: 13px;
+}
+
+/* ── 表单区域 ── */
+.cs-form-section {
+  background: #fff;
+  padding: 12px 14px;
+  flex-shrink: 0;
+  border-top: 1px solid #eee;
+}
+.cs-form-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.cs-form-label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+.cs-form-input {
+  flex: 1;
+  height: 30px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: #333;
+  outline: none;
+  transition: border-color 0.15s;
+  background: #fafafa;
+}
+.cs-form-input:focus { border-color: #07c160; background: #fff; }
+.cs-form-hint { font-size: 11px; color: #aaa; }
+.cs-btn-browse {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f5f5f5;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  padding: 0;
+}
+.cs-btn-browse:hover { background: #e8e8e8; }
+.cs-btn-browse:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── 底部操作区 ── */
+.cs-footer {
+  background: #fff;
+  padding: 10px 14px 14px;
+  flex-shrink: 0;
+  border-top: 1px solid #eee;
+}
+.cs-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #555;
+}
+.cs-total-amount {
+  font-size: 16px;
+  font-weight: 700;
+  color: #07c160;
+}
+.cs-btn-row {
+  display: flex;
+  gap: 8px;
+}
+.cs-btn {
+  flex: 1;
+  height: 38px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.cs-btn:active { transform: scale(0.97); }
+.cs-btn-secondary {
+  background: #f2f2f2;
+  color: #555;
+}
+.cs-btn-secondary:hover { background: #e8e8e8; }
+.cs-btn-primary {
+  background: #07c160;
+  color: #fff;
+}
+.cs-btn-primary:hover { background: #06ad56; }
+.cs-btn-primary:disabled { background: #b2dfcc; cursor: not-allowed; }
+
+/* ── 状态提示 ── */
+.cs-status {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
+  min-height: 16px;
+  padding: 0 4px;
+}
+.cs-status.ok   { color: #07c160; }
+.cs-status.err  { color: #e74c3c; }
+.cs-status.info { color: #888; }
+
+/* ── 加载动画 ── */
+.cs-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #b2dfcc;
+  border-top-color: #07c160;
+  border-radius: 50%;
+  animation: cs-spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 5px;
+}
+@keyframes cs-spin { to { transform: rotate(360deg); } }
+
+/* ── 服务器状态点 ── */
+.cs-server-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+  background: #ccc;
+}
+.cs-server-dot.online  { background: #07c160; }
+.cs-server-dot.offline { background: #e74c3c; }

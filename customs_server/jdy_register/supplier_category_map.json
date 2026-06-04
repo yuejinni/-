@@ -1,0 +1,3754 @@
+{
+  "_说明": [
+    "key = 变换后档口号（根据 taxPayerNo 变换）",
+    "categories: 该供应商做哪些分类（填 letter，如 [\"A\",\"B\"]）",
+    "note: 备注"
+  ],
+  "account1": {
+    "A12080": {
+      "sup_name": "伟浩饰品",
+      "sup_number": "102080",
+      "tax_no": "102080",
+      "transformed": "A12080",
+      "categories": [],
+      "note": ""
+    },
+    "A12020A": {
+      "sup_name": "A凯亿儿童美甲",
+      "sup_number": "102407",
+      "tax_no": "102020A",
+      "transformed": "A12020A",
+      "categories": [],
+      "note": ""
+    },
+    "E228": {
+      "sup_name": "菲梵界饰品",
+      "sup_number": "102551",
+      "tax_no": "5128",
+      "transformed": "E228",
+      "categories": [],
+      "note": ""
+    },
+    "B3870": {
+      "sup_name": "恒通饰品",
+      "sup_number": "102568",
+      "tax_no": "22870",
+      "transformed": "B3870",
+      "categories": [],
+      "note": ""
+    },
+    "A12629": {
+      "sup_name": "摩天轮饰品",
+      "sup_number": "102584",
+      "tax_no": "102629",
+      "transformed": "A12629",
+      "categories": [],
+      "note": ""
+    },
+    "A12072": {
+      "sup_name": "欣可饰品",
+      "sup_number": "102810",
+      "tax_no": "102072",
+      "transformed": "A12072",
+      "categories": [],
+      "note": ""
+    },
+    "A12821": {
+      "sup_name": "蕾茜饰品",
+      "sup_number": "102821",
+      "tax_no": "102821",
+      "transformed": "A12821",
+      "categories": [],
+      "note": ""
+    },
+    "A12824": {
+      "sup_name": "嘉驭饰品",
+      "sup_number": "102824",
+      "tax_no": "102824",
+      "transformed": "A12824",
+      "categories": [],
+      "note": ""
+    },
+    "A13181": {
+      "sup_name": "宝骏饰品",
+      "sup_number": "102829",
+      "tax_no": "103181",
+      "transformed": "A13181",
+      "categories": [],
+      "note": ""
+    },
+    "A12842": {
+      "sup_name": "亿贝莱",
+      "sup_number": "102842",
+      "tax_no": "102842",
+      "transformed": "A12842",
+      "categories": [],
+      "note": ""
+    },
+    "A13090": {
+      "sup_name": "意朵饰品",
+      "sup_number": "103090",
+      "tax_no": "103090",
+      "transformed": "A13090",
+      "categories": [],
+      "note": ""
+    },
+    "A13340": {
+      "sup_name": "栩翊饰品",
+      "sup_number": "103340",
+      "tax_no": "103340",
+      "transformed": "A13340",
+      "categories": [],
+      "note": ""
+    },
+    "A1533": {
+      "sup_name": "永畅",
+      "sup_number": "10533",
+      "tax_no": "10533",
+      "transformed": "A1533",
+      "categories": [],
+      "note": ""
+    },
+    "A1572": {
+      "sup_name": "连益雨伞",
+      "sup_number": "10572",
+      "tax_no": "10572",
+      "transformed": "A1572",
+      "categories": [],
+      "note": ""
+    },
+    "A1575": {
+      "sup_name": "雄亮伞业",
+      "sup_number": "10590",
+      "tax_no": "10575",
+      "transformed": "A1575",
+      "categories": [],
+      "note": ""
+    },
+    "A211": {
+      "sup_name": "广州可绮",
+      "sup_number": "11111",
+      "tax_no": "1111",
+      "transformed": "A211",
+      "categories": [],
+      "note": ""
+    },
+    "A6789": {
+      "sup_name": "胡一刀",
+      "sup_number": "12346",
+      "tax_no": "15789",
+      "transformed": "A6789",
+      "categories": [],
+      "note": ""
+    },
+    "A3965": {
+      "sup_name": "畅利",
+      "sup_number": "12965",
+      "tax_no": "12965",
+      "transformed": "A3965",
+      "categories": [],
+      "note": ""
+    },
+    "A443": {
+      "sup_name": "芳达玩具",
+      "sup_number": "1343",
+      "tax_no": "1343",
+      "transformed": "A443",
+      "categories": [],
+      "note": ""
+    },
+    "A466": {
+      "sup_name": "申翊塑胶制品",
+      "sup_number": "1366",
+      "tax_no": "1366",
+      "transformed": "A466",
+      "categories": [],
+      "note": ""
+    },
+    "A5196": {
+      "sup_name": "欧靓派铂",
+      "sup_number": "14196",
+      "tax_no": "14196",
+      "transformed": "A5196",
+      "categories": [],
+      "note": ""
+    },
+    "A6785": {
+      "sup_name": "女人奇迹",
+      "sup_number": "14198",
+      "tax_no": "15785",
+      "transformed": "A6785",
+      "categories": [],
+      "note": ""
+    },
+    "A524": {
+      "sup_name": "1424电子表",
+      "sup_number": "1424",
+      "tax_no": "1424",
+      "transformed": "A524",
+      "categories": [],
+      "note": ""
+    },
+    "I099": {
+      "sup_name": "黄岩南城旭日",
+      "sup_number": "1425",
+      "tax_no": "9999",
+      "transformed": "I099",
+      "categories": [],
+      "note": ""
+    },
+    "A5601": {
+      "sup_name": "春风剪刀",
+      "sup_number": "14601",
+      "tax_no": "14601",
+      "transformed": "A5601",
+      "categories": [],
+      "note": ""
+    },
+    "A5919": {
+      "sup_name": "笑美人美容美甲",
+      "sup_number": "14919",
+      "tax_no": "14919",
+      "transformed": "A5919",
+      "categories": [],
+      "note": ""
+    },
+    "A6003": {
+      "sup_name": "昕亿日用品",
+      "sup_number": "150030",
+      "tax_no": "15003",
+      "transformed": "A6003",
+      "categories": [],
+      "note": ""
+    },
+    "A6048": {
+      "sup_name": "小熊针线",
+      "sup_number": "15048",
+      "tax_no": "15048",
+      "transformed": "A6048",
+      "categories": [],
+      "note": ""
+    },
+    "A6092": {
+      "sup_name": "依雅婷美妆工具",
+      "sup_number": "15092",
+      "tax_no": "15092",
+      "transformed": "A6092",
+      "categories": [],
+      "note": ""
+    },
+    "A591": {
+      "sup_name": "依依玩具",
+      "sup_number": "1517",
+      "tax_no": "1491",
+      "transformed": "A591",
+      "categories": [],
+      "note": ""
+    },
+    "A624": {
+      "sup_name": "百适乐",
+      "sup_number": "1524",
+      "tax_no": "1524",
+      "transformed": "A624",
+      "categories": [],
+      "note": ""
+    },
+    "A625": {
+      "sup_name": "义乌芳达",
+      "sup_number": "1525",
+      "tax_no": "1525",
+      "transformed": "A625",
+      "categories": [],
+      "note": ""
+    },
+    "A6360": {
+      "sup_name": "达任美工具",
+      "sup_number": "15360",
+      "tax_no": "15360",
+      "transformed": "A6360",
+      "categories": [],
+      "note": ""
+    },
+    "A6439": {
+      "sup_name": "奥芝雅镜梳",
+      "sup_number": "15439",
+      "tax_no": "15439",
+      "transformed": "A6439",
+      "categories": [],
+      "note": ""
+    },
+    "A688": {
+      "sup_name": "精品泳镜",
+      "sup_number": "1588",
+      "tax_no": "1588",
+      "transformed": "A688",
+      "categories": [],
+      "note": ""
+    },
+    "C5978": {
+      "sup_name": "凌盼风扇",
+      "sup_number": "16808",
+      "tax_no": "34978",
+      "transformed": "C5978",
+      "categories": [],
+      "note": ""
+    },
+    "A790": {
+      "sup_name": "广州多多钥匙扣",
+      "sup_number": "1690",
+      "tax_no": "1690",
+      "transformed": "A790",
+      "categories": [],
+      "note": ""
+    },
+    "A9040": {
+      "sup_name": "雅炫",
+      "sup_number": "18040",
+      "tax_no": "18040",
+      "transformed": "A9040",
+      "categories": [],
+      "note": ""
+    },
+    "A9145": {
+      "sup_name": "苏蒂",
+      "sup_number": "18145",
+      "tax_no": "18145",
+      "transformed": "A9145",
+      "categories": [],
+      "note": ""
+    },
+    "A9395": {
+      "sup_name": "三力",
+      "sup_number": "18395",
+      "tax_no": "18395",
+      "transformed": "A9395",
+      "categories": [],
+      "note": ""
+    },
+    "A9785": {
+      "sup_name": "英煌电子",
+      "sup_number": "18785",
+      "tax_no": "18785",
+      "transformed": "A9785",
+      "categories": [],
+      "note": ""
+    },
+    "A0318": {
+      "sup_name": "金凤凰",
+      "sup_number": "19318",
+      "tax_no": "19318",
+      "transformed": "A0318",
+      "categories": [],
+      "note": ""
+    },
+    "B2236": {
+      "sup_name": "鼎力文具",
+      "sup_number": "21236",
+      "tax_no": "21236",
+      "transformed": "B2236",
+      "categories": [],
+      "note": ""
+    },
+    "B2711": {
+      "sup_name": "友芳",
+      "sup_number": "21770",
+      "tax_no": "21711",
+      "transformed": "B2711",
+      "categories": [],
+      "note": ""
+    },
+    "B42690": {
+      "sup_name": "广州卡盟",
+      "sup_number": "232690",
+      "tax_no": "232690",
+      "transformed": "B42690",
+      "categories": [],
+      "note": ""
+    },
+    "B441": {
+      "sup_name": "彩之秀彩妆指甲",
+      "sup_number": "2341",
+      "tax_no": "2341",
+      "transformed": "B441",
+      "categories": [],
+      "note": ""
+    },
+    "B6004": {
+      "sup_name": "达月文具",
+      "sup_number": "23516",
+      "tax_no": "25004",
+      "transformed": "B6004",
+      "categories": [],
+      "note": ""
+    },
+    "B4567": {
+      "sup_name": "计数器",
+      "sup_number": "23567",
+      "tax_no": "23567",
+      "transformed": "B4567",
+      "categories": [],
+      "note": ""
+    },
+    "B6898": {
+      "sup_name": "广州千果",
+      "sup_number": "25898",
+      "tax_no": "25898",
+      "transformed": "B6898",
+      "categories": [],
+      "note": ""
+    },
+    "B7009": {
+      "sup_name": "若琪",
+      "sup_number": "26009",
+      "tax_no": "26009",
+      "transformed": "B7009",
+      "categories": [],
+      "note": ""
+    },
+    "B7010": {
+      "sup_name": "甲天下",
+      "sup_number": "26010",
+      "tax_no": "26010",
+      "transformed": "B7010",
+      "categories": [],
+      "note": ""
+    },
+    "B7015": {
+      "sup_name": "东方秀",
+      "sup_number": "26015",
+      "tax_no": "26015",
+      "transformed": "B7015",
+      "categories": [],
+      "note": ""
+    },
+    "B7036": {
+      "sup_name": "萱萱睫毛",
+      "sup_number": "26036",
+      "tax_no": "26036",
+      "transformed": "B7036",
+      "categories": [],
+      "note": ""
+    },
+    "B7037": {
+      "sup_name": "淳美美甲",
+      "sup_number": "26037",
+      "tax_no": "26037",
+      "transformed": "B7037",
+      "categories": [],
+      "note": ""
+    },
+    "B7043": {
+      "sup_name": "中英雅丽化妆品",
+      "sup_number": "26043",
+      "tax_no": "26043",
+      "transformed": "B7043",
+      "categories": [],
+      "note": ""
+    },
+    "B7073": {
+      "sup_name": "金彩睫毛",
+      "sup_number": "26073",
+      "tax_no": "26073",
+      "transformed": "B7073",
+      "categories": [],
+      "note": ""
+    },
+    "B7368": {
+      "sup_name": "26368韩艳美妆",
+      "sup_number": "26368",
+      "tax_no": "26368",
+      "transformed": "B7368",
+      "categories": [],
+      "note": ""
+    },
+    "B7431": {
+      "sup_name": "楷达发",
+      "sup_number": "26431",
+      "tax_no": "26431",
+      "transformed": "B7431",
+      "categories": [],
+      "note": ""
+    },
+    "B7442": {
+      "sup_name": "佳颖化妆品",
+      "sup_number": "26442",
+      "tax_no": "26442",
+      "transformed": "B7442",
+      "categories": [],
+      "note": ""
+    },
+    "B7535": {
+      "sup_name": "采琳",
+      "sup_number": "26535",
+      "tax_no": "26535",
+      "transformed": "B7535",
+      "categories": [],
+      "note": ""
+    },
+    "B7543": {
+      "sup_name": "睫美雅睫毛",
+      "sup_number": "26543",
+      "tax_no": "26543",
+      "transformed": "B7543",
+      "categories": [],
+      "note": ""
+    },
+    "B7544": {
+      "sup_name": "艾妮美甲饰品",
+      "sup_number": "26544",
+      "tax_no": "26544",
+      "transformed": "B7544",
+      "categories": [],
+      "note": ""
+    },
+    "B7547": {
+      "sup_name": "颜伊假睫毛",
+      "sup_number": "26547",
+      "tax_no": "26547",
+      "transformed": "B7547",
+      "categories": [],
+      "note": ""
+    },
+    "B7556": {
+      "sup_name": "26556黛里美甲片",
+      "sup_number": "26556",
+      "tax_no": "26556",
+      "transformed": "B7556",
+      "categories": [],
+      "note": ""
+    },
+    "B7559": {
+      "sup_name": "思姿恋美甲",
+      "sup_number": "26559",
+      "tax_no": "26559",
+      "transformed": "B7559",
+      "categories": [],
+      "note": ""
+    },
+    "B7566": {
+      "sup_name": "义乌纤烁美甲有限公司",
+      "sup_number": "26566",
+      "tax_no": "26566",
+      "transformed": "B7566",
+      "categories": [],
+      "note": ""
+    },
+    "B7710": {
+      "sup_name": "曼姝化妆品有限公司",
+      "sup_number": "26710",
+      "tax_no": "26710",
+      "transformed": "B7710",
+      "categories": [],
+      "note": ""
+    },
+    "B7713A": {
+      "sup_name": "相宜彩妆",
+      "sup_number": "26713",
+      "tax_no": "26713A",
+      "transformed": "B7713A",
+      "categories": [],
+      "note": ""
+    },
+    "B7882B": {
+      "sup_name": "斯达美容工具",
+      "sup_number": "26882",
+      "tax_no": "26882B",
+      "transformed": "B7882B",
+      "categories": [],
+      "note": ""
+    },
+    "B7934": {
+      "sup_name": "晶眸假睫毛",
+      "sup_number": "26886",
+      "tax_no": "26934",
+      "transformed": "B7934",
+      "categories": [],
+      "note": ""
+    },
+    "B7900": {
+      "sup_name": "星月美妆",
+      "sup_number": "26900",
+      "tax_no": "26900",
+      "transformed": "B7900",
+      "categories": [],
+      "note": ""
+    },
+    "B7909": {
+      "sup_name": "SARA指甲",
+      "sup_number": "26909",
+      "tax_no": "26909",
+      "transformed": "B7909",
+      "categories": [],
+      "note": ""
+    },
+    "B7928": {
+      "sup_name": "DODOLady美甲美睫",
+      "sup_number": "26928",
+      "tax_no": "26928",
+      "transformed": "B7928",
+      "categories": [],
+      "note": ""
+    },
+    "B8025": {
+      "sup_name": "27025德润发梳子",
+      "sup_number": "27025",
+      "tax_no": "27025",
+      "transformed": "B8025",
+      "categories": [],
+      "note": ""
+    },
+    "B8041": {
+      "sup_name": "飞黄日用品有限公司",
+      "sup_number": "27041",
+      "tax_no": "27041",
+      "transformed": "B8041",
+      "categories": [],
+      "note": ""
+    },
+    "B8080": {
+      "sup_name": "商易通日化镜梳",
+      "sup_number": "27080",
+      "tax_no": "27080",
+      "transformed": "B8080",
+      "categories": [],
+      "note": ""
+    },
+    "B8151": {
+      "sup_name": "温州市渊博塑料饰品实业有限公司",
+      "sup_number": "27151",
+      "tax_no": "27151",
+      "transformed": "B8151",
+      "categories": [],
+      "note": ""
+    },
+    "B8184": {
+      "sup_name": "义乌市新杰达镜子",
+      "sup_number": "27184",
+      "tax_no": "27184",
+      "transformed": "B8184",
+      "categories": [],
+      "note": ""
+    },
+    "B8201": {
+      "sup_name": "义乌市日妆塑料工艺饰品",
+      "sup_number": "27201",
+      "tax_no": "27201",
+      "transformed": "B8201",
+      "categories": [],
+      "note": ""
+    },
+    "B8219": {
+      "sup_name": "KISS TOUCH",
+      "sup_number": "27219",
+      "tax_no": "27219",
+      "transformed": "B8219",
+      "categories": [],
+      "note": ""
+    },
+    "B8278": {
+      "sup_name": "新空气工艺美甲",
+      "sup_number": "27278",
+      "tax_no": "27278",
+      "transformed": "B8278",
+      "categories": [],
+      "note": ""
+    },
+    "B7013": {
+      "sup_name": "现26013风尚美甲",
+      "sup_number": "27284",
+      "tax_no": "26013",
+      "transformed": "B7013",
+      "categories": [],
+      "note": ""
+    },
+    "B8288": {
+      "sup_name": "海英化妆品",
+      "sup_number": "27288",
+      "tax_no": "27288",
+      "transformed": "B8288",
+      "categories": [],
+      "note": ""
+    },
+    "B8323": {
+      "sup_name": "汕头市百万宝莲化妆品有限公司",
+      "sup_number": "27323",
+      "tax_no": "27323",
+      "transformed": "B8323",
+      "categories": [],
+      "note": ""
+    },
+    "B9619": {
+      "sup_name": "义乌诗美逸化妆用具有限公司",
+      "sup_number": "28619",
+      "tax_no": "28619",
+      "transformed": "B9619",
+      "categories": [],
+      "note": ""
+    },
+    "B9705": {
+      "sup_name": "平度市长乐义娟假睫毛",
+      "sup_number": "28705",
+      "tax_no": "28705",
+      "transformed": "B9705",
+      "categories": [],
+      "note": ""
+    },
+    "B9968": {
+      "sup_name": "金华假发",
+      "sup_number": "28968",
+      "tax_no": "28968",
+      "transformed": "B9968",
+      "categories": [],
+      "note": ""
+    },
+    "B0551": {
+      "sup_name": "瑞孚集团",
+      "sup_number": "29551",
+      "tax_no": "29551",
+      "transformed": "B0551",
+      "categories": [],
+      "note": ""
+    },
+    "C238": {
+      "sup_name": "磊磊饰品",
+      "sup_number": "3138",
+      "tax_no": "3138",
+      "transformed": "C238",
+      "categories": [],
+      "note": ""
+    },
+    "C252": {
+      "sup_name": "爱尚假发 / 名媛饰品",
+      "sup_number": "3152",
+      "tax_no": "3152",
+      "transformed": "C252",
+      "categories": [],
+      "note": ""
+    },
+    "C253": {
+      "sup_name": "亮杰饰品",
+      "sup_number": "3153",
+      "tax_no": "3153",
+      "transformed": "C253",
+      "categories": [],
+      "note": ""
+    },
+    "C313": {
+      "sup_name": "天赞假发",
+      "sup_number": "3187",
+      "tax_no": "3213",
+      "transformed": "C313",
+      "categories": [],
+      "note": ""
+    },
+    "C316": {
+      "sup_name": "兴隆饰品",
+      "sup_number": "3216",
+      "tax_no": "3216",
+      "transformed": "C316",
+      "categories": [],
+      "note": ""
+    },
+    "C985": {
+      "sup_name": "现3885卓拉饰品",
+      "sup_number": "3229",
+      "tax_no": "3885",
+      "transformed": "C985",
+      "categories": [],
+      "note": ""
+    },
+    "C351A": {
+      "sup_name": "奥靓饰品",
+      "sup_number": "3251",
+      "tax_no": "3251A",
+      "transformed": "C351A",
+      "categories": [],
+      "note": ""
+    },
+    "C366B": {
+      "sup_name": "点秀饰品",
+      "sup_number": "3266",
+      "tax_no": "3266B",
+      "transformed": "C366B",
+      "categories": [],
+      "note": ""
+    },
+    "D143": {
+      "sup_name": "现4043高明饰品",
+      "sup_number": "3277",
+      "tax_no": "4043",
+      "transformed": "D143",
+      "categories": [],
+      "note": ""
+    },
+    "C400B": {
+      "sup_name": "正典韩饰",
+      "sup_number": "3300",
+      "tax_no": "3300B",
+      "transformed": "C400B",
+      "categories": [],
+      "note": ""
+    },
+    "C432": {
+      "sup_name": "月光聚美工艺",
+      "sup_number": "3332",
+      "tax_no": "3332",
+      "transformed": "C432",
+      "categories": [],
+      "note": ""
+    },
+    "C502B": {
+      "sup_name": "浩晗饰品",
+      "sup_number": "3402",
+      "tax_no": "3402B",
+      "transformed": "C502B",
+      "categories": [],
+      "note": ""
+    },
+    "C505B": {
+      "sup_name": "现3405金玲饰品",
+      "sup_number": "3405",
+      "tax_no": "3405B",
+      "transformed": "C505B",
+      "categories": [],
+      "note": ""
+    },
+    "C512": {
+      "sup_name": "艾酷比",
+      "sup_number": "3412",
+      "tax_no": "3412",
+      "transformed": "C512",
+      "categories": [],
+      "note": ""
+    },
+    "C5137": {
+      "sup_name": "干发帽(纳兰朵朵)",
+      "sup_number": "34137",
+      "tax_no": "34137",
+      "transformed": "C5137",
+      "categories": [],
+      "note": ""
+    },
+    "C5306": {
+      "sup_name": "煌华湿巾",
+      "sup_number": "34306",
+      "tax_no": "34306",
+      "transformed": "C5306",
+      "categories": [],
+      "note": ""
+    },
+    "C548B": {
+      "sup_name": "若含饰品",
+      "sup_number": "3448",
+      "tax_no": "3448B",
+      "transformed": "C548B",
+      "categories": [],
+      "note": ""
+    },
+    "C589": {
+      "sup_name": "慧雅饰品",
+      "sup_number": "3489",
+      "tax_no": "3489",
+      "transformed": "C589",
+      "categories": [],
+      "note": ""
+    },
+    "C5961A": {
+      "sup_name": "YY百货",
+      "sup_number": "34961",
+      "tax_no": "34961A",
+      "transformed": "C5961A",
+      "categories": [],
+      "note": ""
+    },
+    "C5974": {
+      "sup_name": "义乌鑫汇日用品有限公司",
+      "sup_number": "34974",
+      "tax_no": "34974",
+      "transformed": "C5974",
+      "categories": [],
+      "note": ""
+    },
+    "C5978A": {
+      "sup_name": "凌盼",
+      "sup_number": "34978",
+      "tax_no": "34978A",
+      "transformed": "C5978A",
+      "categories": [],
+      "note": ""
+    },
+    "C623": {
+      "sup_name": "百美饰品",
+      "sup_number": "3523",
+      "tax_no": "3523",
+      "transformed": "C623",
+      "categories": [],
+      "note": ""
+    },
+    "C6156": {
+      "sup_name": "现35156扬淇日用品",
+      "sup_number": "35238",
+      "tax_no": "35156",
+      "transformed": "C6156",
+      "categories": [],
+      "note": ""
+    },
+    "C654A": {
+      "sup_name": "宇宁饰品",
+      "sup_number": "3554",
+      "tax_no": "3554A",
+      "transformed": "C654A",
+      "categories": [],
+      "note": ""
+    },
+    "C670": {
+      "sup_name": "雪琳饰品",
+      "sup_number": "3570",
+      "tax_no": "3570",
+      "transformed": "C670",
+      "categories": [],
+      "note": ""
+    },
+    "C6702": {
+      "sup_name": "衢州市洁妮肤日用品有限公司",
+      "sup_number": "35702",
+      "tax_no": "35702",
+      "transformed": "C6702",
+      "categories": [],
+      "note": ""
+    },
+    "C677": {
+      "sup_name": "3577头饰",
+      "sup_number": "3577",
+      "tax_no": "3577",
+      "transformed": "C677",
+      "categories": [],
+      "note": ""
+    },
+    "C683": {
+      "sup_name": "花影缤纷",
+      "sup_number": "3583",
+      "tax_no": "3583",
+      "transformed": "C683",
+      "categories": [],
+      "note": ""
+    },
+    "C687": {
+      "sup_name": "天意饰品",
+      "sup_number": "3587",
+      "tax_no": "3587",
+      "transformed": "C687",
+      "categories": [],
+      "note": ""
+    },
+    "C710": {
+      "sup_name": "云云饰品",
+      "sup_number": "3619",
+      "tax_no": "3610",
+      "transformed": "C710",
+      "categories": [],
+      "note": ""
+    },
+    "C750": {
+      "sup_name": "红丽饰品",
+      "sup_number": "3650",
+      "tax_no": "3650",
+      "transformed": "C750",
+      "categories": [],
+      "note": ""
+    },
+    "C776": {
+      "sup_name": "现3676虹名头饰抓夹",
+      "sup_number": "3677",
+      "tax_no": "3676",
+      "transformed": "C776",
+      "categories": [],
+      "note": ""
+    },
+    "C390": {
+      "sup_name": "朗丽饰品",
+      "sup_number": "3678",
+      "tax_no": "3290",
+      "transformed": "C390",
+      "categories": [],
+      "note": ""
+    },
+    "D208A": {
+      "sup_name": "小金玲饰品",
+      "sup_number": "3680",
+      "tax_no": "4108A",
+      "transformed": "D208A",
+      "categories": [],
+      "note": ""
+    },
+    "D652B": {
+      "sup_name": "俊瑜饰品",
+      "sup_number": "3684",
+      "tax_no": "4552B",
+      "transformed": "D652B",
+      "categories": [],
+      "note": ""
+    },
+    "B7082": {
+      "sup_name": "楼英梳业",
+      "sup_number": "3685",
+      "tax_no": "26082",
+      "transformed": "B7082",
+      "categories": [],
+      "note": ""
+    },
+    "C798": {
+      "sup_name": "义乌市惠鑫饰品",
+      "sup_number": "3698",
+      "tax_no": "3698",
+      "transformed": "C798",
+      "categories": [],
+      "note": ""
+    },
+    "C8118": {
+      "sup_name": "艾瑞丝伞业",
+      "sup_number": "37118",
+      "tax_no": "37118",
+      "transformed": "C8118",
+      "categories": [],
+      "note": ""
+    },
+    "C824": {
+      "sup_name": "标特富饰品",
+      "sup_number": "3724",
+      "tax_no": "3724",
+      "transformed": "C824",
+      "categories": [],
+      "note": ""
+    },
+    "C845": {
+      "sup_name": "群英饰品",
+      "sup_number": "3745",
+      "tax_no": "3745",
+      "transformed": "C845",
+      "categories": [],
+      "note": ""
+    },
+    "C849": {
+      "sup_name": "达芬豪饰品",
+      "sup_number": "3749",
+      "tax_no": "3749",
+      "transformed": "C849",
+      "categories": [],
+      "note": ""
+    },
+    "C8980B": {
+      "sup_name": "福华耳罩",
+      "sup_number": "38082",
+      "tax_no": "37980B",
+      "transformed": "C8980B",
+      "categories": [],
+      "note": ""
+    },
+    "C915": {
+      "sup_name": "超平饰品",
+      "sup_number": "3815",
+      "tax_no": "3815",
+      "transformed": "C915",
+      "categories": [],
+      "note": ""
+    },
+    "D723": {
+      "sup_name": "现4623丽想胸花",
+      "sup_number": "3866",
+      "tax_no": "4623",
+      "transformed": "D723",
+      "categories": [],
+      "note": ""
+    },
+    "D521": {
+      "sup_name": "现4421天风饰品",
+      "sup_number": "3892",
+      "tax_no": "4421",
+      "transformed": "D521",
+      "categories": [],
+      "note": ""
+    },
+    "C005": {
+      "sup_name": "宸辉皮筋",
+      "sup_number": "3905",
+      "tax_no": "3905",
+      "transformed": "C005",
+      "categories": [],
+      "note": ""
+    },
+    "D101": {
+      "sup_name": "现4001奥兰饰品",
+      "sup_number": "3972",
+      "tax_no": "4001",
+      "transformed": "D101",
+      "categories": [],
+      "note": ""
+    },
+    "D1072": {
+      "sup_name": "龙游旅行瓶",
+      "sup_number": "40072",
+      "tax_no": "40072",
+      "transformed": "D1072",
+      "categories": [],
+      "note": ""
+    },
+    "D1414": {
+      "sup_name": "兰贵人针情线业",
+      "sup_number": "40414",
+      "tax_no": "40414",
+      "transformed": "D1414",
+      "categories": [],
+      "note": ""
+    },
+    "D158": {
+      "sup_name": "花蚊子饰品",
+      "sup_number": "4058",
+      "tax_no": "4058",
+      "transformed": "D158",
+      "categories": [],
+      "note": ""
+    },
+    "D239": {
+      "sup_name": "卓芬妮",
+      "sup_number": "4139",
+      "tax_no": "4139",
+      "transformed": "D239",
+      "categories": [],
+      "note": ""
+    },
+    "D260": {
+      "sup_name": "正儿瑾儿",
+      "sup_number": "4160",
+      "tax_no": "4160",
+      "transformed": "D260",
+      "categories": [],
+      "note": ""
+    },
+    "D3064": {
+      "sup_name": "艺霏毛线",
+      "sup_number": "42064",
+      "tax_no": "42064",
+      "transformed": "D3064",
+      "categories": [],
+      "note": ""
+    },
+    "D308": {
+      "sup_name": "洋佳腰带",
+      "sup_number": "4208",
+      "tax_no": "4208",
+      "transformed": "D308",
+      "categories": [],
+      "note": ""
+    },
+    "D3895": {
+      "sup_name": "星璨牙线",
+      "sup_number": "42895",
+      "tax_no": "42895",
+      "transformed": "D3895",
+      "categories": [],
+      "note": ""
+    },
+    "D40608": {
+      "sup_name": "美甸园指甲油",
+      "sup_number": "430608",
+      "tax_no": "430608",
+      "transformed": "D40608",
+      "categories": [],
+      "note": ""
+    },
+    "D408": {
+      "sup_name": "凡朵饰品",
+      "sup_number": "4308",
+      "tax_no": "4308",
+      "transformed": "D408",
+      "categories": [],
+      "note": ""
+    },
+    "D431": {
+      "sup_name": "萍萍饰品",
+      "sup_number": "4331",
+      "tax_no": "4331",
+      "transformed": "D431",
+      "categories": [],
+      "note": ""
+    },
+    "I1433": {
+      "sup_name": "4447佳誉",
+      "sup_number": "4344",
+      "tax_no": "90433",
+      "transformed": "I1433",
+      "categories": [],
+      "note": ""
+    },
+    "D556": {
+      "sup_name": "卓和饰品 / 圆鑫时尚挂件",
+      "sup_number": "4456",
+      "tax_no": "4456",
+      "transformed": "D556",
+      "categories": [],
+      "note": ""
+    },
+    "B5593": {
+      "sup_name": "湖北木凡饰品（湖北BB夹）",
+      "sup_number": "4457",
+      "tax_no": "24593",
+      "transformed": "B5593",
+      "categories": [],
+      "note": ""
+    },
+    "E592": {
+      "sup_name": "韵彩珠饰",
+      "sup_number": "4459",
+      "tax_no": "5492",
+      "transformed": "E592",
+      "categories": [],
+      "note": ""
+    },
+    "C046B": {
+      "sup_name": "蕾䒟梳子",
+      "sup_number": "4539",
+      "tax_no": "3946B",
+      "transformed": "C046B",
+      "categories": [],
+      "note": ""
+    },
+    "A12580": {
+      "sup_name": "赛雅饰品",
+      "sup_number": "4642",
+      "tax_no": "102580",
+      "transformed": "A12580",
+      "categories": [],
+      "note": ""
+    },
+    "D761": {
+      "sup_name": "远大不锈钢",
+      "sup_number": "4666",
+      "tax_no": "4661",
+      "transformed": "D761",
+      "categories": [],
+      "note": ""
+    },
+    "D045": {
+      "sup_name": "不锈钢",
+      "sup_number": "4667(现4945)",
+      "tax_no": "4945",
+      "transformed": "D045",
+      "categories": [],
+      "note": ""
+    },
+    "D76793": {
+      "sup_name": "广州三盟镜子",
+      "sup_number": "466793",
+      "tax_no": "466793",
+      "transformed": "D76793",
+      "categories": [],
+      "note": ""
+    },
+    "D94670": {
+      "sup_name": "广州玛莉安",
+      "sup_number": "48467",
+      "tax_no": "484670",
+      "transformed": "D94670",
+      "categories": [],
+      "note": ""
+    },
+    "D975": {
+      "sup_name": "佳琪饰品",
+      "sup_number": "4875",
+      "tax_no": "4875",
+      "transformed": "D975",
+      "categories": [],
+      "note": ""
+    },
+    "D979": {
+      "sup_name": "云涛贴纸",
+      "sup_number": "4879",
+      "tax_no": "4879",
+      "transformed": "D979",
+      "categories": [],
+      "note": ""
+    },
+    "D0056": {
+      "sup_name": "宁波美琦",
+      "sup_number": "49056",
+      "tax_no": "49056",
+      "transformed": "D0056",
+      "categories": [],
+      "note": ""
+    },
+    "D375": {
+      "sup_name": "艾米鼻钉",
+      "sup_number": "4918",
+      "tax_no": "4275",
+      "transformed": "D375",
+      "categories": [],
+      "note": ""
+    },
+    "D060": {
+      "sup_name": "美海饰品",
+      "sup_number": "4960",
+      "tax_no": "4960",
+      "transformed": "D060",
+      "categories": [],
+      "note": ""
+    },
+    "D092": {
+      "sup_name": "好运来饰品",
+      "sup_number": "4966",
+      "tax_no": "4992",
+      "transformed": "D092",
+      "categories": [],
+      "note": ""
+    },
+    "D081B": {
+      "sup_name": "新玥饰品",
+      "sup_number": "4981",
+      "tax_no": "4981B",
+      "transformed": "D081B",
+      "categories": [],
+      "note": ""
+    },
+    "E104": {
+      "sup_name": "美时美刻（网管头扣）",
+      "sup_number": "5004",
+      "tax_no": "5004",
+      "transformed": "E104",
+      "categories": [],
+      "note": ""
+    },
+    "E1356": {
+      "sup_name": "兰州锦如头网",
+      "sup_number": "50356",
+      "tax_no": "50356",
+      "transformed": "E1356",
+      "categories": [],
+      "note": ""
+    },
+    "E043": {
+      "sup_name": "恋恋轩",
+      "sup_number": "5134",
+      "tax_no": "5943",
+      "transformed": "E043",
+      "categories": [],
+      "note": ""
+    },
+    "E287": {
+      "sup_name": "迪菲尔饰品",
+      "sup_number": "5187",
+      "tax_no": "5187",
+      "transformed": "E287",
+      "categories": [],
+      "note": ""
+    },
+    "C835": {
+      "sup_name": "莱盾饰品（黑白夹）",
+      "sup_number": "5188",
+      "tax_no": "3735",
+      "transformed": "C835",
+      "categories": [],
+      "note": ""
+    },
+    "D757": {
+      "sup_name": "美美饰品",
+      "sup_number": "5222",
+      "tax_no": "4657",
+      "transformed": "D757",
+      "categories": [],
+      "note": ""
+    },
+    "E328": {
+      "sup_name": "E328高歌饰品",
+      "sup_number": "5228",
+      "tax_no": "5228",
+      "transformed": "E328",
+      "categories": [],
+      "note": ""
+    },
+    "E334": {
+      "sup_name": "蓝迪饰品",
+      "sup_number": "5234",
+      "tax_no": "5234",
+      "transformed": "E334",
+      "categories": [],
+      "note": ""
+    },
+    "E3516": {
+      "sup_name": "金牛牛",
+      "sup_number": "52516",
+      "tax_no": "52516",
+      "transformed": "E3516",
+      "categories": [],
+      "note": ""
+    },
+    "E4888": {
+      "sup_name": "创格饰品",
+      "sup_number": "53888",
+      "tax_no": "53888",
+      "transformed": "E4888",
+      "categories": [],
+      "note": ""
+    },
+    "E6188": {
+      "sup_name": "莆田计数器",
+      "sup_number": "55188",
+      "tax_no": "55188",
+      "transformed": "E6188",
+      "categories": [],
+      "note": ""
+    },
+    "D436": {
+      "sup_name": "行盛饰品",
+      "sup_number": "5555",
+      "tax_no": "4336",
+      "transformed": "D436",
+      "categories": [],
+      "note": ""
+    },
+    "62199A": {
+      "sup_name": "海珠饰品",
+      "sup_number": "5613",
+      "tax_no": "F1199A",
+      "transformed": "62199A",
+      "categories": [],
+      "note": ""
+    },
+    "E7327": {
+      "sup_name": "陈小兴绒布圈",
+      "sup_number": "56327",
+      "tax_no": "56327",
+      "transformed": "E7327",
+      "categories": [],
+      "note": ""
+    },
+    "E7605": {
+      "sup_name": "56605汤溪睫毛",
+      "sup_number": "56605",
+      "tax_no": "56605",
+      "transformed": "E7605",
+      "categories": [],
+      "note": ""
+    },
+    "E882": {
+      "sup_name": "莆田爱泰电子表",
+      "sup_number": "5782",
+      "tax_no": "5782",
+      "transformed": "E882",
+      "categories": [],
+      "note": ""
+    },
+    "A4978": {
+      "sup_name": "华旭针线（58737蔡英义针线）",
+      "sup_number": "58737",
+      "tax_no": "13978",
+      "transformed": "A4978",
+      "categories": [],
+      "note": ""
+    },
+    "E9800": {
+      "sup_name": "广州义诺染发瓶",
+      "sup_number": "58800",
+      "tax_no": "58800",
+      "transformed": "E9800",
+      "categories": [],
+      "note": ""
+    },
+    "F39896": {
+      "sup_name": "广州豹纹包装指甲钳",
+      "sup_number": "629896",
+      "tax_no": "629896",
+      "transformed": "F39896",
+      "categories": [],
+      "note": ""
+    },
+    "F5638": {
+      "sup_name": "广州磨脚石Sunday",
+      "sup_number": "64638",
+      "tax_no": "64638",
+      "transformed": "F5638",
+      "categories": [],
+      "note": ""
+    },
+    "F8339": {
+      "sup_name": "广州正宜",
+      "sup_number": "67339",
+      "tax_no": "67339",
+      "transformed": "F8339",
+      "categories": [],
+      "note": ""
+    },
+    "F8596": {
+      "sup_name": "凯圣友美",
+      "sup_number": "67596",
+      "tax_no": "67596",
+      "transformed": "F8596",
+      "categories": [],
+      "note": ""
+    },
+    "F043": {
+      "sup_name": "饰家捕梦网",
+      "sup_number": "6943",
+      "tax_no": "6943",
+      "transformed": "F043",
+      "categories": [],
+      "note": ""
+    },
+    "G2880": {
+      "sup_name": "德泉五金",
+      "sup_number": "71880",
+      "tax_no": "71880",
+      "transformed": "G2880",
+      "categories": [],
+      "note": ""
+    },
+    "G4168": {
+      "sup_name": "卓尔雅",
+      "sup_number": "73168",
+      "tax_no": "73168",
+      "transformed": "G4168",
+      "categories": [],
+      "note": ""
+    },
+    "G821": {
+      "sup_name": "芷霖扇业",
+      "sup_number": "77210",
+      "tax_no": "7721",
+      "transformed": "G821",
+      "categories": [],
+      "note": ""
+    },
+    "G9669": {
+      "sup_name": "天津穿戴甲",
+      "sup_number": "78669",
+      "tax_no": "78669",
+      "transformed": "G9669",
+      "categories": [],
+      "note": ""
+    },
+    "G9900": {
+      "sup_name": "78900桶装一字夹",
+      "sup_number": "78900",
+      "tax_no": "78900",
+      "transformed": "G9900",
+      "categories": [],
+      "note": ""
+    },
+    "H12876": {
+      "sup_name": "宁波格林司",
+      "sup_number": "802876",
+      "tax_no": "802876",
+      "transformed": "H12876",
+      "categories": [],
+      "note": ""
+    },
+    "H1485": {
+      "sup_name": "悠悠一品",
+      "sup_number": "80485",
+      "tax_no": "80485",
+      "transformed": "H1485",
+      "categories": [],
+      "note": ""
+    },
+    "H424": {
+      "sup_name": "琼雅",
+      "sup_number": "8324",
+      "tax_no": "8324",
+      "transformed": "H424",
+      "categories": [],
+      "note": ""
+    },
+    "H427": {
+      "sup_name": "8327钢丝头摩",
+      "sup_number": "8327",
+      "tax_no": "8327",
+      "transformed": "H427",
+      "categories": [],
+      "note": ""
+    },
+    "H6151": {
+      "sup_name": "金华艾甲",
+      "sup_number": "85151",
+      "tax_no": "85151",
+      "transformed": "H6151",
+      "categories": [],
+      "note": ""
+    },
+    "H7364": {
+      "sup_name": "广州丽娜",
+      "sup_number": "86364",
+      "tax_no": "86364",
+      "transformed": "H7364",
+      "categories": [],
+      "note": ""
+    },
+    "H7593": {
+      "sup_name": "孝顺佳缘",
+      "sup_number": "86592",
+      "tax_no": "86593",
+      "transformed": "H7593",
+      "categories": [],
+      "note": ""
+    },
+    "H9844": {
+      "sup_name": "名韩润唇膏",
+      "sup_number": "88844",
+      "tax_no": "88844",
+      "transformed": "H9844",
+      "categories": [],
+      "note": ""
+    },
+    "H9868": {
+      "sup_name": "广州乐莎",
+      "sup_number": "88868",
+      "tax_no": "88868",
+      "transformed": "H9868",
+      "categories": [],
+      "note": ""
+    },
+    "I3927": {
+      "sup_name": "可伶可俐",
+      "sup_number": "92927",
+      "tax_no": "92927",
+      "transformed": "I3927",
+      "categories": [],
+      "note": ""
+    },
+    "D164": {
+      "sup_name": "秀逗",
+      "sup_number": "9388",
+      "tax_no": "4064",
+      "transformed": "D164",
+      "categories": [],
+      "note": ""
+    },
+    "I5888": {
+      "sup_name": "茜秀广州眼线笔",
+      "sup_number": "94888",
+      "tax_no": "94888",
+      "transformed": "I5888",
+      "categories": [],
+      "note": ""
+    },
+    "I7813": {
+      "sup_name": "广州孚泰眼罩",
+      "sup_number": "96813",
+      "tax_no": "96813",
+      "transformed": "I7813",
+      "categories": [],
+      "note": ""
+    },
+    "I8599": {
+      "sup_name": "广州西郊瑞奇首饰",
+      "sup_number": "97599",
+      "tax_no": "97599",
+      "transformed": "I8599",
+      "categories": [],
+      "note": ""
+    },
+    "I008": {
+      "sup_name": "福建泉州汇蓥电子有限公司",
+      "sup_number": "9908",
+      "tax_no": "9908",
+      "transformed": "I008",
+      "categories": [],
+      "note": ""
+    },
+    "A14173": {
+      "sup_name": "佳宏饰品",
+      "sup_number": "A04173",
+      "tax_no": "104173",
+      "transformed": "A14173",
+      "categories": [],
+      "note": ""
+    },
+    "728761": {
+      "sup_name": "皇盾表业",
+      "sup_number": "A8747",
+      "tax_no": "G18761",
+      "transformed": "728761",
+      "categories": [],
+      "note": ""
+    },
+    "F084": {
+      "sup_name": "蛟龙工艺品",
+      "sup_number": "B6984",
+      "tax_no": "6984",
+      "transformed": "F084",
+      "categories": [],
+      "note": ""
+    },
+    "C002": {
+      "sup_name": "千姿雅琪",
+      "sup_number": "C002",
+      "tax_no": "3902",
+      "transformed": "C002",
+      "categories": [],
+      "note": ""
+    },
+    "C405": {
+      "sup_name": "禹希饰品",
+      "sup_number": "C003",
+      "tax_no": "3305",
+      "transformed": "C405",
+      "categories": [],
+      "note": ""
+    },
+    "C004": {
+      "sup_name": "梦莎饰品",
+      "sup_number": "C004",
+      "tax_no": "3904",
+      "transformed": "C004",
+      "categories": [],
+      "note": ""
+    },
+    "C008": {
+      "sup_name": "创艺饰品",
+      "sup_number": "C008",
+      "tax_no": "3908",
+      "transformed": "C008",
+      "categories": [],
+      "note": ""
+    },
+    "C026": {
+      "sup_name": "宇涵饰品",
+      "sup_number": "C026",
+      "tax_no": "3926",
+      "transformed": "C026",
+      "categories": [],
+      "note": ""
+    },
+    "C045": {
+      "sup_name": "迪雅饰品",
+      "sup_number": "C045",
+      "tax_no": "3945",
+      "transformed": "C045",
+      "categories": [],
+      "note": ""
+    },
+    "C067": {
+      "sup_name": "金晨饰品",
+      "sup_number": "C067",
+      "tax_no": "3967",
+      "transformed": "C067",
+      "categories": [],
+      "note": ""
+    },
+    "C082": {
+      "sup_name": "尚都饰品",
+      "sup_number": "C082",
+      "tax_no": "3982",
+      "transformed": "C082",
+      "categories": [],
+      "note": ""
+    },
+    "D113": {
+      "sup_name": "晓波饰品",
+      "sup_number": "C086",
+      "tax_no": "4013",
+      "transformed": "D113",
+      "categories": [],
+      "note": ""
+    },
+    "C170": {
+      "sup_name": "诚饰饰品",
+      "sup_number": "C107",
+      "tax_no": "3070",
+      "transformed": "C170",
+      "categories": [],
+      "note": ""
+    },
+    "C120": {
+      "sup_name": "晶华饰品",
+      "sup_number": "C120",
+      "tax_no": "3020",
+      "transformed": "C120",
+      "categories": [],
+      "note": ""
+    },
+    "C121": {
+      "sup_name": "鑫东饰品",
+      "sup_number": "C121",
+      "tax_no": "3021",
+      "transformed": "C121",
+      "categories": [],
+      "note": ""
+    },
+    "C175": {
+      "sup_name": "鑫源饰品",
+      "sup_number": "C142",
+      "tax_no": "3075",
+      "transformed": "C175",
+      "categories": [],
+      "note": ""
+    },
+    "A571": {
+      "sup_name": "盈润体育用品",
+      "sup_number": "C14710",
+      "tax_no": "1471",
+      "transformed": "A571",
+      "categories": [],
+      "note": ""
+    },
+    "A6090": {
+      "sup_name": "薇玲针线日用品",
+      "sup_number": "C14716",
+      "tax_no": "15090",
+      "transformed": "A6090",
+      "categories": [],
+      "note": ""
+    },
+    "B7420": {
+      "sup_name": "小芬饰品",
+      "sup_number": "C14717",
+      "tax_no": "26420",
+      "transformed": "B7420",
+      "categories": [],
+      "note": ""
+    },
+    "A13026": {
+      "sup_name": "亿娜美饰品",
+      "sup_number": "C14719",
+      "tax_no": "103026",
+      "transformed": "A13026",
+      "categories": [],
+      "note": ""
+    },
+    "C500": {
+      "sup_name": "采吉饰品",
+      "sup_number": "C14720",
+      "tax_no": "3400",
+      "transformed": "C500",
+      "categories": [],
+      "note": ""
+    },
+    "B8159": {
+      "sup_name": "妮维塔纹身",
+      "sup_number": "C14727",
+      "tax_no": "27159",
+      "transformed": "B8159",
+      "categories": [],
+      "note": ""
+    },
+    "E233": {
+      "sup_name": "曼休妮饰品",
+      "sup_number": "C14728",
+      "tax_no": "5133",
+      "transformed": "E233",
+      "categories": [],
+      "note": ""
+    },
+    "C898": {
+      "sup_name": "奕晨饰品",
+      "sup_number": "C14729",
+      "tax_no": "3798",
+      "transformed": "C898",
+      "categories": [],
+      "note": ""
+    },
+    "B8010": {
+      "sup_name": "洋文梳业",
+      "sup_number": "C14734",
+      "tax_no": "27010",
+      "transformed": "B8010",
+      "categories": [],
+      "note": ""
+    },
+    "D92620": {
+      "sup_name": "广州唯雅饰品",
+      "sup_number": "C14735",
+      "tax_no": "482620",
+      "transformed": "D92620",
+      "categories": [],
+      "note": ""
+    },
+    "E173": {
+      "sup_name": "兰溪市爱华工艺品",
+      "sup_number": "C14741",
+      "tax_no": "5073",
+      "transformed": "E173",
+      "categories": [],
+      "note": ""
+    },
+    "E102": {
+      "sup_name": "鑫田饰品",
+      "sup_number": "C14742",
+      "tax_no": "5002",
+      "transformed": "E102",
+      "categories": [],
+      "note": ""
+    },
+    "A1260": {
+      "sup_name": "广州三迪饰品",
+      "sup_number": "C14744",
+      "tax_no": "10260",
+      "transformed": "A1260",
+      "categories": [],
+      "note": ""
+    },
+    "B8029": {
+      "sup_name": "哲英梳业",
+      "sup_number": "C14747",
+      "tax_no": "27029",
+      "transformed": "B8029",
+      "categories": [],
+      "note": ""
+    },
+    "A0666": {
+      "sup_name": "圣诚一科",
+      "sup_number": "C14748",
+      "tax_no": "19666",
+      "transformed": "A0666",
+      "categories": [],
+      "note": ""
+    },
+    "A5200": {
+      "sup_name": "WETELL",
+      "sup_number": "C14751",
+      "tax_no": "14200",
+      "transformed": "A5200",
+      "categories": [],
+      "note": ""
+    },
+    "B7513": {
+      "sup_name": "亚彩美甲",
+      "sup_number": "C14752",
+      "tax_no": "26513",
+      "transformed": "B7513",
+      "categories": [],
+      "note": ""
+    },
+    "A12597": {
+      "sup_name": "大鸿运饰品",
+      "sup_number": "C14753",
+      "tax_no": "102597",
+      "transformed": "A12597",
+      "categories": [],
+      "note": ""
+    },
+    "B8057": {
+      "sup_name": "爱梳日用品",
+      "sup_number": "C14757",
+      "tax_no": "27057",
+      "transformed": "B8057",
+      "categories": [],
+      "note": ""
+    },
+    "C406": {
+      "sup_name": "彩芳饰品",
+      "sup_number": "C14759",
+      "tax_no": "3306",
+      "transformed": "C406",
+      "categories": [],
+      "note": ""
+    },
+    "B8063": {
+      "sup_name": "周晓平梳业",
+      "sup_number": "C14760",
+      "tax_no": "27063",
+      "transformed": "B8063",
+      "categories": [],
+      "note": ""
+    },
+    "D591": {
+      "sup_name": "琪奕果饰品",
+      "sup_number": "C14766",
+      "tax_no": "4491",
+      "transformed": "D591",
+      "categories": [],
+      "note": ""
+    },
+    "C657": {
+      "sup_name": "东升饰品",
+      "sup_number": "C14771",
+      "tax_no": "3557",
+      "transformed": "C657",
+      "categories": [],
+      "note": ""
+    },
+    "C415": {
+      "sup_name": "子明饰品",
+      "sup_number": "C14774",
+      "tax_no": "3315",
+      "transformed": "C415",
+      "categories": [],
+      "note": ""
+    },
+    "C955": {
+      "sup_name": "添亿饰品",
+      "sup_number": "C14775",
+      "tax_no": "3855",
+      "transformed": "C955",
+      "categories": [],
+      "note": ""
+    },
+    "6312": {
+      "sup_name": "丹青饰品",
+      "sup_number": "C14779",
+      "tax_no": "F212",
+      "transformed": "6312",
+      "categories": [],
+      "note": ""
+    },
+    "C548": {
+      "sup_name": "金葱圈",
+      "sup_number": "C14780",
+      "tax_no": "3448",
+      "transformed": "C548",
+      "categories": [],
+      "note": ""
+    },
+    "E29168": {
+      "sup_name": "宁波美睫梳业",
+      "sup_number": "C14849",
+      "tax_no": "519168",
+      "transformed": "E29168",
+      "categories": [],
+      "note": ""
+    },
+    "H7807": {
+      "sup_name": "宁波镂空梳",
+      "sup_number": "C14850",
+      "tax_no": "86807",
+      "transformed": "H7807",
+      "categories": [],
+      "note": ""
+    },
+    "I087": {
+      "sup_name": "福建文豪表业",
+      "sup_number": "C14851",
+      "tax_no": "9987",
+      "transformed": "I087",
+      "categories": [],
+      "note": ""
+    },
+    "A5427": {
+      "sup_name": "广州宏亨华利",
+      "sup_number": "C14854",
+      "tax_no": "14427",
+      "transformed": "A5427",
+      "categories": [],
+      "note": ""
+    },
+    "H0223": {
+      "sup_name": "金达日美义乌",
+      "sup_number": "C14855",
+      "tax_no": "89223",
+      "transformed": "H0223",
+      "categories": [],
+      "note": ""
+    },
+    "C226": {
+      "sup_name": "圣花饰品",
+      "sup_number": "C226",
+      "tax_no": "3126",
+      "transformed": "C226",
+      "categories": [],
+      "note": ""
+    },
+    "C273": {
+      "sup_name": "天乐饰品",
+      "sup_number": "C273",
+      "tax_no": "3173",
+      "transformed": "C273",
+      "categories": [],
+      "note": ""
+    },
+    "C296": {
+      "sup_name": "春天真发",
+      "sup_number": "C296",
+      "tax_no": "3196",
+      "transformed": "C296",
+      "categories": [],
+      "note": ""
+    },
+    "C330": {
+      "sup_name": "俊翔饰品",
+      "sup_number": "C330",
+      "tax_no": "3230",
+      "transformed": "C330",
+      "categories": [],
+      "note": ""
+    },
+    "C407": {
+      "sup_name": "晴辉饰品",
+      "sup_number": "C361",
+      "tax_no": "3307",
+      "transformed": "C407",
+      "categories": [],
+      "note": ""
+    },
+    "C365": {
+      "sup_name": "笑笑饰品",
+      "sup_number": "C365",
+      "tax_no": "3265",
+      "transformed": "C365",
+      "categories": [],
+      "note": ""
+    },
+    "C366": {
+      "sup_name": "牧童饰品",
+      "sup_number": "C366",
+      "tax_no": "3266",
+      "transformed": "C366",
+      "categories": [],
+      "note": ""
+    },
+    "C389": {
+      "sup_name": "航鹏饰品",
+      "sup_number": "C389",
+      "tax_no": "3289",
+      "transformed": "C389",
+      "categories": [],
+      "note": ""
+    },
+    "C434": {
+      "sup_name": "蓝玫发带",
+      "sup_number": "C433",
+      "tax_no": "3334",
+      "transformed": "C434",
+      "categories": [],
+      "note": ""
+    },
+    "C449": {
+      "sup_name": "康超泊飞饰品",
+      "sup_number": "C449",
+      "tax_no": "3349",
+      "transformed": "C449",
+      "categories": [],
+      "note": ""
+    },
+    "C454": {
+      "sup_name": "木沐饰品",
+      "sup_number": "C454",
+      "tax_no": "3354",
+      "transformed": "C454",
+      "categories": [],
+      "note": ""
+    },
+    "C481": {
+      "sup_name": "晨阳饰品",
+      "sup_number": "C481",
+      "tax_no": "3381",
+      "transformed": "C481",
+      "categories": [],
+      "note": ""
+    },
+    "C471": {
+      "sup_name": "丽芬饰品",
+      "sup_number": "C491",
+      "tax_no": "3371",
+      "transformed": "C471",
+      "categories": [],
+      "note": ""
+    },
+    "C501": {
+      "sup_name": "玮玮饰品",
+      "sup_number": "C501",
+      "tax_no": "3401",
+      "transformed": "C501",
+      "categories": [],
+      "note": ""
+    },
+    "C517": {
+      "sup_name": "赵伟饰品",
+      "sup_number": "C517",
+      "tax_no": "3417",
+      "transformed": "C517",
+      "categories": [],
+      "note": ""
+    },
+    "C530": {
+      "sup_name": "飞宇饰品 / 莫妮卡饰品",
+      "sup_number": "C530",
+      "tax_no": "3430",
+      "transformed": "C530",
+      "categories": [],
+      "note": ""
+    },
+    "C534": {
+      "sup_name": "菁菁皮筋",
+      "sup_number": "C534",
+      "tax_no": "3434",
+      "transformed": "C534",
+      "categories": [],
+      "note": ""
+    },
+    "C563": {
+      "sup_name": "卓言饰品",
+      "sup_number": "C563",
+      "tax_no": "3463",
+      "transformed": "C563",
+      "categories": [],
+      "note": ""
+    },
+    "C555": {
+      "sup_name": "彤彤饰品",
+      "sup_number": "C675",
+      "tax_no": "3455",
+      "transformed": "C555",
+      "categories": [],
+      "note": ""
+    },
+    "C685": {
+      "sup_name": "巧搭阁",
+      "sup_number": "C685",
+      "tax_no": "3585",
+      "transformed": "C685",
+      "categories": [],
+      "note": ""
+    },
+    "C686": {
+      "sup_name": "佳瑞宝贝",
+      "sup_number": "C686",
+      "tax_no": "3586",
+      "transformed": "C686",
+      "categories": [],
+      "note": ""
+    },
+    "C714": {
+      "sup_name": "宏泰饰品",
+      "sup_number": "C714",
+      "tax_no": "3614",
+      "transformed": "C714",
+      "categories": [],
+      "note": ""
+    },
+    "C717": {
+      "sup_name": "旭莎爪夹",
+      "sup_number": "C717",
+      "tax_no": "3617",
+      "transformed": "C717",
+      "categories": [],
+      "note": ""
+    },
+    "C852": {
+      "sup_name": "浩康饰品",
+      "sup_number": "C728",
+      "tax_no": "3752",
+      "transformed": "C852",
+      "categories": [],
+      "note": ""
+    },
+    "C550": {
+      "sup_name": "妙琳饰品",
+      "sup_number": "C752",
+      "tax_no": "3450",
+      "transformed": "C550",
+      "categories": [],
+      "note": ""
+    },
+    "C759": {
+      "sup_name": "旭红",
+      "sup_number": "C759",
+      "tax_no": "3659",
+      "transformed": "C759",
+      "categories": [],
+      "note": ""
+    },
+    "C767": {
+      "sup_name": "稻草人丝巾扣",
+      "sup_number": "C767",
+      "tax_no": "3667",
+      "transformed": "C767",
+      "categories": [],
+      "note": ""
+    },
+    "C786": {
+      "sup_name": "卡美奇饰品",
+      "sup_number": "C786",
+      "tax_no": "3686",
+      "transformed": "C786",
+      "categories": [],
+      "note": ""
+    },
+    "C812": {
+      "sup_name": "一顶红饰品",
+      "sup_number": "C812",
+      "tax_no": "3712",
+      "transformed": "C812",
+      "categories": [],
+      "note": ""
+    },
+    "C841": {
+      "sup_name": "靓丽饰品",
+      "sup_number": "C841",
+      "tax_no": "3741",
+      "transformed": "C841",
+      "categories": [],
+      "note": ""
+    },
+    "C842": {
+      "sup_name": "子轩饰品",
+      "sup_number": "C842",
+      "tax_no": "3742",
+      "transformed": "C842",
+      "categories": [],
+      "note": ""
+    },
+    "C843": {
+      "sup_name": "惠鑫饰品",
+      "sup_number": "C843",
+      "tax_no": "3743",
+      "transformed": "C843",
+      "categories": [],
+      "note": ""
+    },
+    "C819": {
+      "sup_name": "乐饰饰品",
+      "sup_number": "C846",
+      "tax_no": "3719",
+      "transformed": "C819",
+      "categories": [],
+      "note": ""
+    },
+    "C869": {
+      "sup_name": "凌姗花饰",
+      "sup_number": "C869",
+      "tax_no": "3769",
+      "transformed": "C869",
+      "categories": [],
+      "note": ""
+    },
+    "C003": {
+      "sup_name": "泰莱丝",
+      "sup_number": "C903",
+      "tax_no": "3903",
+      "transformed": "C003",
+      "categories": [],
+      "note": ""
+    },
+    "C910": {
+      "sup_name": "宝美饰品",
+      "sup_number": "C910",
+      "tax_no": "3810",
+      "transformed": "C910",
+      "categories": [],
+      "note": ""
+    },
+    "C942": {
+      "sup_name": "伊拉贝儿",
+      "sup_number": "C942",
+      "tax_no": "3842",
+      "transformed": "C942",
+      "categories": [],
+      "note": ""
+    },
+    "C873": {
+      "sup_name": "玺曼头饰",
+      "sup_number": "C945",
+      "tax_no": "3773",
+      "transformed": "C873",
+      "categories": [],
+      "note": ""
+    },
+    "C965": {
+      "sup_name": "永发",
+      "sup_number": "C965",
+      "tax_no": "3865",
+      "transformed": "C965",
+      "categories": [],
+      "note": ""
+    },
+    "C967": {
+      "sup_name": "伊伊饰品",
+      "sup_number": "C967",
+      "tax_no": "3867",
+      "transformed": "C967",
+      "categories": [],
+      "note": ""
+    },
+    "C982": {
+      "sup_name": "柏菲妮头饰",
+      "sup_number": "C982",
+      "tax_no": "3882",
+      "transformed": "C982",
+      "categories": [],
+      "note": ""
+    },
+    "6466": {
+      "sup_name": "初心怡品精品百货",
+      "sup_number": "C989",
+      "tax_no": "F366",
+      "transformed": "6466",
+      "categories": [],
+      "note": ""
+    },
+    "B9280": {
+      "sup_name": "广州普莱斯特",
+      "sup_number": "C992",
+      "tax_no": "28280",
+      "transformed": "B9280",
+      "categories": [],
+      "note": ""
+    },
+    "D001": {
+      "sup_name": "求晟饰品",
+      "sup_number": "D001",
+      "tax_no": "4901",
+      "transformed": "D001",
+      "categories": [],
+      "note": ""
+    },
+    "D022": {
+      "sup_name": "心怡饰品",
+      "sup_number": "D022",
+      "tax_no": "4922",
+      "transformed": "D022",
+      "categories": [],
+      "note": ""
+    },
+    "D074": {
+      "sup_name": "青青饰品",
+      "sup_number": "D074",
+      "tax_no": "4974",
+      "transformed": "D074",
+      "categories": [],
+      "note": ""
+    },
+    "D080": {
+      "sup_name": "莱丹饰品",
+      "sup_number": "D080",
+      "tax_no": "4980",
+      "transformed": "D080",
+      "categories": [],
+      "note": ""
+    },
+    "D083": {
+      "sup_name": "美信饰品",
+      "sup_number": "D083",
+      "tax_no": "4983",
+      "transformed": "D083",
+      "categories": [],
+      "note": ""
+    },
+    "D438": {
+      "sup_name": "和美饰品",
+      "sup_number": "D1000",
+      "tax_no": "4338",
+      "transformed": "D438",
+      "categories": [],
+      "note": ""
+    },
+    "B7439": {
+      "sup_name": "26439VK假睫毛",
+      "sup_number": "D1002",
+      "tax_no": "26439",
+      "transformed": "B7439",
+      "categories": [],
+      "note": ""
+    },
+    "G81310": {
+      "sup_name": "冉红饰品",
+      "sup_number": "D1005",
+      "tax_no": "771310",
+      "transformed": "G81310",
+      "categories": [],
+      "note": ""
+    },
+    "D380": {
+      "sup_name": "唯美饰品",
+      "sup_number": "D1006",
+      "tax_no": "4280",
+      "transformed": "D380",
+      "categories": [],
+      "note": ""
+    },
+    "D745": {
+      "sup_name": "琴微饰品",
+      "sup_number": "D1007",
+      "tax_no": "4645",
+      "transformed": "D745",
+      "categories": [],
+      "note": ""
+    },
+    "E770": {
+      "sup_name": "银达饰品",
+      "sup_number": "D1011",
+      "tax_no": "5670",
+      "transformed": "E770",
+      "categories": [],
+      "note": ""
+    },
+    "B9535": {
+      "sup_name": "颜雪化妆品",
+      "sup_number": "D1013",
+      "tax_no": "28535",
+      "transformed": "B9535",
+      "categories": [],
+      "note": ""
+    },
+    "A1534": {
+      "sup_name": "浙江义乌鑫鹏伞业",
+      "sup_number": "D1015",
+      "tax_no": "10534",
+      "transformed": "A1534",
+      "categories": [],
+      "note": ""
+    },
+    "G62912": {
+      "sup_name": "志超化妆用具",
+      "sup_number": "D1016",
+      "tax_no": "752912",
+      "transformed": "G62912",
+      "categories": [],
+      "note": ""
+    },
+    "C804": {
+      "sup_name": "语睿饰品",
+      "sup_number": "D1019",
+      "tax_no": "3704",
+      "transformed": "C804",
+      "categories": [],
+      "note": ""
+    },
+    "C498": {
+      "sup_name": "鑫玥饰品",
+      "sup_number": "D1020",
+      "tax_no": "3398",
+      "transformed": "C498",
+      "categories": [],
+      "note": ""
+    },
+    "B7065": {
+      "sup_name": "闪靓假睫毛",
+      "sup_number": "D1021",
+      "tax_no": "26065",
+      "transformed": "B7065",
+      "categories": [],
+      "note": ""
+    },
+    "C603": {
+      "sup_name": "新尚饰品",
+      "sup_number": "D1025",
+      "tax_no": "3503",
+      "transformed": "C603",
+      "categories": [],
+      "note": ""
+    },
+    "H0265": {
+      "sup_name": "和润",
+      "sup_number": "D1027",
+      "tax_no": "89265",
+      "transformed": "H0265",
+      "categories": [],
+      "note": ""
+    },
+    "F7550": {
+      "sup_name": "嘉罗兰日用品",
+      "sup_number": "D1030",
+      "tax_no": "66550",
+      "transformed": "F7550",
+      "categories": [],
+      "note": ""
+    },
+    "A77621": {
+      "sup_name": "昊派",
+      "sup_number": "D1031",
+      "tax_no": "167621",
+      "transformed": "A77621",
+      "categories": [],
+      "note": ""
+    },
+    "I2341": {
+      "sup_name": "宁波天鼎梳子",
+      "sup_number": "D1032",
+      "tax_no": "91341",
+      "transformed": "I2341",
+      "categories": [],
+      "note": ""
+    },
+    "B4387": {
+      "sup_name": "宁波邦纳",
+      "sup_number": "D1033",
+      "tax_no": "23387",
+      "transformed": "B4387",
+      "categories": [],
+      "note": ""
+    },
+    "D682": {
+      "sup_name": "现4582爱丽贝思饰品",
+      "sup_number": "D1035",
+      "tax_no": "4582",
+      "transformed": "D682",
+      "categories": [],
+      "note": ""
+    },
+    "G7626": {
+      "sup_name": "浦江西卡莫",
+      "sup_number": "D1037",
+      "tax_no": "76626",
+      "transformed": "G7626",
+      "categories": [],
+      "note": ""
+    },
+    "C564B": {
+      "sup_name": "汕珊饰品",
+      "sup_number": "D1038",
+      "tax_no": "3464B",
+      "transformed": "C564B",
+      "categories": [],
+      "note": ""
+    },
+    "A9430": {
+      "sup_name": "18430",
+      "sup_number": "D1043",
+      "tax_no": "18430",
+      "transformed": "A9430",
+      "categories": [],
+      "note": ""
+    },
+    "B21060": {
+      "sup_name": "上野拉美拉",
+      "sup_number": "D1046",
+      "tax_no": "211060",
+      "transformed": "B21060",
+      "categories": [],
+      "note": ""
+    },
+    "D131B": {
+      "sup_name": "真饰美饰品",
+      "sup_number": "D131",
+      "tax_no": "4031B",
+      "transformed": "D131B",
+      "categories": [],
+      "note": ""
+    },
+    "D144": {
+      "sup_name": "流行饰品",
+      "sup_number": "D144",
+      "tax_no": "4044",
+      "transformed": "D144",
+      "categories": [],
+      "note": ""
+    },
+    "D166": {
+      "sup_name": "新颖饰品",
+      "sup_number": "D166",
+      "tax_no": "4066",
+      "transformed": "D166",
+      "categories": [],
+      "note": ""
+    },
+    "D180A": {
+      "sup_name": "4080",
+      "sup_number": "D180",
+      "tax_no": "4080A",
+      "transformed": "D180A",
+      "categories": [],
+      "note": ""
+    },
+    "D306": {
+      "sup_name": "湘龙饰品",
+      "sup_number": "D206",
+      "tax_no": "4206",
+      "transformed": "D306",
+      "categories": [],
+      "note": ""
+    },
+    "D253": {
+      "sup_name": "晓薇饰品",
+      "sup_number": "D253",
+      "tax_no": "4153",
+      "transformed": "D253",
+      "categories": [],
+      "note": ""
+    },
+    "D307": {
+      "sup_name": "新迪饰品",
+      "sup_number": "D307",
+      "tax_no": "4207",
+      "transformed": "D307",
+      "categories": [],
+      "note": ""
+    },
+    "D329B": {
+      "sup_name": "玉莲饰品",
+      "sup_number": "D329",
+      "tax_no": "4229B",
+      "transformed": "D329B",
+      "categories": [],
+      "note": ""
+    },
+    "D332": {
+      "sup_name": "姊妹饰品",
+      "sup_number": "D332",
+      "tax_no": "4232",
+      "transformed": "D332",
+      "categories": [],
+      "note": ""
+    },
+    "D333": {
+      "sup_name": "靓尔饰品",
+      "sup_number": "D333",
+      "tax_no": "4233",
+      "transformed": "D333",
+      "categories": [],
+      "note": ""
+    },
+    "D359": {
+      "sup_name": "现4259薇尔诗饰品 / 琛兴饰品",
+      "sup_number": "D342",
+      "tax_no": "4259",
+      "transformed": "D359",
+      "categories": [],
+      "note": ""
+    },
+    "D358": {
+      "sup_name": "金海饰品",
+      "sup_number": "D358",
+      "tax_no": "4258",
+      "transformed": "D358",
+      "categories": [],
+      "note": ""
+    },
+    "D481A": {
+      "sup_name": "现4381A琢雅霖不锈钢饰品",
+      "sup_number": "D381",
+      "tax_no": "4381A",
+      "transformed": "D481A",
+      "categories": [],
+      "note": ""
+    },
+    "D359B": {
+      "sup_name": "4259B凯翎饰品",
+      "sup_number": "D384",
+      "tax_no": "4259B",
+      "transformed": "D359B",
+      "categories": [],
+      "note": ""
+    },
+    "D385": {
+      "sup_name": "宏兴饰品",
+      "sup_number": "D385",
+      "tax_no": "4285",
+      "transformed": "D385",
+      "categories": [],
+      "note": ""
+    },
+    "D412": {
+      "sup_name": "铜鑫饰品",
+      "sup_number": "D412",
+      "tax_no": "4312",
+      "transformed": "D412",
+      "categories": [],
+      "note": ""
+    },
+    "D433": {
+      "sup_name": "利德新饰品",
+      "sup_number": "D433",
+      "tax_no": "4333",
+      "transformed": "D433",
+      "categories": [],
+      "note": ""
+    },
+    "D448": {
+      "sup_name": "4348",
+      "sup_number": "D448",
+      "tax_no": "4348",
+      "transformed": "D448",
+      "categories": [],
+      "note": ""
+    },
+    "D467A": {
+      "sup_name": "丽友饰品",
+      "sup_number": "D467",
+      "tax_no": "4367A",
+      "transformed": "D467A",
+      "categories": [],
+      "note": ""
+    },
+    "63068": {
+      "sup_name": "小卷毛",
+      "sup_number": "D470",
+      "tax_no": "F2068",
+      "transformed": "63068",
+      "categories": [],
+      "note": ""
+    },
+    "A9377": {
+      "sup_name": "立诺表业",
+      "sup_number": "D471",
+      "tax_no": "18377",
+      "transformed": "A9377",
+      "categories": [],
+      "note": ""
+    },
+    "D481": {
+      "sup_name": "梦想鸟饰品",
+      "sup_number": "D481",
+      "tax_no": "4381",
+      "transformed": "D481",
+      "categories": [],
+      "note": ""
+    },
+    "D537": {
+      "sup_name": "薇薇卡工艺饰品",
+      "sup_number": "D537",
+      "tax_no": "4437",
+      "transformed": "D537",
+      "categories": [],
+      "note": ""
+    },
+    "D555A": {
+      "sup_name": "迪斯饰品",
+      "sup_number": "D555",
+      "tax_no": "4455A",
+      "transformed": "D555A",
+      "categories": [],
+      "note": ""
+    },
+    "D658B": {
+      "sup_name": "双晨饰品",
+      "sup_number": "D558",
+      "tax_no": "4558B",
+      "transformed": "D658B",
+      "categories": [],
+      "note": ""
+    },
+    "D638": {
+      "sup_name": "妍尔美饰品",
+      "sup_number": "D638",
+      "tax_no": "4538",
+      "transformed": "D638",
+      "categories": [],
+      "note": ""
+    },
+    "D643": {
+      "sup_name": "爱丽莎饰品",
+      "sup_number": "D643",
+      "tax_no": "4543",
+      "transformed": "D643",
+      "categories": [],
+      "note": ""
+    },
+    "D655": {
+      "sup_name": "欧品姿(灵感饰品）",
+      "sup_number": "D655",
+      "tax_no": "4555",
+      "transformed": "D655",
+      "categories": [],
+      "note": ""
+    },
+    "D662A": {
+      "sup_name": "欧亿达饰品",
+      "sup_number": "D662",
+      "tax_no": "4562A",
+      "transformed": "D662A",
+      "categories": [],
+      "note": ""
+    },
+    "D160": {
+      "sup_name": "荞羽梳子镜子厂",
+      "sup_number": "D717",
+      "tax_no": "4060",
+      "transformed": "D160",
+      "categories": [],
+      "note": ""
+    },
+    "D7222": {
+      "sup_name": "滕跃围巾",
+      "sup_number": "D7222",
+      "tax_no": "46222",
+      "transformed": "D7222",
+      "categories": [],
+      "note": ""
+    },
+    "D756": {
+      "sup_name": "昊宇工艺饰品",
+      "sup_number": "D7227",
+      "tax_no": "4656",
+      "transformed": "D756",
+      "categories": [],
+      "note": ""
+    },
+    "6340": {
+      "sup_name": "海潮 / 迪美",
+      "sup_number": "D7232",
+      "tax_no": "F240",
+      "transformed": "6340",
+      "categories": [],
+      "note": ""
+    },
+    "D077": {
+      "sup_name": "晶亭饰品",
+      "sup_number": "D7234",
+      "tax_no": "4977",
+      "transformed": "D077",
+      "categories": [],
+      "note": ""
+    },
+    "C9171": {
+      "sup_name": "优夏服饰",
+      "sup_number": "D7239",
+      "tax_no": "38171",
+      "transformed": "C9171",
+      "categories": [],
+      "note": ""
+    },
+    "C9141": {
+      "sup_name": "金晨耳罩厂",
+      "sup_number": "D7240",
+      "tax_no": "38141",
+      "transformed": "C9141",
+      "categories": [],
+      "note": ""
+    },
+    "D739": {
+      "sup_name": "心连心饰品",
+      "sup_number": "D739",
+      "tax_no": "4639",
+      "transformed": "D739",
+      "categories": [],
+      "note": ""
+    },
+    "D741A": {
+      "sup_name": "心愉饰品",
+      "sup_number": "D741",
+      "tax_no": "4641A",
+      "transformed": "D741A",
+      "categories": [],
+      "note": ""
+    },
+    "D752": {
+      "sup_name": "义乌珍尚坊饰品",
+      "sup_number": "D752",
+      "tax_no": "4652",
+      "transformed": "D752",
+      "categories": [],
+      "note": ""
+    },
+    "D062": {
+      "sup_name": "古朴风饰品",
+      "sup_number": "D762",
+      "tax_no": "4962",
+      "transformed": "D062",
+      "categories": [],
+      "note": ""
+    },
+    "D768A": {
+      "sup_name": "风禾美甲",
+      "sup_number": "D768",
+      "tax_no": "4668A",
+      "transformed": "D768A",
+      "categories": [],
+      "note": ""
+    },
+    "D799B": {
+      "sup_name": "哲明饰品",
+      "sup_number": "D799",
+      "tax_no": "4699B",
+      "transformed": "D799B",
+      "categories": [],
+      "note": ""
+    },
+    "C906": {
+      "sup_name": "魅力伊人",
+      "sup_number": "D907",
+      "tax_no": "3806",
+      "transformed": "C906",
+      "categories": [],
+      "note": ""
+    },
+    "D958B": {
+      "sup_name": "洋洋贴纸",
+      "sup_number": "D958",
+      "tax_no": "4858B",
+      "transformed": "D958B",
+      "categories": [],
+      "note": ""
+    },
+    "D469": {
+      "sup_name": "嘉尔曼不锈钢饰饰品",
+      "sup_number": "D960",
+      "tax_no": "4369",
+      "transformed": "D469",
+      "categories": [],
+      "note": ""
+    },
+    "A12612": {
+      "sup_name": "锐驰饰品厂",
+      "sup_number": "D981",
+      "tax_no": "102612",
+      "transformed": "A12612",
+      "categories": [],
+      "note": ""
+    },
+    "C721": {
+      "sup_name": "夕语",
+      "sup_number": "D982",
+      "tax_no": "3621",
+      "transformed": "C721",
+      "categories": [],
+      "note": ""
+    },
+    "C262": {
+      "sup_name": "奕豪饰品",
+      "sup_number": "D985",
+      "tax_no": "3162",
+      "transformed": "C262",
+      "categories": [],
+      "note": ""
+    },
+    "G8990": {
+      "sup_name": "东东头饰",
+      "sup_number": "D988",
+      "tax_no": "77990",
+      "transformed": "G8990",
+      "categories": [],
+      "note": ""
+    },
+    "E982": {
+      "sup_name": "鑫达雅铜饰",
+      "sup_number": "D992",
+      "tax_no": "5882",
+      "transformed": "E982",
+      "categories": [],
+      "note": ""
+    },
+    "C816": {
+      "sup_name": "蝶亦柔饰品",
+      "sup_number": "D993",
+      "tax_no": "3716",
+      "transformed": "C816",
+      "categories": [],
+      "note": ""
+    },
+    "C921": {
+      "sup_name": "嘉超贸易",
+      "sup_number": "D995",
+      "tax_no": "3821",
+      "transformed": "C921",
+      "categories": [],
+      "note": ""
+    },
+    "C356": {
+      "sup_name": "捷泰日用品",
+      "sup_number": "D996",
+      "tax_no": "3256",
+      "transformed": "C356",
+      "categories": [],
+      "note": ""
+    },
+    "E038": {
+      "sup_name": "航锡饰品",
+      "sup_number": "E038",
+      "tax_no": "5938",
+      "transformed": "E038",
+      "categories": [],
+      "note": ""
+    },
+    "E945": {
+      "sup_name": "大华黑胆石",
+      "sup_number": "E045",
+      "tax_no": "5845",
+      "transformed": "E945",
+      "categories": [],
+      "note": ""
+    },
+    "E100": {
+      "sup_name": "卓妮子饰品",
+      "sup_number": "E100",
+      "tax_no": "5000",
+      "transformed": "E100",
+      "categories": [],
+      "note": ""
+    },
+    "E101": {
+      "sup_name": "杰瑞饰品",
+      "sup_number": "E101",
+      "tax_no": "5001",
+      "transformed": "E101",
+      "categories": [],
+      "note": ""
+    },
+    "E139": {
+      "sup_name": "心言饰品",
+      "sup_number": "E139",
+      "tax_no": "5039",
+      "transformed": "E139",
+      "categories": [],
+      "note": ""
+    },
+    "E142": {
+      "sup_name": "达莲娜饰品",
+      "sup_number": "E142",
+      "tax_no": "5042",
+      "transformed": "E142",
+      "categories": [],
+      "note": ""
+    },
+    "E145": {
+      "sup_name": "KPT卡佩蒂",
+      "sup_number": "E145",
+      "tax_no": "5045",
+      "transformed": "E145",
+      "categories": [],
+      "note": ""
+    },
+    "D742": {
+      "sup_name": "瑶瑶挂件",
+      "sup_number": "E210",
+      "tax_no": "4642",
+      "transformed": "D742",
+      "categories": [],
+      "note": ""
+    },
+    "E212": {
+      "sup_name": "鸿涛饰品",
+      "sup_number": "E212",
+      "tax_no": "5112",
+      "transformed": "E212",
+      "categories": [],
+      "note": ""
+    },
+    "E216": {
+      "sup_name": "鑫佰利饰品",
+      "sup_number": "E216",
+      "tax_no": "5116",
+      "transformed": "E216",
+      "categories": [],
+      "note": ""
+    },
+    "D753": {
+      "sup_name": "咔咔啦钛钢",
+      "sup_number": "E268",
+      "tax_no": "4653",
+      "transformed": "D753",
+      "categories": [],
+      "note": ""
+    },
+    "E293": {
+      "sup_name": "俊毅饰品",
+      "sup_number": "E293",
+      "tax_no": "5193",
+      "transformed": "E293",
+      "categories": [],
+      "note": ""
+    },
+    "E327": {
+      "sup_name": "安安薇儿",
+      "sup_number": "E327",
+      "tax_no": "5227",
+      "transformed": "E327",
+      "categories": [],
+      "note": ""
+    },
+    "D768": {
+      "sup_name": "诗韵饰品",
+      "sup_number": "E426",
+      "tax_no": "4668",
+      "transformed": "D768",
+      "categories": [],
+      "note": ""
+    },
+    "E540": {
+      "sup_name": "心感觉佛珠",
+      "sup_number": "E540",
+      "tax_no": "5440",
+      "transformed": "E540",
+      "categories": [],
+      "note": ""
+    },
+    "E636": {
+      "sup_name": "缘石饰品",
+      "sup_number": "E636",
+      "tax_no": "5536",
+      "transformed": "E636",
+      "categories": [],
+      "note": ""
+    },
+    "E807": {
+      "sup_name": "晶巧钥匙扣",
+      "sup_number": "E807",
+      "tax_no": "5707",
+      "transformed": "E807",
+      "categories": [],
+      "note": ""
+    },
+    "D633": {
+      "sup_name": "森罗饰品",
+      "sup_number": "E891",
+      "tax_no": "4533",
+      "transformed": "D633",
+      "categories": [],
+      "note": ""
+    },
+    "E904": {
+      "sup_name": "含黛水晶饰品",
+      "sup_number": "E904",
+      "tax_no": "5804",
+      "transformed": "E904",
+      "categories": [],
+      "note": ""
+    },
+    "E870": {
+      "sup_name": "舒美饰品",
+      "sup_number": "E920",
+      "tax_no": "5770",
+      "transformed": "E870",
+      "categories": [],
+      "note": ""
+    },
+    "E847": {
+      "sup_name": "苗龙饰品",
+      "sup_number": "E947",
+      "tax_no": "5747",
+      "transformed": "E847",
+      "categories": [],
+      "note": ""
+    },
+    "D197": {
+      "sup_name": "留芳饰品",
+      "sup_number": "E948",
+      "tax_no": "4097",
+      "transformed": "D197",
+      "categories": [],
+      "note": ""
+    },
+    "C797": {
+      "sup_name": "天照饰品",
+      "sup_number": "E949",
+      "tax_no": "3697",
+      "transformed": "C797",
+      "categories": [],
+      "note": ""
+    },
+    "F85": {
+      "sup_name": "D675乐乐",
+      "sup_number": "E950",
+      "tax_no": "675",
+      "transformed": "F85",
+      "categories": [],
+      "note": ""
+    },
+    "A12827": {
+      "sup_name": "亦欣集合店",
+      "sup_number": "E952",
+      "tax_no": "102827",
+      "transformed": "A12827",
+      "categories": [],
+      "note": ""
+    },
+    "B7429": {
+      "sup_name": "戈斯曼美甲",
+      "sup_number": "E953",
+      "tax_no": "26429",
+      "transformed": "B7429",
+      "categories": [],
+      "note": ""
+    },
+    "G7300": {
+      "sup_name": "76300",
+      "sup_number": "E954",
+      "tax_no": "76300",
+      "transformed": "G7300",
+      "categories": [],
+      "note": ""
+    },
+    "C325": {
+      "sup_name": "罕雨饰品",
+      "sup_number": "E955",
+      "tax_no": "3225",
+      "transformed": "C325",
+      "categories": [],
+      "note": ""
+    },
+    "A13065": {
+      "sup_name": "艾艺格",
+      "sup_number": "E958",
+      "tax_no": "103065",
+      "transformed": "A13065",
+      "categories": [],
+      "note": ""
+    },
+    "6304": {
+      "sup_name": "晶顺饰品",
+      "sup_number": "F004",
+      "tax_no": "F204",
+      "transformed": "6304",
+      "categories": [],
+      "note": ""
+    },
+    "A13133": {
+      "sup_name": "迎燕饰品",
+      "sup_number": "F074",
+      "tax_no": "103133",
+      "transformed": "A13133",
+      "categories": [],
+      "note": ""
+    },
+    "A6463": {
+      "sup_name": "吉祥",
+      "sup_number": "F13871",
+      "tax_no": "15463",
+      "transformed": "A6463",
+      "categories": [],
+      "note": ""
+    },
+    "C289": {
+      "sup_name": "爱尚饰品",
+      "sup_number": "F13872",
+      "tax_no": "3189",
+      "transformed": "C289",
+      "categories": [],
+      "note": ""
+    },
+    "8223": {
+      "sup_name": "义务市玄邯贸易公司",
+      "sup_number": "F13874",
+      "tax_no": "H123",
+      "transformed": "8223",
+      "categories": [],
+      "note": ""
+    },
+    "6302": {
+      "sup_name": "晶莎饰品",
+      "sup_number": "F13876",
+      "tax_no": "F202",
+      "transformed": "6302",
+      "categories": [],
+      "note": ""
+    },
+    "A86": {
+      "sup_name": "康乐屋",
+      "sup_number": "F13881",
+      "tax_no": "176",
+      "transformed": "A86",
+      "categories": [],
+      "note": ""
+    },
+    "H3644": {
+      "sup_name": "兔窝玩具",
+      "sup_number": "F13882",
+      "tax_no": "82644",
+      "transformed": "H3644",
+      "categories": [],
+      "note": ""
+    },
+    "C894": {
+      "sup_name": "玲俐饰品",
+      "sup_number": "F13884",
+      "tax_no": "3794",
+      "transformed": "C894",
+      "categories": [],
+      "note": ""
+    },
+    "C3888": {
+      "sup_name": "宁波海比",
+      "sup_number": "F13886",
+      "tax_no": "32888",
+      "transformed": "C3888",
+      "categories": [],
+      "note": ""
+    },
+    "D355": {
+      "sup_name": "米尚项链手链饰品",
+      "sup_number": "F13888",
+      "tax_no": "4255",
+      "transformed": "D355",
+      "categories": [],
+      "note": ""
+    },
+    "F6595": {
+      "sup_name": "兰溪市新派工艺饰品有限公司",
+      "sup_number": "F13889",
+      "tax_no": "65595",
+      "transformed": "F6595",
+      "categories": [],
+      "note": ""
+    },
+    "E953": {
+      "sup_name": "小欢欢饰品",
+      "sup_number": "F13891",
+      "tax_no": "5853",
+      "transformed": "E953",
+      "categories": [],
+      "note": ""
+    },
+    "62111": {
+      "sup_name": "后后娃娃",
+      "sup_number": "F199",
+      "tax_no": "F1111",
+      "transformed": "62111",
+      "categories": [],
+      "note": ""
+    },
+    "6360": {
+      "sup_name": "慧琳饰品",
+      "sup_number": "F2-60",
+      "tax_no": "F260",
+      "transformed": "6360",
+      "categories": [],
+      "note": ""
+    },
+    "C8255": {
+      "sup_name": "麦太行",
+      "sup_number": "F2-61",
+      "tax_no": "37255",
+      "transformed": "C8255",
+      "categories": [],
+      "note": ""
+    },
+    "6303": {
+      "sup_name": "天儿饰品",
+      "sup_number": "F2003",
+      "tax_no": "F203",
+      "transformed": "6303",
+      "categories": [],
+      "note": ""
+    },
+    "6366": {
+      "sup_name": "海燕饰品",
+      "sup_number": "F266",
+      "tax_no": "F266",
+      "transformed": "6366",
+      "categories": [],
+      "note": ""
+    },
+    "C227": {
+      "sup_name": "雅兰饰品",
+      "sup_number": "F272",
+      "tax_no": "3127",
+      "transformed": "C227",
+      "categories": [],
+      "note": ""
+    },
+    "C496": {
+      "sup_name": "3366王兰仙",
+      "sup_number": "F276",
+      "tax_no": "3396",
+      "transformed": "C496",
+      "categories": [],
+      "note": ""
+    },
+    "C222": {
+      "sup_name": "子新饰品（黄红）",
+      "sup_number": "F285",
+      "tax_no": "3122",
+      "transformed": "C222",
+      "categories": [],
+      "note": ""
+    },
+    "C787": {
+      "sup_name": "晏发饰家",
+      "sup_number": "F290",
+      "tax_no": "3687",
+      "transformed": "C787",
+      "categories": [],
+      "note": ""
+    },
+    "B8040": {
+      "sup_name": "缇娜镜梳",
+      "sup_number": "F296",
+      "tax_no": "27040",
+      "transformed": "B8040",
+      "categories": [],
+      "note": ""
+    },
+    "6438": {
+      "sup_name": "恋步饰品",
+      "sup_number": "F3-38",
+      "tax_no": "F338",
+      "transformed": "6438",
+      "categories": [],
+      "note": ""
+    },
+    "6386": {
+      "sup_name": "卡莱夫饰品",
+      "sup_number": "F3-88",
+      "tax_no": "F286",
+      "transformed": "6386",
+      "categories": [],
+      "note": ""
+    },
+    "A12070": {
+      "sup_name": "小青饰品",
+      "sup_number": "F322",
+      "tax_no": "102070",
+      "transformed": "A12070",
+      "categories": [],
+      "note": ""
+    },
+    "D615": {
+      "sup_name": "思瑶饰品",
+      "sup_number": "F324",
+      "tax_no": "4515",
+      "transformed": "D615",
+      "categories": [],
+      "note": ""
+    },
+    "A13422": {
+      "sup_name": "凯伦饰品",
+      "sup_number": "F326",
+      "tax_no": "103422",
+      "transformed": "A13422",
+      "categories": [],
+      "note": ""
+    },
+    "C455": {
+      "sup_name": "花都饰品",
+      "sup_number": "F330",
+      "tax_no": "3355",
+      "transformed": "C455",
+      "categories": [],
+      "note": ""
+    },
+    "A13390": {
+      "sup_name": "小丁饰品",
+      "sup_number": "F336",
+      "tax_no": "103390",
+      "transformed": "A13390",
+      "categories": [],
+      "note": ""
+    },
+    "A13450": {
+      "sup_name": "春天里毛球",
+      "sup_number": "F341",
+      "tax_no": "103450",
+      "transformed": "A13450",
+      "categories": [],
+      "note": ""
+    },
+    "C938": {
+      "sup_name": "浙东饰品",
+      "sup_number": "F375",
+      "tax_no": "3838",
+      "transformed": "C938",
+      "categories": [],
+      "note": ""
+    },
+    "D546": {
+      "sup_name": "恒辉不锈钢饰品",
+      "sup_number": "F377",
+      "tax_no": "4446",
+      "transformed": "D546",
+      "categories": [],
+      "note": ""
+    },
+    "A12588": {
+      "sup_name": "仁庆饰品",
+      "sup_number": "F378",
+      "tax_no": "102588",
+      "transformed": "A12588",
+      "categories": [],
+      "note": ""
+    },
+    "D593": {
+      "sup_name": "欧美奇饰品",
+      "sup_number": "F379",
+      "tax_no": "4493",
+      "transformed": "D593",
+      "categories": [],
+      "note": ""
+    },
+    "D344": {
+      "sup_name": "雅之琦不锈钢",
+      "sup_number": "F381",
+      "tax_no": "4244",
+      "transformed": "D344",
+      "categories": [],
+      "note": ""
+    },
+    "D181": {
+      "sup_name": "卓芬饰品",
+      "sup_number": "F386",
+      "tax_no": "4081",
+      "transformed": "D181",
+      "categories": [],
+      "note": ""
+    },
+    "A1560": {
+      "sup_name": "星宝伞业",
+      "sup_number": "F388",
+      "tax_no": "10560",
+      "transformed": "A1560",
+      "categories": [],
+      "note": ""
+    },
+    "D938": {
+      "sup_name": "旺达饰品",
+      "sup_number": "F390",
+      "tax_no": "4838",
+      "transformed": "D938",
+      "categories": [],
+      "note": ""
+    },
+    "A12617": {
+      "sup_name": "久恋饰品",
+      "sup_number": "F395",
+      "tax_no": "102617",
+      "transformed": "A12617",
+      "categories": [],
+      "note": ""
+    },
+    "A13032": {
+      "sup_name": "亮豆饰品",
+      "sup_number": "F397",
+      "tax_no": "103032",
+      "transformed": "A13032",
+      "categories": [],
+      "note": ""
+    },
+    "E339": {
+      "sup_name": "银滢饰品",
+      "sup_number": "F398",
+      "tax_no": "5239",
+      "transformed": "E339",
+      "categories": [],
+      "note": ""
+    },
+    "B635": {
+      "sup_name": "TATTOO贴纸（华泰印业）",
+      "sup_number": "F399",
+      "tax_no": "2535",
+      "transformed": "B635",
+      "categories": [],
+      "note": ""
+    },
+    "I6987": {
+      "sup_name": "雅格西（U形针）",
+      "sup_number": "F400",
+      "tax_no": "95987",
+      "transformed": "I6987",
+      "categories": [],
+      "note": ""
+    },
+    "D539": {
+      "sup_name": "卓盟饰品",
+      "sup_number": "F401",
+      "tax_no": "4439",
+      "transformed": "D539",
+      "categories": [],
+      "note": ""
+    },
+    "B7717": {
+      "sup_name": "娇兰化妆品",
+      "sup_number": "F404",
+      "tax_no": "26717",
+      "transformed": "B7717",
+      "categories": [],
+      "note": ""
+    },
+    "B7705": {
+      "sup_name": "包包寶",
+      "sup_number": "F407",
+      "tax_no": "26705",
+      "transformed": "B7705",
+      "categories": [],
+      "note": ""
+    },
+    "H257": {
+      "sup_name": "唯隆达工艺品",
+      "sup_number": "F411",
+      "tax_no": "8157",
+      "transformed": "H257",
+      "categories": [],
+      "note": ""
+    },
+    "F8652": {
+      "sup_name": "雨轩彩妆",
+      "sup_number": "F416",
+      "tax_no": "67652",
+      "transformed": "F8652",
+      "categories": [],
+      "note": ""
+    },
+    "B9606": {
+      "sup_name": "PINK KEY（唯美化妆品）",
+      "sup_number": "F418",
+      "tax_no": "28606",
+      "transformed": "B9606",
+      "categories": [],
+      "note": ""
+    },
+    "D680": {
+      "sup_name": "银辉钥匙扣",
+      "sup_number": "FD755",
+      "tax_no": "4580",
+      "transformed": "D680",
+      "categories": [],
+      "note": ""
+    },
+    "D167": {
+      "sup_name": "阿敏饰品",
+      "sup_number": "G146",
+      "tax_no": "4067",
+      "transformed": "D167",
+      "categories": [],
+      "note": ""
+    },
+    "A5608": {
+      "sup_name": "惠琴针线",
+      "sup_number": "G14608",
+      "tax_no": "14608",
+      "transformed": "A5608",
+      "categories": [],
+      "note": ""
+    },
+    "A6483": {
+      "sup_name": "艾琳饰品",
+      "sup_number": "G15483",
+      "tax_no": "15483",
+      "transformed": "A6483",
+      "categories": [],
+      "note": ""
+    },
+    "A6787": {
+      "sup_name": "金达日美工厂",
+      "sup_number": "G15787",
+      "tax_no": "15787",
+      "transformed": "A6787",
+      "categories": [],
+      "note": ""
+    },
+    "A9831": {
+      "sup_name": "瑞力表业",
+      "sup_number": "G18832",
+      "tax_no": "18831",
+      "transformed": "A9831",
+      "categories": [],
+      "note": ""
+    },
+    "A6369": {
+      "sup_name": "顺发发夹",
+      "sup_number": "G18833",
+      "tax_no": "15369",
+      "transformed": "A6369",
+      "categories": [],
+      "note": ""
+    },
+    "G648": {
+      "sup_name": "鑫源工艺扇子",
+      "sup_number": "G517",
+      "tax_no": "7548",
+      "transformed": "G648",
+      "categories": [],
+      "note": ""
+    },
+    "D640": {
+      "sup_name": "奢恋饰品",
+      "sup_number": "J.D640J-1",
+      "tax_no": "4540",
+      "transformed": "D640",
+      "categories": [],
+      "note": ""
+    },
+    "C610": {
+      "sup_name": "贝妮莱饰品",
+      "sup_number": "c610f",
+      "tax_no": "3510",
+      "transformed": "C610",
+      "categories": [],
+      "note": ""
+    },
+    "C897": {
+      "sup_name": "玲珑饰品",
+      "sup_number": "c897",
+      "tax_no": "3797",
+      "transformed": "C897",
+      "categories": [],
+      "note": ""
+    }
+  },
+  "account2": {}
+}

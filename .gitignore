@@ -1,0 +1,50 @@
+# Runtime secrets and local configuration
+ai_config.json
+server_secret.key
+auth_users.sqlite3
+*.env
+cookie*.txt
+
+# Local caches and databases
+customs_server/_sales_cache/
+customs_server/_cache/
+customs_server/_api_cache/
+customs_server/_items_store/
+customs_server/_updates/
+customs_server/logs/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+
+# Build and release output
+customs_server/build*/
+customs_server/dist*/
+build*/
+dist*/
+发行包_Windows/
+*.exe
+*.zip
+*.spec.bak
+
+# Business documents and generated office files
+*.xlsx
+*.xls
+*.xlsm
+*.doc
+*.docx
+*.pdf
+.~*
+~$*
+
+# Python and OS noise
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# Runtime counters and generated history
+.pi_counter.json
+generation_history.json
+customs_server/sequence_counters.json
+customs_server/_supplier_transformed.json

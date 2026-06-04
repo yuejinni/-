@@ -1,0 +1,828 @@
+{
+  "_note": "请在每个叶子分类填入 letter（大写字母，如A）和 code_2d（2位数字，如01）",
+  "account1": {
+    "1291509191433": {
+      "path": "Accessories 饰品/Apparel 服饰",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "1292349958415": {
+      "path": "Accessories 饰品/Apparel 服饰/Baby Skirt",
+      "letter": "F",
+      "code_2d": "95",
+      "odoo_code": "Aa01"
+    },
+    "1292349973175": {
+      "path": "Accessories 饰品/Apparel 服饰/Belt",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Ab03"
+    },
+    "1291509191743": {
+      "path": "Accessories 饰品/Apparel 服饰/Cap",
+      "letter": "F",
+      "code_2d": "51",
+      "odoo_code": "Aa02"
+    },
+    "129228992087": {
+      "path": "Accessories 饰品/Apparel 服饰/Earmuffs",
+      "letter": "T",
+      "code_2d": "81",
+      "odoo_code": "Aa03"
+    },
+    "129228992104": {
+      "path": "Accessories 饰品/Apparel 服饰/Eye Mask",
+      "letter": "T",
+      "code_2d": "48",
+      "odoo_code": "Aa04"
+    },
+    "129228992098": {
+      "path": "Accessories 饰品/Apparel 服饰/Face Mask",
+      "letter": "T",
+      "code_2d": "96",
+      "odoo_code": "Aa05"
+    },
+    "1291509191714": {
+      "path": "Accessories 饰品/Apparel 服饰/Head Band",
+      "letter": "F",
+      "code_2d": "17",
+      "odoo_code": "Ae19"
+    },
+    "129228992072": {
+      "path": "Accessories 饰品/Apparel 服饰/Scarf",
+      "letter": "T",
+      "code_2d": "92",
+      "odoo_code": "Aa06"
+    },
+    "129104395928339": {
+      "path": "Accessories 饰品/Apparel 服饰/Socks",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Aa07"
+    },
+    "1291509191466": {
+      "path": "Accessories 饰品/Hair Accessories 发饰",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "1291654919253190": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Box Clip",
+      "letter": "E",
+      "code_2d": "31",
+      "odoo_code": "Ae01"
+    },
+    "1291316919373272": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Box Rubber",
+      "letter": "E",
+      "code_2d": "10",
+      "odoo_code": "Ae02"
+    },
+    "1291509191621": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Crown",
+      "letter": "E",
+      "code_2d": "63",
+      "odoo_code": "Ae03"
+    },
+    "129726919585473": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Flower Clip",
+      "letter": "E",
+      "code_2d": "41",
+      "odoo_code": "Ae04"
+    },
+    "1291509191549": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Band",
+      "letter": "E",
+      "code_2d": "03",
+      "odoo_code": "Ae19"
+    },
+    "1291509191573": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Clip",
+      "letter": "E",
+      "code_2d": "01",
+      "odoo_code": "Ae06"
+    },
+    "129173299236428": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Donut",
+      "letter": "E",
+      "code_2d": "99",
+      "odoo_code": "Ae07"
+    },
+    "1291509191603": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Net",
+      "letter": "E",
+      "code_2d": "84",
+      "odoo_code": "Ae08"
+    },
+    "1291509191566": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Pin",
+      "letter": "E",
+      "code_2d": "15",
+      "odoo_code": "Ae09"
+    },
+    "1291509191523": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Hair Poney",
+      "letter": "E",
+      "code_2d": "16",
+      "odoo_code": "Ae10"
+    },
+    "129845959287871": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Kids Gift Set",
+      "letter": "F",
+      "code_2d": "24",
+      "odoo_code": "Af02"
+    },
+    "12924659893666": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Oman National Style",
+      "letter": "F",
+      "code_2d": "93",
+      "odoo_code": "Ae12"
+    },
+    "1291509191583": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Rubber",
+      "letter": "E",
+      "code_2d": "02",
+      "odoo_code": "Ae13"
+    },
+    "1292186919225220": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Scarf Pin",
+      "letter": "N",
+      "code_2d": "52",
+      "odoo_code": "Ab02"
+    },
+    "1291654919253199": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Strip Card Clip",
+      "letter": "F",
+      "code_2d": "08",
+      "odoo_code": "Ae14"
+    },
+    "12911489109158688": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Strip Card Rubber",
+      "letter": "F",
+      "code_2d": "09",
+      "odoo_code": "Ae15"
+    },
+    "1291370949619749": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/UAE National Style",
+      "letter": "F",
+      "code_2d": "68",
+      "odoo_code": "Ae16"
+    },
+    "1291509191607": {
+      "path": "Accessories 饰品/Hair Accessories 发饰/Wig",
+      "letter": "T",
+      "code_2d": "55",
+      "odoo_code": "Ae11"
+    },
+    "1291509191479": {
+      "path": "Accessories 饰品/Jewelry 首饰",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "129228992115": {
+      "path": "Accessories 饰品/Jewelry 首饰/Anklet",
+      "letter": "C",
+      "code_2d": "76",
+      "odoo_code": "Ac01"
+    },
+    "129228992158": {
+      "path": "Accessories 饰品/Jewelry 首饰/Bracelet",
+      "letter": "C",
+      "code_2d": "11",
+      "odoo_code": "Ac02"
+    },
+    "129228992119": {
+      "path": "Accessories 饰品/Jewelry 首饰/Brooch",
+      "letter": "N",
+      "code_2d": "42",
+      "odoo_code": "Ac03"
+    },
+    "129228992108": {
+      "path": "Accessories 饰品/Jewelry 首饰/Earring",
+      "letter": "J",
+      "code_2d": "12",
+      "odoo_code": "Ac04"
+    },
+    "129228992127": {
+      "path": "Accessories 饰品/Jewelry 首饰/Finger Ring",
+      "letter": "A",
+      "code_2d": "28",
+      "odoo_code": "Ac05"
+    },
+    "1292316914918414": {
+      "path": "Accessories 饰品/Jewelry 首饰/Forehead Chain",
+      "letter": "E",
+      "code_2d": "",
+      "odoo_code": "Ac06"
+    },
+    "129228992139": {
+      "path": "Accessories 饰品/Jewelry 首饰/Glasses",
+      "letter": "T",
+      "code_2d": "82",
+      "odoo_code": "Ac07"
+    },
+    "1291503939227004": {
+      "path": "Accessories 饰品/Jewelry 首饰/Kids Gifts",
+      "letter": "B",
+      "code_2d": "34",
+      "odoo_code": "Ac08"
+    },
+    "129228992132": {
+      "path": "Accessories 饰品/Jewelry 首饰/Necklace",
+      "letter": "B",
+      "code_2d": "05",
+      "odoo_code": "Ac09"
+    },
+    "129228992187": {
+      "path": "Accessories 饰品/Jewelry 首饰/Necklace Set",
+      "letter": "B",
+      "code_2d": "19",
+      "odoo_code": "Ac10"
+    },
+    "1291509191840": {
+      "path": "Accessories 饰品/Jewelry 首饰/Nose Ring",
+      "letter": "J",
+      "code_2d": "90",
+      "odoo_code": "Ac11"
+    },
+    "129228992151": {
+      "path": "Accessories 饰品/Jewelry 首饰/Watch",
+      "letter": "C",
+      "code_2d": "06",
+      "odoo_code": "Ac12"
+    },
+    "129228992173": {
+      "path": "Accessories 饰品/Jewelry 首饰/Watch Box",
+      "letter": "C",
+      "code_2d": "25",
+      "odoo_code": "Ac13"
+    },
+    "1292349979672": {
+      "path": "Accessories 饰品/Jewelry 首饰/Watch Set",
+      "letter": "C",
+      "code_2d": "32",
+      "odoo_code": "Ac14"
+    },
+    "1291509191042": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "12922599132479": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Bath Scrubber",
+      "letter": "T",
+      "code_2d": "45",
+      "odoo_code": "Mt24"
+    },
+    "1291509191113": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Earpick",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Mt02"
+    },
+    "1291509191299": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Empty Bottle",
+      "letter": "T",
+      "code_2d": "30",
+      "odoo_code": "Mt03"
+    },
+    "1291509191144": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Eyebrow Shaver",
+      "letter": "T",
+      "code_2d": "38",
+      "odoo_code": "Mp06"
+    },
+    "1291509191280": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Facial Mask",
+      "letter": "R",
+      "code_2d": "77",
+      "odoo_code": "Mt05"
+    },
+    "1291509191256": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Foot Care",
+      "letter": "T",
+      "code_2d": "33",
+      "odoo_code": "Mt06"
+    },
+    "12923369892956": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Makeup Cotton",
+      "letter": "R",
+      "code_2d": "65",
+      "odoo_code": "Mt26"
+    },
+    "1291509191222": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Makeup Pin",
+      "letter": "T",
+      "code_2d": "74",
+      "odoo_code": "Mt07"
+    },
+    "1291509191292": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Mask Bowl",
+      "letter": "T",
+      "code_2d": "83",
+      "odoo_code": "Mt08"
+    },
+    "129228992678": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Massage Tools",
+      "letter": "T",
+      "code_2d": "50",
+      "odoo_code": "Mt09"
+    },
+    "129734949240014": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nail Brush",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Mt10"
+    },
+    "1291509191209": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nail Cliper",
+      "letter": "T",
+      "code_2d": "22",
+      "odoo_code": "Mt11"
+    },
+    "1291509191214": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nail File",
+      "letter": "T",
+      "code_2d": "70",
+      "odoo_code": "Mt12"
+    },
+    "1291509191244": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nipper",
+      "letter": "T",
+      "code_2d": "85",
+      "odoo_code": "Mt13"
+    },
+    "1291509191174": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Shaver",
+      "letter": "T",
+      "code_2d": "57",
+      "odoo_code": "Mt14"
+    },
+    "1291509191226": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Tweezers",
+      "letter": "T",
+      "code_2d": "54",
+      "odoo_code": "Mt15"
+    },
+    "129147291793472": {
+      "path": "Cosmetic 美妆用品/Care Tools 护理工具/Woundplast",
+      "letter": "R",
+      "code_2d": "",
+      "odoo_code": "Mt16"
+    },
+    "1292219910406": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "1292219911727": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Artificial Eyelash",
+      "letter": "R",
+      "code_2d": "27",
+      "odoo_code": "Mp01"
+    },
+    "1292219911736": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Artificial Nails",
+      "letter": "T",
+      "code_2d": "18",
+      "odoo_code": "Mp02"
+    },
+    "1292219910684": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Blush",
+      "letter": "Y",
+      "code_2d": "58",
+      "odoo_code": "MY01"
+    },
+    "1291262929295083": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Concealer",
+      "letter": "Y",
+      "code_2d": "89",
+      "odoo_code": "MY02"
+    },
+    "1292384949301820": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Contour",
+      "letter": "Y",
+      "code_2d": "",
+      "odoo_code": "MY03"
+    },
+    "1292219910610": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Eye Shadow",
+      "letter": "Y",
+      "code_2d": "35",
+      "odoo_code": "MY04"
+    },
+    "1292219911497": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Eyebrow Pencil",
+      "letter": "R",
+      "code_2d": "47",
+      "odoo_code": "MY05"
+    },
+    "1292349979380": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Eyelash Glue",
+      "letter": "R",
+      "code_2d": "61",
+      "odoo_code": "MY06"
+    },
+    "1292219911575": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Eyeliner",
+      "letter": "R",
+      "code_2d": "56",
+      "odoo_code": "MY07"
+    },
+    "129886989330782": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Face Clearn",
+      "letter": "Y",
+      "code_2d": "",
+      "odoo_code": "MY23"
+    },
+    "129816979290633": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Foundation",
+      "letter": "T",
+      "code_2d": "66",
+      "odoo_code": "MY08"
+    },
+    "1291233929294610": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Highlight",
+      "letter": "Y",
+      "code_2d": "71",
+      "odoo_code": "MY09"
+    },
+    "1292219910748": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Lipstick",
+      "letter": "Y",
+      "code_2d": "26",
+      "odoo_code": "MY10"
+    },
+    "1291788939305748": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Loose Powder",
+      "letter": "Y",
+      "code_2d": "",
+      "odoo_code": "MY11"
+    },
+    "12926829921430": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Lotion",
+      "letter": "Y",
+      "code_2d": "91",
+      "odoo_code": "MY12"
+    },
+    "1291233929329348": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Makeup Remover",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "MY19"
+    },
+    "1291262929300475": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Makeup Setting Spray",
+      "letter": "Y",
+      "code_2d": "",
+      "odoo_code": "MY13"
+    },
+    "1292219911605": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Mascara",
+      "letter": "T",
+      "code_2d": "53",
+      "odoo_code": "MY14"
+    },
+    "1292219911676": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Nail Glue",
+      "letter": "T",
+      "code_2d": "80",
+      "odoo_code": "MY15"
+    },
+    "1291654919256019": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Nail Polish",
+      "letter": "S",
+      "code_2d": "44",
+      "odoo_code": "MY21"
+    },
+    "1291143979347488": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Nail Polish Remover",
+      "letter": "S",
+      "code_2d": "86",
+      "odoo_code": "MY20"
+    },
+    "1291143979308559": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Pressed Powder",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "MY16"
+    },
+    "12912869169136495": {
+      "path": "Cosmetic 美妆用品/Makeup 化妆品/Pro Makeup kit",
+      "letter": "R",
+      "code_2d": "",
+      "odoo_code": "MY17"
+    },
+    "1292219911646": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "129228992723": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Comb Set",
+      "letter": "T",
+      "code_2d": "36",
+      "odoo_code": "Mt19"
+    },
+    "129150919949": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Eyelash Curler",
+      "letter": "T",
+      "code_2d": "75",
+      "odoo_code": "Mp03"
+    },
+    "129228992706": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Hair Brush",
+      "letter": "T",
+      "code_2d": "04",
+      "odoo_code": "Mt17"
+    },
+    "1291509191312": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Hair Roll",
+      "letter": "T",
+      "code_2d": "49",
+      "odoo_code": "Mp07"
+    },
+    "1292219911706": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Makeup Brush",
+      "letter": "R",
+      "code_2d": "14",
+      "odoo_code": "Mp04"
+    },
+    "129150919984": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Makeup Sponge",
+      "letter": "R",
+      "code_2d": "21",
+      "odoo_code": "Mp05"
+    },
+    "129150919995": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Mirror",
+      "letter": "T",
+      "code_2d": "13",
+      "odoo_code": "Mt18"
+    },
+    "1293079921437": {
+      "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Pencil sharpener",
+      "letter": "R",
+      "code_2d": "",
+      "odoo_code": "Mt20"
+    },
+    "129228992245": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "1291764969394627": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Art Pendant",
+      "letter": "T",
+      "code_2d": "72",
+      "odoo_code": "Ab01"
+    },
+    "129228992730": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Bag",
+      "letter": "T",
+      "code_2d": "20",
+      "odoo_code": ""
+    },
+    "12922599132472": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Bath Towel",
+      "letter": "T",
+      "code_2d": "88",
+      "odoo_code": ""
+    },
+    "129104395928309": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Bed Sheet",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "12914089119382297": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Compressed towels",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "1291509191233": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Cotton Swab",
+      "letter": "T",
+      "code_2d": "59",
+      "odoo_code": "Mt21"
+    },
+    "1292141979178994": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Cotton Tissue",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "129228992661": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Data Line",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gd01"
+    },
+    "1291509191237": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Dental Floss",
+      "letter": "T",
+      "code_2d": "78",
+      "odoo_code": "Mt01"
+    },
+    "129228992593": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Fan",
+      "letter": "T",
+      "code_2d": "37",
+      "odoo_code": "Gd02"
+    },
+    "129228992757": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Flower",
+      "letter": "T",
+      "code_2d": "97",
+      "odoo_code": ""
+    },
+    "129228992774": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Key Chain",
+      "letter": "T",
+      "code_2d": "07",
+      "odoo_code": "Ab06"
+    },
+    "129228992749": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Keychain Doll",
+      "letter": "T",
+      "code_2d": "29",
+      "odoo_code": "Ab07"
+    },
+    "129228992743": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Pillow",
+      "letter": "T",
+      "code_2d": "98",
+      "odoo_code": "Gd06"
+    },
+    "12915469129223031": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Raincoat",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gd03"
+    },
+    "12922599132447": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Shower Cap",
+      "letter": "T",
+      "code_2d": "64",
+      "odoo_code": "Mt22"
+    },
+    "1292349980479": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Tasbi",
+      "letter": "C",
+      "code_2d": "23",
+      "odoo_code": "Ab04"
+    },
+    "129228992525": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Tasbi Counter",
+      "letter": "C",
+      "code_2d": "67",
+      "odoo_code": "Ab05"
+    },
+    "129150919991": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Tattoo Stickers",
+      "letter": "T",
+      "code_2d": "46",
+      "odoo_code": "Ac15"
+    },
+    "12922599132499": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Towel Drying Cap",
+      "letter": "T",
+      "code_2d": "60",
+      "odoo_code": "Mt25"
+    },
+    "129719169111050": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Umberlla",
+      "letter": "T",
+      "code_2d": "40",
+      "odoo_code": "Gd04"
+    },
+    "129228992737": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Wallet",
+      "letter": "Y",
+      "code_2d": "73",
+      "odoo_code": "Gd05"
+    },
+    "12921579149168807": {
+      "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Wipes",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "MY18"
+    },
+    "129228992234": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "129228992367": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Button",
+      "letter": "T",
+      "code_2d": "87",
+      "odoo_code": "Gi01"
+    },
+    "129770929225052": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Needle",
+      "letter": "T",
+      "code_2d": "79",
+      "odoo_code": "Gi02"
+    },
+    "12922092921411": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Plastic Beads",
+      "letter": "F",
+      "code_2d": "",
+      "odoo_code": "Gi03"
+    },
+    "129228992359": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Ruler",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gi04"
+    },
+    "129228992402": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Safety Pin",
+      "letter": "T",
+      "code_2d": "69",
+      "odoo_code": "Gi05"
+    },
+    "129228992406": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Scissors",
+      "letter": "T",
+      "code_2d": "43",
+      "odoo_code": "Gi06"
+    },
+    "129228992395": {
+      "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Sewing Kit",
+      "letter": "T",
+      "code_2d": "39",
+      "odoo_code": "Gi07"
+    },
+    "129228992279": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品",
+      "letter": "",
+      "code_2d": "",
+      "odoo_code": ""
+    },
+    "129228992344": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Phone Bag",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg01"
+    },
+    "1291220949481635": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Arm Band",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg02"
+    },
+    "1291013949481359": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Bop Bag",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg03"
+    },
+    "129228992302": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Cap",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg04"
+    },
+    "129145199358345": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Earplug",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg05"
+    },
+    "129228992318": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Goggles",
+      "letter": "T",
+      "code_2d": "62",
+      "odoo_code": "Gg06"
+    },
+    "12965591925213": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Ring",
+      "letter": "T",
+      "code_2d": "94",
+      "odoo_code": "Gg08"
+    },
+    "1291220949481571": {
+      "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Vest",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Gg09"
+    },
+    "1292404979255147": {
+      "path": "美人头款/Comb",
+      "letter": "T",
+      "code_2d": "",
+      "odoo_code": "Mt17"
+    }
+  },
+  "account2": {}
+}
