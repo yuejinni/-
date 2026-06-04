@@ -308,8 +308,7 @@ def home():
     return redirect('/jdy')
 
 
-@app.route('/login', methods=['GET', 'POST'])
-def login_page():
+def _legacy_login_page_unused():
     error = ''
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
@@ -367,7 +366,8 @@ def logout_page():
     return redirect('/login')
 
 
-def _login_page_v2():
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
     error = ''
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
@@ -437,10 +437,6 @@ button{{width:100%;height:44px;margin-top:20px;border:0;border-radius:8px;backgr
   </form>
 </body>
 </html>'''
-
-
-app.view_functions['login_page'] = _login_page_v2
-
 
 @app.route('/register', methods=['GET', 'POST'])
 def register_page():
@@ -1848,24 +1844,32 @@ def jdy_config_set():
         data = request.get_json(force=True) or {}
         idx  = int(data.get('idx', 1))   # 1=饰品, 2=箱包
         pfx  = '' if idx == 1 else '2'   # json key 前缀
+        critical_keys = ('client_id', 'app_key', 'app_secret', 'client_secret', 'db_id', 'domain')
+        if not any(str(data.get(k) or '').strip() for k in critical_keys):
+            return jsonify({'success': False, 'error': '配置未加载，禁止保存空配置'}), 400
         updates = {}
-        if data.get('name'):
-            updates[f'jdy{pfx}_name']          = data['name']
-        if data.get('client_id'):
-            updates[f'jdy{pfx}_client_id']     = data['client_id']
-        if data.get('app_key'):
-            updates[f'jdy{pfx}_app_key']       = data['app_key']
+        name = str(data.get('name') or '').strip()
+        client_id = str(data.get('client_id') or '').strip()
+        app_key = str(data.get('app_key') or '').strip()
+        db_id = str(data.get('db_id') or '').strip()
+        domain = str(data.get('domain') or '').strip()
+        if name:
+            updates[f'jdy{pfx}_name']          = name
+        if client_id:
+            updates[f'jdy{pfx}_client_id']     = client_id
+        if app_key:
+            updates[f'jdy{pfx}_app_key']       = app_key
         app_secret = str(data.get('app_secret') or '').strip()
         client_secret = str(data.get('client_secret') or '').strip()
         if app_secret:
             updates[f'jdy{pfx}_app_secret']    = app_secret
         if client_secret:
             updates[f'jdy{pfx}_client_secret'] = client_secret
-        if data.get('db_id'):
-            updates[f'jdy{pfx}_db_id']         = data['db_id']
-            updates[f'jdy{pfx}_outer_instance_id'] = data['db_id']
-        if data.get('domain') is not None:
-            updates[f'jdy{pfx}_domain']        = data['domain']
+        if db_id:
+            updates[f'jdy{pfx}_db_id']         = db_id
+            updates[f'jdy{pfx}_outer_instance_id'] = db_id
+        if domain:
+            updates[f'jdy{pfx}_domain']        = domain
         _save_jdy_config(updates)
         # 重新初始化对应客户端
         if idx == 1:

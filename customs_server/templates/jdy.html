@@ -5733,6 +5733,10 @@ async function saveJdyConfig(idx=1) {
   const cs = document.getElementById(`s${p}-client-secret`).value.trim();
   const db = document.getElementById(`s${p}-db-id`).value.trim();
   const dm = document.getElementById(`s${p}-domain`).value.trim();
+  if (!ci && !ak && !as && !cs && !db && !dm) {
+    alert('配置未加载，禁止保存空配置。请刷新页面并确认非敏感字段已回显后再保存。');
+    return;
+  }
   if (nm) body.name          = nm;
   if (ci) body.client_id     = ci;
   if (ak) body.app_key       = ak;
