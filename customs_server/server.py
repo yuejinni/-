@@ -1203,10 +1203,63 @@ def ai_identify():
 # 精斗云 (JDY) 相关端点
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _runtime_config_candidates():
+    candidates = []
+    env_path = os.environ.get('QIHANG_CONFIG_FILE')
+    if env_path:
+        candidates.append(env_path)
+    candidates.extend([
+        os.path.join(_DATA_BASE, 'ai_config.json'),
+        os.path.join(_EXE_DIR, 'ai_config.json'),
+        os.path.join(os.getcwd(), 'ai_config.json'),
+    ])
+    try:
+        from ai_identify import _CONFIG_FILE
+        candidates.append(_CONFIG_FILE)
+    except Exception:
+        pass
+    candidates.append(os.path.join(os.path.dirname(_DATA_BASE), 'ai_config.json'))
+    result = []
+    seen = set()
+    for path in candidates:
+        if not path:
+            continue
+        full = os.path.abspath(path)
+        key = os.path.normcase(full)
+        if key not in seen:
+            seen.add(key)
+            result.append(full)
+    return result
+
+
+def _runtime_config_file():
+    for path in _runtime_config_candidates():
+        if os.path.exists(path):
+            return path
+    return os.path.join(_DATA_BASE, 'ai_config.json')
+
+
+def _load_runtime_config():
+    path = _runtime_config_file()
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_runtime_config(cfg):
+    path = _runtime_config_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
 def _load_jdy_config():
     """从 ai_config.json 读取账套1 JDY 配置"""
-    from ai_identify import _load_config
-    cfg = _load_config()
+    cfg = _load_runtime_config()
     return {
         'name':          cfg.get('jdy_name', '饰品'),
         'client_id':     cfg.get('jdy_client_id', ''),
@@ -1221,8 +1274,7 @@ def _load_jdy_config():
 
 def _load_jdy_config2():
     """从 ai_config.json 读取账套2 JDY 配置"""
-    from ai_identify import _load_config
-    cfg = _load_config()
+    cfg = _load_runtime_config()
     return {
         'name':          cfg.get('jdy2_name', '箱包'),
         'client_id':     cfg.get('jdy2_client_id', ''),
@@ -1237,9 +1289,7 @@ def _load_jdy_config2():
 
 def _save_jdy_config(updates):
     """将 JDY 配置合并写回 ai_config.json"""
-    from ai_identify import _load_config, _CONFIG_FILE
-    import json
-    cfg = _load_config()
+    cfg = _load_runtime_config()
     secret_keys = {
         'jdy_app_secret', 'jdy_client_secret',
         'jdy2_app_secret', 'jdy2_client_secret',
@@ -1249,8 +1299,7 @@ def _save_jdy_config(updates):
             continue
         if v is not None:
             cfg[k] = v
-    with open(_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    _save_runtime_config(cfg)
 
 
 def _ensure_jdy_client():
