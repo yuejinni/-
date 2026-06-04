@@ -1784,8 +1784,7 @@ def _lookup_suppliers(items, preferred_cli_fn=None, supplier_overrides=None, cod
 
 
 def _load_ai_config():
-    from ai_identify import _load_config
-    return _load_config()
+    return _load_runtime_config()
 
 
 def _extract_supplier_address(supplier):
@@ -5341,6 +5340,13 @@ _daily_compare_state = {
 
 def _sales_sync_config():
     cfg = _load_ai_config()
+    def _first_text(*names):
+        for name in names:
+            value = str(cfg.get(name) or '').strip()
+            if value:
+                return value
+        return ''
+
     def _int(name, default, min_value=1, max_value=365):
         try:
             value = int(cfg.get(name, default))
@@ -5350,29 +5356,42 @@ def _sales_sync_config():
     expire_action = str(cfg.get('sales_cache_expire_action') or 'delete').strip().lower()
     if expire_action not in ('delete', 'archive'):
         expire_action = 'delete'
+    manual_days = _int(
+        'sales_cache_manual_days',
+        _int('sales_incremental_lookback_days', 3, 1, 60),
+        1,
+        60,
+    )
+    factory_begin = _first_text('sales_factory_purchase_begin_date', 'factory_purchase_begin_date')
+    factory_new_begin = _first_text(
+        'sales_factory_new_logic_begin_date',
+        'factory_new_logic_begin_date',
+        'sales_factory_purchase_begin_date',
+        'factory_purchase_begin_date',
+    )
+    accessory_begin = _first_text(
+        'accessory_purchase_begin_date',
+        'sales_accessory_purchase_begin_date',
+        'sales_factory_purchase_begin_date',
+        'factory_purchase_begin_date',
+    )
+    accessory_terms = _first_text('accessory_supplier_terms', 'accessory_supplier_keywords')
     return {
         'enabled': bool(cfg.get('sales_auto_sync_enabled', False)),
         'interval_minutes': _int('sales_auto_sync_interval_minutes', 5, 1, 1440),
         'keep_days': _int('sales_cache_keep_days', 30, 1, 365),
-        'lookback_days': _int('sales_incremental_lookback_days', 3, 1, 60),
-        'daily_compare_time': str(cfg.get('jdy_daily_compare_time') or '').strip(),
+        'lookback_days': manual_days,
+        'manual_days': manual_days,
+        'daily_compare_time': _first_text('sales_cache_daily_time', 'jdy_daily_compare_time'),
         'expire_action': expire_action,
         'archive_path': str(cfg.get('sales_cache_archive_path') or '').strip(),
-        'factory_purchase_begin_date': str(cfg.get('sales_factory_purchase_begin_date') or '').strip(),
-        'factory_new_logic_begin_date': str(
-            cfg.get('sales_factory_purchase_begin_date')
-            or cfg.get('sales_factory_new_logic_begin_date')
-            or ''
-        ).strip(),
-        'factory_disabled_suppliers': str(cfg.get('sales_factory_disabled_suppliers') or '').strip(),
+        'factory_purchase_begin_date': factory_begin,
+        'factory_new_logic_begin_date': factory_new_begin,
+        'factory_disabled_suppliers': _first_text('sales_factory_disabled_suppliers', 'factory_disabled_suppliers'),
         'accessory_enabled': bool(cfg.get('accessory_auto_sync_enabled', False)),
         'accessory_interval_minutes': _int('accessory_auto_sync_interval_minutes', 5, 1, 1440),
-        'accessory_purchase_begin_date': str(
-            cfg.get('accessory_purchase_begin_date')
-            or cfg.get('sales_factory_purchase_begin_date')
-            or ''
-        ).strip(),
-        'accessory_supplier_terms': str(cfg.get('accessory_supplier_terms') or '辅料供应商\n辅料').strip(),
+        'accessory_purchase_begin_date': accessory_begin,
+        'accessory_supplier_terms': accessory_terms or '辅料供应商\n辅料',
         'accessory_supplier_cache_hours': _int('accessory_supplier_cache_hours', 24, 1, 720),
     }
 
@@ -7608,23 +7627,43 @@ def sales_sync_config_set():
         expire_action = str(data.get('expire_action') or 'delete').strip().lower()
         if expire_action not in ('delete', 'archive'):
             expire_action = 'delete'
+        daily_compare_time = str(data.get('daily_compare_time') or '').strip()
+        archive_path = str(data.get('archive_path') or '').strip()
         factory_switch_date = str(data.get('factory_purchase_begin_date') or '').strip()
+        factory_disabled_suppliers = str(data.get('factory_disabled_suppliers') or '').strip()
+        accessory_purchase_begin_date = str(data.get('accessory_purchase_begin_date') or '').strip()
+        accessory_supplier_terms = str(data.get('accessory_supplier_terms') or '').strip()
         updates = {
             'sales_auto_sync_enabled': False,
             'sales_auto_sync_interval_minutes': _bounded_int('interval_minutes', 5, 1, 1440),
             'sales_cache_keep_days': _bounded_int('keep_days', 30, 1, 365),
             'sales_incremental_lookback_days': _bounded_int('lookback_days', 3, 1, 60),
-            'jdy_daily_compare_time': str(data.get('daily_compare_time') or '').strip(),
+            'sales_cache_manual_days': _bounded_int('lookback_days', 3, 1, 60),
             'sales_cache_expire_action': expire_action,
-            'sales_cache_archive_path': str(data.get('archive_path') or '').strip(),
-            'sales_factory_purchase_begin_date': factory_switch_date,
-            'sales_factory_new_logic_begin_date': factory_switch_date,
-            'sales_factory_disabled_suppliers': str(data.get('factory_disabled_suppliers') or '').strip(),
             'accessory_auto_sync_enabled': False,
             'accessory_auto_sync_interval_minutes': _bounded_int('accessory_interval_minutes', 5, 1, 1440),
-            'accessory_purchase_begin_date': str(data.get('accessory_purchase_begin_date') or '').strip(),
             'accessory_supplier_terms': str(data.get('accessory_supplier_terms') or '').strip() or '辅料供应商\n辅料',
         }
+        if not accessory_supplier_terms:
+            updates.pop('accessory_supplier_terms', None)
+        if daily_compare_time:
+            updates['jdy_daily_compare_time'] = daily_compare_time
+            updates['sales_cache_daily_time'] = daily_compare_time
+        if archive_path:
+            updates['sales_cache_archive_path'] = archive_path
+        if factory_switch_date:
+            updates['sales_factory_purchase_begin_date'] = factory_switch_date
+            updates['sales_factory_new_logic_begin_date'] = factory_switch_date
+            updates['factory_purchase_begin_date'] = factory_switch_date
+            updates['factory_new_logic_begin_date'] = factory_switch_date
+        if factory_disabled_suppliers:
+            updates['sales_factory_disabled_suppliers'] = factory_disabled_suppliers
+            updates['factory_disabled_suppliers'] = factory_disabled_suppliers
+        if accessory_purchase_begin_date:
+            updates['accessory_purchase_begin_date'] = accessory_purchase_begin_date
+        if accessory_supplier_terms:
+            updates['accessory_supplier_terms'] = accessory_supplier_terms
+            updates['accessory_supplier_keywords'] = accessory_supplier_terms
         _save_jdy_config(updates)
         return jsonify({'success': True, 'config': _sales_sync_config()})
     except Exception as e:
