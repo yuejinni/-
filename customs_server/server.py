@@ -51,6 +51,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from flask import session, redirect, url_for
+from werkzeug.security import check_password_hash
 
 app = Flask(__name__)
 APP_BUILD = '20260603-reorder-mvp'
@@ -95,11 +96,12 @@ def _hash_password(password, salt=''):
 
 def _verify_password(password, stored):
     try:
+        stored = str(stored or '')
         parts = str(stored or '').split('$')
-        if len(parts) != 3 or parts[0] != 'pbkdf2_sha256':
-            return False
-        expected = _hash_password(password, parts[1])
-        return hmac.compare_digest(expected, stored)
+        if len(parts) == 3 and parts[0] == 'pbkdf2_sha256':
+            expected = _hash_password(password, parts[1])
+            return hmac.compare_digest(expected, stored)
+        return check_password_hash(stored, password or '')
     except Exception:
         return False
 
@@ -126,7 +128,7 @@ def _auth_conn():
     if admin:
         conn.execute(
             '''UPDATE users
-               SET password_hash = ?, name = ?, role = 'admin', status = 'active', approved_at = COALESCE(NULLIF(approved_at, ''), ?)
+               SET password_hash = COALESCE(NULLIF(password_hash, ''), ?), name = ?, role = 'admin', status = 'active', approved_at = COALESCE(NULLIF(approved_at, ''), ?)
                WHERE username = ?''',
             (admin_hash, '管理员', now, _ADMIN_USER),
         )
@@ -388,6 +390,17 @@ def _login_page_v2():
                     nxt = '/jdy'
                 return redirect(nxt)
         else:
+            if hmac.compare_digest(username, _AUTH_USER) and hmac.compare_digest(password, _AUTH_PASS):
+                session.clear()
+                session.permanent = remember
+                session['auth_ok'] = True
+                session['auth_user'] = username
+                session['auth_name'] = username
+                session['auth_role'] = 'admin' if username == _ADMIN_USER else 'user'
+                nxt = request.args.get('next') or '/jdy'
+                if not nxt.startswith('/'):
+                    nxt = '/jdy'
+                return redirect(nxt)
             error = '账号或密码错误'
     return f'''<!doctype html>
 <html lang="zh-CN">
