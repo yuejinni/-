@@ -1429,8 +1429,7 @@ def _init_jdy_client_with_working_domain(idx, client_id, app_key, app_secret, db
 
 
 def _refresh_jdy_auth_for_idx(idx):
-    from ai_identify import _load_config, _CONFIG_FILE
-    cfg_all = _load_config()
+    cfg_all = _load_runtime_config()
     pfx = '' if int(idx) == 1 else '2'
     client_id = cfg_all.get(f'jdy{pfx}_client_id', '')
     client_secret = cfg_all.get(f'jdy{pfx}_client_secret', '')
@@ -1457,8 +1456,7 @@ def _refresh_jdy_auth_for_idx(idx):
     if account_id:
         updates[f'jdy{pfx}_db_id'] = account_id
     cfg_all.update(updates)
-    with open(_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cfg_all, f, ensure_ascii=False, indent=2)
+    _save_runtime_config(cfg_all)
     cli, working_domain, msg = _init_jdy_client_with_working_domain(
         idx,
         client_id, app_key, app_secret,
@@ -1470,8 +1468,7 @@ def _refresh_jdy_auth_for_idx(idx):
         return {'success': False, 'error': f'账套{idx}业务接口路由不可用：{msg}'}
     if working_domain and working_domain != cfg_all.get(f'jdy{pfx}_domain', ''):
         cfg_all[f'jdy{pfx}_domain'] = working_domain
-        with open(_CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(cfg_all, f, ensure_ascii=False, indent=2)
+        _save_runtime_config(cfg_all)
     return {'success': True, 'client': cli, 'message': msg, 'domain': working_domain}
 
 
@@ -1952,7 +1949,6 @@ def jdy_config_set():
             updates[f'jdy{pfx}_client_secret'] = client_secret
         if db_id:
             updates[f'jdy{pfx}_db_id']         = db_id
-            updates[f'jdy{pfx}_outer_instance_id'] = db_id
         if domain:
             updates[f'jdy{pfx}_domain']        = domain
         _save_jdy_config(updates)
@@ -2429,12 +2425,11 @@ def jdy_refresh_auth():
     成功后自动写入 ai_config.json 并重新初始化 client
     """
     try:
-        from ai_identify import _load_config, _CONFIG_FILE
         data = request.get_json(force=True) or {}
         idx  = int(data.get('idx', 1))
         pfx  = '' if idx == 1 else '2'
 
-        cfg_all = _load_config()
+        cfg_all = _load_runtime_config()
         client_id     = cfg_all.get(f'jdy{pfx}_client_id', '')
         client_secret = cfg_all.get(f'jdy{pfx}_client_secret', '')
         outer_id      = cfg_all.get(f'jdy{pfx}_outer_instance_id', '') or cfg_all.get(f'jdy{pfx}_db_id', '')
@@ -2446,7 +2441,7 @@ def jdy_refresh_auth():
         auth = _refresh_jdy_auth_for_idx(idx)
         if not auth.get('success'):
             return jsonify({'success': False, 'error': auth.get('error') or '刷新授权失败'})
-        cfg_all = _load_config()
+        cfg_all = _load_runtime_config()
         app_key = cfg_all.get(f'jdy{pfx}_app_key', '')
         app_secret = cfg_all.get(f'jdy{pfx}_app_secret', '')
         domain = cfg_all.get(f'jdy{pfx}_domain', '')
