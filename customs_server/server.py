@@ -5106,37 +5106,88 @@ def _cache_one_transfer_order_from_jdy(cli, account, number):
     return True
 
 
+def _webhook_process_result(ok=False, cached=False, reason='', message='', failed=False):
+    return {
+        'ok': bool(ok),
+        'cached': bool(cached),
+        'reason': str(reason or ''),
+        'message': str(message or reason or ''),
+        'failed': bool(failed),
+    }
+
+
 def _cache_one_accessory_purchase_order_from_jdy(cli, account, number):
     if not cli or not number:
-        return False
+        return _webhook_process_result(
+            reason='missing_bill_no',
+            message='缺少采购订单单号，无法更新辅料页面',
+        )
     result = cli.get_purchase_order_requests(
         page=1, page_size=1, search=number, bill_status=0
     )
     rows = result.get('list') or []
     if not rows:
-        return False
+        return _webhook_process_result(
+            reason='purchase_order_not_found',
+            message='采购订单未查到，可能 webhook 传的是内部 ID，或 bill_status=0 状态过滤导致未命中',
+        )
+    exact_mismatch = False
     with _sales_cache_conn() as conn:
         for row in rows:
             row_no = str(_first_value(row, ['number', 'billNo', 'id'], '')).strip()
             if row_no and row_no != str(number).strip():
+                exact_mismatch = True
                 continue
             supplier_no = str(_first_value(row, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')).strip()
             supplier = _read_cached_jdy_supplier(conn, account, supplier_no) if supplier_no else {}
             if supplier_no and supplier is None:
-                try:
-                    supplier = cli.get_supplier_by_number(supplier_no, status=2) or {}
-                    if supplier:
-                        _cache_upsert_jdy_supplier(conn, account, supplier)
-                except Exception:
-                    supplier = {}
+                supplier = cli.get_supplier_by_number(supplier_no, status=2) or {}
+                if supplier:
+                    _cache_upsert_jdy_supplier(conn, account, supplier)
             order = _normalize_accessory_purchase_order(row, account, supplier or {})
             if not _supplier_matches_accessory(supplier or {}, row):
-                continue
+                if supplier_no and not supplier:
+                    return _webhook_process_result(
+                        reason='supplier_missing',
+                        message=f'供应商资料缺失，无法判断是否为辅料供应商：{supplier_no}',
+                    )
+                supplier_name = order.get('supplierName') or supplier_no or '未知供应商'
+                return _webhook_process_result(
+                    reason='supplier_not_accessory',
+                    message=f'供应商不是辅料供应商，未进入辅料页面：{supplier_name}',
+                )
+            if not order.get('entries'):
+                return _webhook_process_result(
+                    reason='empty_entries',
+                    message=f'采购订单无商品明细，未进入辅料页面：{order.get("number") or number}',
+                )
             order = _enrich_accessory_purchase_order(order)
             _cache_upsert_accessory_purchase_order(conn, order)
             conn.commit()
-            return True
-    return False
+            return _webhook_process_result(
+                ok=True,
+                cached=True,
+                reason='cached',
+                message=f'已缓存辅料采购订单：{order.get("number") or number}',
+            )
+    if exact_mismatch:
+        return _webhook_process_result(
+            reason='purchase_order_not_exact_match',
+            message=f'采购订单未精确匹配：webhook 单号 {number} 与查询结果单号不一致',
+        )
+    return _webhook_process_result(
+        reason='recorded_only',
+        message='仅记录，未处理：采购订单未满足辅料缓存条件',
+    )
+
+
+def _webhook_result_to_finish(result):
+    if isinstance(result, dict):
+        success = not bool(result.get('failed'))
+        message = str(result.get('message') or result.get('reason') or '')
+        return success, message
+    ok = bool(result)
+    return ok, '' if ok else 'recorded only'
 
 
 def _flatten_webhook_items(value):
@@ -5160,8 +5211,8 @@ def _extract_webhook_bill_numbers(payload):
     payload = payload or {}
     numbers = []
     keys = [
-        'number', 'billNo', 'billNumber', 'bill_no', 'billId', 'id',
-        'sourceBillNo', 'srcBillNo', 'orderNo', 'orderNumber',
+        'number', 'billNo', 'billNumber', 'bill_no', 'orderNo', 'orderNumber',
+        'sourceBillNo', 'srcBillNo', 'billId', 'id',
     ]
     list_keys = ['numbers', 'billNos', 'billNoList', 'ids', 'idList']
     for item in _flatten_webhook_items(payload):
@@ -5311,7 +5362,10 @@ def _process_webhook_event(event):
         raise RuntimeError(f'account not configured: {account or "-"}')
     if not number:
         _log_event('JDY_WEBHOOK', f'event has no bill number, queued only: resource={resource} account={account_name}')
-        return False
+        return _webhook_process_result(
+            reason='missing_bill_no',
+            message=f'缺少单号，未处理：resource={resource or "unknown"}',
+        )
     if resource in ('sales', 'sales_order') or 'sal_bill' in resource or 'delivery' in resource:
         return _cache_one_sales_order_from_jdy(cli, account_name, number)
     if resource == 'transfer' or 'transfer' in resource:
@@ -5393,8 +5447,13 @@ def _webhook_worker_loop():
                 'message': f"processing {event.get('resource')} {event.get('bill_no')}",
                 'pending': _webhook_pending_count(),
             })
-            ok = _process_webhook_event(event)
-            _finish_webhook_event(event['id'], True, '' if ok else 'recorded only')
+            result = _process_webhook_event(event)
+            success, message = _webhook_result_to_finish(result)
+            _finish_webhook_event(event['id'], success, message)
+            if not success:
+                _webhook_record_backoff(message)
+                time.sleep(3)
+                continue
             _webhook_state['processed'] = int(_webhook_state.get('processed') or 0) + 1
             _webhook_state['consecutive_failures'] = 0
             if _webhook_state.get('max_items_remaining') is not None:
