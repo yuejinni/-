@@ -258,6 +258,170 @@ def identify_product(
     }
 
 
+# ── 订单照片解析 ──────────────────────────────────────────────────────────────
+
+def _build_order_prompt(supplier_categories: list[str] | None = None) -> str:
+    """构建订单解析 prompt"""
+    cat_hint = ''
+    if supplier_categories:
+        cat_hint = '、'.join(supplier_categories)
+    else:
+        cat_hint = 'A/B/C/...'
+
+    return (
+        '识别订单图中的供应商名称和所有产品行，只输出 JSON，不要加说明：\n'
+        '{\n'
+        '  "supplier_name": "供应商名或档口号",\n'
+        '  "products": [\n'
+        '    {"line":1, "name":"中文名≤12字", "spec":"颜色规格≤15字",\n'
+        f'     "category_hint":"从以下选一个大写字母: {cat_hint}",\n'
+        '     "qty":数量, "price":单价,\n'
+        '     "ctn_qty":箱数, "pcs_per_ctn":每箱件数}\n'
+        '  ]\n'
+        '}\n'
+        '数字识别不到填0，只输出JSON不加说明。'
+    )
+
+
+def _parse_order_json(ai_text: str) -> dict:
+    """
+    从 AI 回复中提取 JSON 对象。
+    支持 AI 可能在 JSON 前后加说明文字的情况。
+    """
+    text = ai_text.strip()
+    # 尝试找 JSON 块（```json ... ``` 或直接 { ... }）
+    import re as _re
+    # 去掉 markdown 代码块
+    text = _re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
+    # 找第一个 { 到最后一个 }
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end == -1:
+        return {}
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return {}
+
+
+def parse_order_image(
+    image_b64: str | None = None,
+    image_url: str | None = None,
+    supplier_categories: list[str] | None = None,
+    cfg_path: str | None = None,
+) -> dict:
+    """
+    解析订单照片，返回供应商名 + 多行产品。
+
+    参数:
+        image_b64:           base64 编码图片
+        image_url:           图片 URL
+        supplier_categories: 供应商可选分类字母列表（缩小 AI 判断范围）
+        cfg_path:            ai_config.json 路径
+
+    返回:
+    {
+        "supplier_name": "广州XX档口",
+        "products": [
+            {"line": 1, "name": "珍珠手链", "spec": "金色约20cm",
+             "category_hint": "C", "qty": 120, "price": 9.8,
+             "ctn_qty": 10, "pcs_per_ctn": 12}
+        ],
+        "raw_text": "...",
+        "error": null
+    }
+    """
+    _empty = {'supplier_name': '', 'products': [], 'raw_text': '', 'error': None}
+
+    if not image_b64 and not image_url:
+        return {**_empty, 'error': '需要提供 image_b64 或 image_url'}
+
+    cfg = _load_cfg(cfg_path)
+    api_key = cfg.get('qianwen_api_key', '').strip()
+    if not api_key:
+        return {**_empty, 'error': '请在 ai_config.json 中配置 qianwen_api_key'}
+
+    model = cfg.get('qianwen_model', 'qwen-vl-max')
+    prompt = _build_order_prompt(supplier_categories)
+
+    try:
+        # 增加 max_tokens 到 1500 以容纳多行 JSON
+        content = []
+        if image_b64:
+            if not image_url:
+                content.append({'type': 'image_url',
+                                'image_url': {'url': f'data:image/jpeg;base64,{image_b64}'}})
+        elif image_url:
+            b64 = _url_to_b64(image_url)
+            if b64:
+                content.append({'type': 'image_url',
+                                'image_url': {'url': f'data:image/jpeg;base64,{b64}'}})
+            else:
+                content.append({'type': 'image_url',
+                                'image_url': {'url': _safe_url(image_url)}})
+        content.append({'type': 'text', 'text': prompt})
+
+        payload = json.dumps({
+            'model': model,
+            'messages': [{'role': 'user', 'content': content}],
+            'max_tokens': 1500,
+        }).encode('utf-8')
+
+        conn = http.client.HTTPSConnection('dashscope.aliyuncs.com', timeout=60,
+                                            context=_SSL_CTX)
+        try:
+            conn.request('POST', '/compatible-mode/v1/chat/completions',
+                         body=payload,
+                         headers={
+                             'Authorization': f'Bearer {api_key}',
+                             'Content-Type':  'application/json',
+                         })
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode('utf-8'))
+        finally:
+            conn.close()
+
+        raw_text = data['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        return {**_empty, 'error': str(e)}
+
+    parsed = _parse_order_json(raw_text)
+    if not parsed:
+        return {**_empty, 'raw_text': raw_text,
+                'error': f'JSON 解析失败，AI 原文: {raw_text[:200]}'}
+
+    # 规范化产品列表
+    products = []
+    for i, item in enumerate(parsed.get('products') or []):
+        if not isinstance(item, dict):
+            continue
+        products.append({
+            'line':          item.get('line', i + 1),
+            'name':          str(item.get('name') or '').strip()[:12],
+            'spec':          str(item.get('spec') or '').strip()[:15],
+            'category_hint': str(item.get('category_hint') or '').strip()[:2].upper(),
+            'qty':           _to_num(item.get('qty'), 0),
+            'price':         _to_num(item.get('price'), 0.0),
+            'ctn_qty':       _to_num(item.get('ctn_qty'), 0),
+            'pcs_per_ctn':   _to_num(item.get('pcs_per_ctn'), 0),
+        })
+
+    return {
+        'supplier_name': str(parsed.get('supplier_name') or '').strip(),
+        'products':      products,
+        'raw_text':      raw_text,
+        'error':         None,
+    }
+
+
+def _to_num(val, default):
+    """安全转数字"""
+    try:
+        return type(default)(val)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── 快速测试（不实际调用 API）────────────────────────────────────────────────
 if __name__ == '__main__':
     sample_text = (

@@ -254,6 +254,98 @@ class JDYCache:
                     'msg': result.get('msg') or result.get('message') or str(result)}
         return {'ok': True, 'data': result.get('data') or result}
 
+    def create_purchase_order(self, account: str, order: dict) -> dict:
+        """
+        调用 POST /jdyscm/purchaseOrder/add 新建购货订单。
+
+        order 格式:
+        {
+            'supplier_number': 'JDY供应商编号',
+            'date': '2026-06-04',
+            'entries': [
+                {'productNumber': 'C.A1262902-0001', 'qty': 120,
+                 'price': 9.8, 'unit': 'PCS_unitId', 'location': '金华仓库'}
+            ]
+        }
+
+        返回: {'ok': True, 'data': {...}, 'order_number': '...'} 或
+              {'ok': False, 'errcode': N, 'msg': '...'}
+        """
+        cli = self._get_client(account)
+        body = {
+            'items': [{
+                'number': '',  # 系统自动生成
+                'date': order.get('date', ''),
+                'supplierNumber': order.get('supplier_number', ''),
+                'entries': order.get('entries', []),
+            }]
+        }
+        result = cli._request('POST', '/jdyscm/purchaseOrder/add',
+                              body=body, query=cli._api_query())
+        errcode = result.get('errcode') or result.get('code') or 0
+        if errcode and errcode != 0:
+            return {'ok': False, 'errcode': errcode,
+                    'msg': result.get('msg') or result.get('message') or str(result)}
+
+        data = result.get('data') or result
+        # 尝试提取订单编号
+        order_number = ''
+        if isinstance(data, dict):
+            order_number = (data.get('number') or
+                            data.get('orderNumber') or
+                            (data.get('items', [{}]) or [{}])[0].get('number', ''))
+        elif isinstance(data, list) and data:
+            order_number = data[0].get('number', '')
+        return {'ok': True, 'data': data, 'order_number': order_number}
+
+    def update_product_image(self, account: str, product_id: str,
+                              product_number: str, image_b64: str) -> dict:
+        """
+        调用 POST /jdyscm/product/update 写入产品图片。
+        ⚠️ multiImg 字段需实测确认是否支持；不支持时直接跳过。
+
+        返回: {'ok': True} 或 {'ok': False, 'errcode': N, 'msg': '...'}
+        """
+        if not image_b64:
+            return {'ok': True, 'skipped': True, 'reason': 'no image_b64'}
+
+        cli = self._get_client(account)
+        item: dict = {'productNumber': product_number}
+        if product_id:
+            item['id'] = product_id
+        # multiImg 字段：base64 列表（需实测）
+        item['multiImg'] = [image_b64]
+
+        result = cli._request('POST', '/jdyscm/product/update',
+                              body={'items': [item]}, query=cli._api_query())
+        errcode = result.get('errcode') or result.get('code') or 0
+        if errcode and errcode != 0:
+            return {'ok': False, 'errcode': errcode,
+                    'msg': result.get('msg') or str(result)}
+        return {'ok': True}
+
+    def update_product_price(self, account: str, product_number: str,
+                              price: float) -> dict:
+        """
+        调用 POST /jdyscm/product/update 将最新采购价回写到 elsPurPrice 字段。
+        仅当 price > 0 时执行。
+
+        返回: {'ok': True} / {'ok': True, 'skipped': True} / {'ok': False, ...}
+        """
+        if not price or price <= 0:
+            return {'ok': True, 'skipped': True, 'reason': 'price=0'}
+
+        cli = self._get_client(account)
+        result = cli._request('POST', '/jdyscm/product/update',
+                              body={'items': [{'productNumber': product_number,
+                                               'elsPurPrice': price}]},
+                              query=cli._api_query())
+        errcode = result.get('errcode') or result.get('code') or 0
+        if errcode and errcode != 0:
+            return {'ok': False, 'errcode': errcode,
+                    'msg': result.get('msg') or str(result)}
+        return {'ok': True}
+
     def cache_info(self) -> dict:
         """返回各缓存的状态信息"""
         info = {}

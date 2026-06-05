@@ -3699,6 +3699,25 @@ def _sales_cache_conn():
         ON bill_attachments(source_date)
     ''')
     conn.execute('''
+        CREATE TABLE IF NOT EXISTS purchase_order_prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT NOT NULL,
+            order_number TEXT NOT NULL,
+            order_date TEXT NOT NULL,
+            supplier_name TEXT,
+            supplier_number TEXT,
+            product_number TEXT NOT NULL,
+            price REAL NOT NULL,
+            qty REAL DEFAULT 0,
+            unit TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_pop_product
+        ON purchase_order_prices(account, product_number)
+    ''')
+    conn.execute('''
         CREATE INDEX IF NOT EXISTS idx_bill_attachments_status
         ON bill_attachments(download_status)
     ''')

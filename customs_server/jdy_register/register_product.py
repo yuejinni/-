@@ -3,7 +3,7 @@ C2: JDY 商品建档入口
 封装: 生成编码 → 写入 JDY → 46001 重复编号自动重试（最多3次）
 
 主要函数:
-    register_product(account, tax_no, cat_letter, cat_code_2d,
+    register_product(account, tax_no, prefix, small_code, cat_code_2d,
                      product_name, **kwargs) -> dict
 
 kwargs 支持的额外字段（直接透传给 JDY product/add）:
@@ -14,6 +14,8 @@ kwargs 支持的额外字段（直接透传给 JDY product/add）:
     cost          成本（不在 product/add 字段，忽略）
     category_id   JDY 分类 ID（优先）
     category_name JDY 分类名称（category_id 为空时用）
+
+注意：编号使用账套全局序号（get_next_seq(account)），所有品类共用。
 """
 
 import os
@@ -27,6 +29,7 @@ from code_gen import (
     transform_vendor_code, generate_product_number,
     generate_ean13, get_next_seq, rollback_seq,
 )
+# get_next_seq(account) → 全局序号；rollback_seq(account) → 回滚全局序号
 from jdy_cache import JDYCache
 
 # 编号重复错误码
@@ -82,7 +85,8 @@ def _build_payload(product_number: str, ean13: str, product_name: str,
 def register_product(
     account: str,
     tax_no: str,
-    cat_letter: str,
+    prefix: str,
+    small_code: str,
     cat_code_2d: str,
     product_name: str,
     cfg_path: str = None,
@@ -95,8 +99,9 @@ def register_product(
     参数:
         account:      'account1' 或 'account2'
         tax_no:       供应商 taxPayerNo（档口号原始值）
-        cat_letter:   分类字母（如 'C'）
-        cat_code_2d:  分类两位数字码（如 '01'），用于 EAN-13
+        prefix:       产品编号前缀，点前部分（如 'C' 或 'LF'）
+        small_code:   Excel 小类顺序码（如 '02'），产品编号后缀
+        cat_code_2d:  EAN-13 专用分类码（如 '11'），全局唯一 01-99
         product_name: 商品名称
         max_retry:    最大重试次数（默认 3）
         **kwargs:     unit/spec/remark/category_id/category_name/supplier_id 等
@@ -108,6 +113,7 @@ def register_product(
             'ean13':          EAN-13 条码,
             'seq':            最终使用的序号,
             'transformed':    变换后档口号,
+            'jdy_id':         JDY 返回的商品 ID（成功时）,
             'jdy_data':       JDY 返回的 data（成功时）,
             'error':          错误信息（失败时）,
             'attempts':       实际尝试次数,
@@ -123,16 +129,16 @@ def register_product(
 
     last_error = None
     for attempt in range(1, max_retry + 2):   # 多1次以确保拿到序号再判断
-        # 2. 获取序号（自增）
-        seq = get_next_seq(account, transformed, cat_letter)
+        # 2. 获取全局序号（自增）
+        seq = get_next_seq(account)
 
-        # 3. 生成编码
-        product_number = generate_product_number(cat_letter, transformed, seq)
+        # 3. 生成编码（新格式）
+        product_number = generate_product_number(prefix, transformed, small_code, seq)
 
         try:
             ean13 = generate_ean13(cat_code_2d, seq)
         except Exception as e:
-            rollback_seq(account, transformed, cat_letter)
+            rollback_seq(account)
             return {'ok': False, 'error': f'EAN-13 生成失败: {e}',
                     'transformed': transformed, 'product_number': product_number,
                     'seq': seq, 'attempts': attempt}
@@ -144,13 +150,20 @@ def register_product(
         result = cache.create_product(account, payload)
 
         if result['ok']:
+            # 提取 JDY 商品 ID
+            jdy_data = result.get('data') or {}
+            jdy_id = None
+            if isinstance(jdy_data, dict):
+                jdy_id = (jdy_data.get('id') or
+                          (jdy_data.get('items', [{}]) or [{}])[0].get('id'))
             return {
                 'ok': True,
                 'product_number': product_number,
                 'ean13': ean13,
                 'seq': seq,
                 'transformed': transformed,
-                'jdy_data': result.get('data'),
+                'jdy_id': str(jdy_id) if jdy_id else None,
+                'jdy_data': jdy_data,
                 'attempts': attempt,
                 'error': None,
             }
@@ -166,7 +179,7 @@ def register_product(
             continue
 
         # 其他错误：回滚序号，立即返回
-        rollback_seq(account, transformed, cat_letter)
+        rollback_seq(account)
         return {
             'ok': False,
             'error': f'JDY 返回错误 {errcode}: {last_error}',
@@ -194,17 +207,17 @@ if __name__ == '__main__':
     print('=== register_product.py 编码生成测试（不写入 JDY）===\n')
 
     test_cases = [
-        ('102629', 'C', '03', '测试商品A'),
-        ('F1111',  'A', '01', '测试商品B'),
-        ('103090', 'F', '06', '测试商品C'),
+        ('102629', 'C', '02', '11', '测试商品A'),
+        ('F1111',  'LF', '01', '01', '测试商品B'),
+        ('103090', 'T', '06', '06', '测试商品C'),
     ]
-    for tax_no, cat_letter, cat_code_2d, name in test_cases:
+    for tax_no, prefix, small_code, cat_code_2d, name in test_cases:
         transformed, err = transform_vendor_code(tax_no)
         if err:
             print(f'  ❌ {tax_no} → 变换失败: {err}')
             continue
         seq = 1   # 测试用固定序号
-        pno = generate_product_number(cat_letter, transformed, seq)
+        pno = generate_product_number(prefix, transformed, small_code, seq)
         ean = generate_ean13(cat_code_2d, seq)
         print(f'  tax={tax_no!r:10} → transformed={transformed!r:10}  '
-              f'pno={pno!r:20}  ean13={ean}')
+              f'pno={pno!r:22}  ean13={ean}')

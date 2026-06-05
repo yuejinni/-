@@ -38,8 +38,32 @@ body {
 }
 .topbar select option { background: #1a2c5b; }
 
+/* ── Tab 切换栏 ─────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  background: #fff;
+  border-bottom: 2px solid #e8e8e8;
+  position: sticky;
+  top: 48px;
+  z-index: 99;
+}
+.tab-btn {
+  flex: 1;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.tab-btn.active { color: #1a2c5b; border-bottom-color: #1a2c5b; font-weight: 600; }
+
 /* ── 滚动内容区 ─────────────────────────────────────── */
-.content { padding: 12px; display: flex; flex-direction: column; gap: 12px; padding-bottom: 32px; }
+.tab-content { display: none; padding: 12px; flex-direction: column; gap: 12px; padding-bottom: 32px; }
+.tab-content.active { display: flex; }
 
 /* ── 通用卡片 ───────────────────────────────────────── */
 .card {
@@ -80,7 +104,7 @@ textarea { resize: vertical; min-height: 60px; }
 .photo-area {
   border: 2px dashed #d9d9d9;
   border-radius: 10px;
-  min-height: 140px;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -94,8 +118,7 @@ textarea { resize: vertical; min-height: 60px; }
 .photo-area:active { border-color: #1a2c5b; }
 .photo-area img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .photo-hint { font-size: 13px; color: #999; }
-.photo-icon { font-size: 36px; }
-#photo-input { display: none; }
+.photo-icon { font-size: 32px; }
 
 /* ── 按钮 ────────────────────────────────────────────── */
 .btn {
@@ -114,6 +137,7 @@ textarea { resize: vertical; min-height: 60px; }
 .btn-success { background: #52c41a; color: #fff; }
 .btn-outline { background: #fff; color: #1a2c5b; border: 1px solid #1a2c5b; font-weight: 400; }
 .btn-danger  { background: #ff4d4f; color: #fff; }
+.btn-sm { padding: 5px 10px; font-size: 13px; font-weight: 500; width: auto; display: inline-block; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── AI 结果预览 ────────────────────────────────────── */
@@ -182,22 +206,184 @@ textarea { resize: vertical; min-height: 60px; }
   align-items: center;
 }
 .sup-selected .clear { color: #999; font-size: 18px; cursor: pointer; }
+
+/* ── 批量 Tab：步骤指示器 ───────────────────────────── */
+.step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+.step-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #d9d9d9;
+  transition: background .3s;
+}
+.step-dot.active { background: #1a2c5b; }
+.step-dot.done { background: #52c41a; }
+
+/* ── 批量 Tab：产品明细表格 ─────────────────────────── */
+.order-table-wrap { overflow-x: auto; margin: 0 -4px; }
+.order-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 640px;
+}
+.order-table th {
+  background: #f5f5f5;
+  padding: 7px 6px;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid #e8e8e8;
+}
+.order-table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+.order-table input[type=text],
+.order-table input[type=number],
+.order-table select {
+  padding: 4px 6px;
+  font-size: 12px;
+  min-width: 60px;
+}
+.order-table .td-name { min-width: 100px; }
+.order-table .td-spec { min-width: 90px; }
+.order-table .td-cat  { min-width: 110px; }
+.order-table .td-unit { min-width: 70px; }
+.order-table .td-num  { width: 60px; }
+.order-table .td-photo { width: 52px; }
+.order-table .td-exist { min-width: 100px; }
+.order-table .td-del  { width: 36px; text-align: center; }
+.del-btn {
+  background: none;
+  border: none;
+  color: #ff4d4f;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.price-wrap { position: relative; display: flex; align-items: center; gap: 4px; }
+.price-hist-btn {
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  color: #8c8c8c;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.price-hist-btn:hover { color: #1a2c5b; }
+
+/* ── 历史价 Popover ─────────────────────────────────── */
+.price-popover {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  padding: 10px 12px;
+  min-width: 220px;
+  max-width: 280px;
+  z-index: 999;
+  font-size: 12px;
+  display: none;
+}
+.price-popover.show { display: block; }
+.price-popover h4 { font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #333; }
+.price-popover .ph-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #f5f5f5; }
+.price-popover .ph-row:last-child { border-bottom: none; }
+.price-popover .ph-date { color: #999; }
+.price-popover .ph-price { color: #1a2c5b; font-weight: 600; }
+.price-popover .ph-qty { color: #666; }
+.price-popover-close { float: right; cursor: pointer; color: #999; font-size: 14px; margin-top: -2px; }
+
+/* ── 结果列表 ───────────────────────────────────────── */
+.result-list { display: flex; flex-direction: column; gap: 6px; }
+.result-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.result-item.new      { background: #f6ffed; border: 1px solid #b7eb8f; }
+.result-item.existing { background: #e6f7ff; border: 1px solid #91d5ff; }
+.result-item.error    { background: #fff1f0; border: 1px solid #ffa39e; }
+.result-item .ri-icon { font-size: 16px; flex-shrink: 0; }
+.result-item .ri-info { flex: 1; }
+.result-item .ri-pno  { font-weight: 600; font-size: 13px; }
+.result-item .ri-err  { font-size: 11px; color: #cf1322; margin-top: 2px; }
+
+/* ── 订单照片区（批量 step1）───────────────────────── */
+.order-photo-area {
+  border: 2px dashed #d9d9d9;
+  border-radius: 10px;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color .15s;
+  position: relative;
+  overflow: hidden;
+}
+.order-photo-area img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+
+/* ── 行内照片上传 ───────────────────────────────────── */
+.line-photo-wrap { position: relative; width: 40px; height: 40px; }
+.line-photo-thumb {
+  width: 40px; height: 40px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  object-fit: cover;
+  cursor: pointer;
+}
+.line-photo-placeholder {
+  width: 40px; height: 40px;
+  border: 1px dashed #d9d9d9;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  color: #ccc;
+}
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <h1>📦 快速建档</h1>
+  <h1>📦 JDY 建档</h1>
   <select id="account-sel" onchange="onAccountChange()">
     <option value="account1">祺航饰品</option>
     <option value="account2">祺航箱包</option>
   </select>
 </div>
 
-<div class="content">
+<!-- Tab 切换栏 -->
+<div class="tab-bar">
+  <div class="tab-btn active" id="tab-single-btn" onclick="switchTab('single')">单品建档</div>
+  <div class="tab-btn" id="tab-batch-btn" onclick="switchTab('batch')">批量建档</div>
+</div>
+
+<!-- ════════════════════════════════════════════════
+     单品 Tab
+     ════════════════════════════════════════════════ -->
+<div class="tab-content active" id="tab-single">
 
   <!-- 状态提示 -->
-  <div class="status-bar" id="status-bar"></div>
+  <div class="status-bar" id="single-status-bar"></div>
 
   <!-- 1. 供应商 -->
   <div class="card">
@@ -233,7 +419,7 @@ textarea { resize: vertical; min-height: 60px; }
       <div class="photo-icon">📷</div>
       <div class="photo-hint">点击拍照 / 选择图片</div>
     </div>
-    <input type="file" id="photo-input" accept="image/*" onchange="onPhotoChange(event)">
+    <input type="file" id="photo-input" accept="image/*" onchange="onPhotoChange(event)" style="display:none">
   </div>
 
   <!-- 4. AI 识别按钮 -->
@@ -249,7 +435,6 @@ textarea { resize: vertical; min-height: 60px; }
       <div class="preview-row">条码: <span id="prev-ean"></span></div>
       <div class="preview-row">序号: <span id="prev-seq"></span></div>
     </div>
-    <!-- 可编辑字段 -->
     <div class="form-row">
       <label>商品名称 *</label>
       <input type="text" id="f-name" placeholder="AI 建议，可修改">
@@ -285,22 +470,186 @@ textarea { resize: vertical; min-height: 60px; }
     <button class="btn btn-outline" onclick="resetForm()">继续建下一个</button>
   </div>
 
+</div><!-- /tab-single -->
+
+
+<!-- ════════════════════════════════════════════════
+     批量 Tab
+     ════════════════════════════════════════════════ -->
+<div class="tab-content" id="tab-batch">
+
+  <!-- 步骤指示器 -->
+  <div class="step-indicator">
+    <div class="step-dot active" id="bdot-1"></div>
+    <div class="step-dot" id="bdot-2"></div>
+    <div class="step-dot" id="bdot-3"></div>
+    <div class="step-dot" id="bdot-4"></div>
+    <div class="step-dot" id="bdot-5"></div>
+  </div>
+
+  <!-- 状态提示 -->
+  <div class="status-bar" id="batch-status-bar"></div>
+
+  <!-- ── Step 1: 准备 ─────────────────────────────── -->
+  <div id="b-step1">
+    <!-- 供应商（可选，先选） -->
+    <div class="card">
+      <div class="card-title">供应商（可选，先选可提升 AI 准确率）</div>
+      <div class="sup-search">
+        <input type="text" id="b-sup-search" placeholder="搜索供应商名称 / 档口号" oninput="bFilterSuppliers()" autocomplete="off">
+      </div>
+      <div class="sup-list" id="b-sup-list"></div>
+      <div class="sup-selected" id="b-sup-selected">
+        <div>
+          <div class="name" id="b-sup-sel-name"></div>
+          <div class="code" id="b-sup-sel-code"></div>
+        </div>
+        <span class="clear" onclick="bClearSupplier()">✕</span>
+      </div>
+    </div>
+
+    <!-- 订单照片 -->
+    <div class="card">
+      <div class="card-title">订单照片</div>
+      <div class="order-photo-area" id="order-photo-area" onclick="document.getElementById('order-photo-input').click()">
+        <div class="photo-icon">🧾</div>
+        <div class="photo-hint">点击上传手写订单照片</div>
+      </div>
+      <input type="file" id="order-photo-input" accept="image/*" onchange="onOrderPhotoChange(event)" style="display:none">
+    </div>
+
+    <button class="btn btn-primary" id="btn-parse" onclick="doParse()" disabled>
+      AI 解析订单
+    </button>
+  </div><!-- /b-step1 -->
+
+  <!-- ── Step 2: 解析中 ────────────────────────────── -->
+  <div id="b-step2" style="display:none">
+    <div class="card" style="text-align:center; padding: 32px;">
+      <div style="font-size:36px; margin-bottom: 12px;">🤖</div>
+      <div style="font-size:15px; font-weight:600; color:#1a2c5b;">AI 解析中…</div>
+      <div style="font-size:13px; color:#999; margin-top:6px;">正在识别订单供应商和产品行</div>
+    </div>
+  </div>
+
+  <!-- ── Step 3: 审核明细 ──────────────────────────── -->
+  <div id="b-step3" style="display:none">
+
+    <!-- 供应商确认 -->
+    <div class="card">
+      <div class="card-title">供应商确认</div>
+      <div style="font-size:12px; color:#999; margin-bottom:8px;">
+        AI 识别供应商名：<strong id="b-ai-sup-name">—</strong>
+        <br>请在下方搜索并选中正确供应商后才能继续
+      </div>
+      <div class="sup-search">
+        <input type="text" id="b-sup-confirm-search" placeholder="搜索供应商" oninput="bFilterSuppliersConfirm()" autocomplete="off">
+      </div>
+      <div class="sup-list" id="b-sup-confirm-list"></div>
+      <div class="sup-selected" id="b-sup-confirm-selected">
+        <div>
+          <div class="name" id="b-sup-confirm-name"></div>
+          <div class="code" id="b-sup-confirm-code"></div>
+        </div>
+        <span class="clear" onclick="bClearSupConfirm()">✕</span>
+      </div>
+    </div>
+
+    <!-- 产品明细表 -->
+    <div class="card">
+      <div class="card-title">
+        产品明细
+        <button class="btn btn-outline btn-sm" onclick="bAddRow()" style="margin-left:auto">+ 新增行</button>
+      </div>
+      <div class="order-table-wrap">
+        <table class="order-table" id="order-table">
+          <thead>
+            <tr>
+              <th class="td-name">商品名</th>
+              <th class="td-spec">规格/颜色</th>
+              <th class="td-cat">分类</th>
+              <th class="td-unit">单位</th>
+              <th class="td-num">数量</th>
+              <th class="td-num">单价</th>
+              <th class="td-num" title="购货订单用此数量，单位PAC">PAC数</th>
+              <th class="td-num" title="1PAC含多少件，自动写入备注">1PAC=?件</th>
+              <th class="td-photo">照片</th>
+              <th class="td-exist">已有编号</th>
+              <th class="td-del"></th>
+            </tr>
+          </thead>
+          <tbody id="order-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <button class="btn btn-success" id="btn-order-confirm" onclick="doOrderConfirm()" disabled>
+      ✅ 确认建档并生成购货订单
+    </button>
+  </div><!-- /b-step3 -->
+
+  <!-- ── Step 4: 执行中 ────────────────────────────── -->
+  <div id="b-step4" style="display:none">
+    <div class="card" style="text-align:center; padding: 32px;">
+      <div style="font-size:36px; margin-bottom: 12px;">⚙️</div>
+      <div style="font-size:15px; font-weight:600; color:#1a2c5b;">建档中…</div>
+      <div style="font-size:13px; color:#999; margin-top:6px;">正在逐行写入精斗云，请稍等</div>
+    </div>
+  </div>
+
+  <!-- ── Step 5: 结果 ──────────────────────────────── -->
+  <div id="b-step5" style="display:none">
+    <div class="card">
+      <div class="card-title">建档结果</div>
+      <div class="result-list" id="b-result-list"></div>
+    </div>
+
+    <div class="card" id="b-po-card" style="display:none">
+      <div class="card-title">购货订单</div>
+      <div class="preview-block">
+        <div class="preview-code" id="b-po-number">—</div>
+        <div class="preview-row" id="b-po-hint"></div>
+      </div>
+    </div>
+
+    <button class="btn btn-outline" onclick="bReset()">继续建下一批</button>
+  </div><!-- /b-step5 -->
+
+</div><!-- /tab-batch -->
+
+<!-- 历史价 Popover -->
+<div class="price-popover" id="price-popover">
+  <span class="price-popover-close" onclick="closePricePopover()">✕</span>
+  <h4>历史采购价</h4>
+  <div id="price-popover-content"></div>
 </div>
 
 <script>
-// ── 常量 ──────────────────────────────────────────────────────────────────────
-const BASE = window.location.origin;  // http://host:5009
+// ── 全局状态 ──────────────────────────────────────────────────────────────────
+const BASE = window.location.origin;
 let _account    = 'account1';
 let _suppliers  = [];
 let _categories = [];
-let _selSup     = null;   // {id, name, number, tax_no, transformed, categories}
-let _selCat     = null;   // {id, letter, code_2d, path}
-let _photoB64   = null;
-let _previewData = null;  // /preview 返回的数据
+let _units      = [];
+let _allProducts = [];        // 全量产品列表（批量 tab 已有商品搜索用）
+let _productsLoaded = false;
+
+// 单品 tab 状态
+let _selSup      = null;
+let _selCat      = null;
+let _photoB64    = null;
+let _previewData = null;
+
+// 批量 tab 状态
+let _bSelSup       = null;   // Step1 可选先选
+let _bConfirmSup   = null;   // Step3 必须确认的供应商
+let _orderPhotoB64 = null;
+let _bLines        = [];     // [{...line data}]
+let _bRowCounter   = 0;
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 async function init() {
-  await Promise.all([loadSuppliers(), loadCategories()]);
+  await Promise.all([loadSuppliers(), loadCategories(), loadUnits()]);
 }
 
 async function loadSuppliers() {
@@ -309,8 +658,10 @@ async function loadSuppliers() {
     const data = await res.json();
     _suppliers = data.suppliers || [];
     renderSupList(_suppliers);
+    bRenderSupList(_suppliers, 'b-sup-list');
+    bRenderSupList(_suppliers, 'b-sup-confirm-list');
   } catch(e) {
-    showStatus('加载供应商失败: ' + e.message, 'error');
+    showSingleStatus('加载供应商失败: ' + e.message, 'error');
   }
 }
 
@@ -319,34 +670,67 @@ async function loadCategories() {
     const res = await fetch(`${BASE}/register/categories?account=${_account}`);
     const data = await res.json();
     _categories = data.categories || [];
+    // 单品 tab 分类下拉
     const sel = document.getElementById('cat-sel');
     sel.innerHTML = '<option value="">— 选择分类 —</option>';
     _categories.forEach(c => {
       const o = document.createElement('option');
       o.value = c.id;
-      o.textContent = c.path + '  [' + c.letter + ']';
+      o.textContent = c.path + '  [' + (c.prefix || c.letter) + ']';
       sel.appendChild(o);
     });
   } catch(e) {
-    showStatus('加载分类失败: ' + e.message, 'error');
+    showSingleStatus('加载分类失败: ' + e.message, 'error');
   }
+}
+
+async function loadUnits() {
+  try {
+    const res = await fetch(`${BASE}/register/units?account=${_account}`);
+    const data = await res.json();
+    _units = data.units || [];
+  } catch(e) {
+    console.warn('加载单位失败:', e.message);
+  }
+}
+
+async function loadProducts() {
+  if (_productsLoaded) return;
+  try {
+    // 从供应商接口拿到缓存；这里改为直接 fetch 全量产品（如果有接口）
+    // 暂时通过分类接口间接推断，或直接用空列表（搜索框手动输入）
+    _productsLoaded = true;
+  } catch(e) {}
 }
 
 function onAccountChange() {
   _account = document.getElementById('account-sel').value;
+  _selSup = null; _selCat = null;
+  _bSelSup = null; _bConfirmSup = null;
+  _productsLoaded = false;
   clearSupplier();
+  bClearSupplier();
+  bClearSupConfirm();
   init();
 }
 
-// ── 供应商 ────────────────────────────────────────────────────────────────────
+// ── Tab 切换 ──────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('tab-single').classList.toggle('active', tab === 'single');
+  document.getElementById('tab-batch').classList.toggle('active', tab === 'batch');
+  document.getElementById('tab-single-btn').classList.toggle('active', tab === 'single');
+  document.getElementById('tab-batch-btn').classList.toggle('active', tab === 'batch');
+}
+
+// ── 单品 Tab：供应商 ──────────────────────────────────────────────────────────
 function renderSupList(sups) {
   const ul = document.getElementById('sup-list');
   ul.innerHTML = '';
   sups.slice(0, 80).forEach(s => {
     const div = document.createElement('div');
     div.className = 'sup-item';
-    div.innerHTML = `<div class="name">${s.name}</div>
-                     <div class="code">${s.tax_no}  →  ${s.transformed}</div>`;
+    div.innerHTML = `<div class="name">${escHtml(s.name)}</div>
+                     <div class="code">${escHtml(s.tax_no)}  →  ${escHtml(s.transformed)}</div>`;
     div.onclick = () => selectSupplier(s);
     ul.appendChild(div);
   });
@@ -355,16 +739,12 @@ function renderSupList(sups) {
 
 function filterSuppliers() {
   const q = document.getElementById('sup-search').value.trim().toLowerCase();
-  if (!q) {
-    renderSupList(_suppliers);
-    return;
-  }
-  const matched = _suppliers.filter(s =>
+  const matched = q ? _suppliers.filter(s =>
     s.name.toLowerCase().includes(q) ||
     s.tax_no.toLowerCase().includes(q) ||
     s.transformed.toLowerCase().includes(q) ||
     s.number.toLowerCase().includes(q)
-  );
+  ) : _suppliers;
   renderSupList(matched);
 }
 
@@ -375,9 +755,8 @@ function selectSupplier(s) {
   document.getElementById('sup-sel-name').textContent = s.name;
   document.getElementById('sup-sel-code').textContent = `${s.tax_no}  →  ${s.transformed}`;
   document.getElementById('sup-selected').style.display = 'flex';
-  // 根据供应商过滤分类下拉
   filterCategoriesBySup(s.categories);
-  checkReady();
+  checkSingleReady();
 }
 
 function clearSupplier() {
@@ -385,92 +764,81 @@ function clearSupplier() {
   document.getElementById('sup-search').value = '';
   document.getElementById('sup-list').style.display = 'none';
   document.getElementById('sup-selected').style.display = 'none';
-  // 恢复全部分类
   loadCategories();
-  checkReady();
+  checkSingleReady();
 }
 
 function filterCategoriesBySup(catLetters) {
-  if (!catLetters || catLetters.length === 0) return; // 未配置，不过滤
+  if (!catLetters || catLetters.length === 0) return;
   const sel = document.getElementById('cat-sel');
   const cur = sel.value;
   sel.innerHTML = '<option value="">— 选择分类 —</option>';
   _categories
-    .filter(c => catLetters.includes(c.letter))
+    .filter(c => catLetters.includes(c.prefix || c.letter))
     .forEach(c => {
       const o = document.createElement('option');
       o.value = c.id;
-      o.textContent = c.path + '  [' + c.letter + ']';
+      o.textContent = c.path + '  [' + (c.prefix || c.letter) + ']';
       sel.appendChild(o);
     });
-  // 尝试还原选中
   if (cur) sel.value = cur;
   onCatChange();
 }
 
-// ── 分类 ──────────────────────────────────────────────────────────────────────
+// ── 单品 Tab：分类 ────────────────────────────────────────────────────────────
 function onCatChange() {
   const id = document.getElementById('cat-sel').value;
   _selCat = _categories.find(c => c.id === id) || null;
   const hint = document.getElementById('cat-hint');
   hint.textContent = _selCat
-    ? `分类字母: ${_selCat.letter}   code_2d: ${_selCat.code_2d}`
+    ? `prefix: ${_selCat.prefix || _selCat.letter}   code_2d: ${_selCat.code_2d}`
     : '';
-  checkReady();
+  checkSingleReady();
 }
 
-// ── 照片 ──────────────────────────────────────────────────────────────────────
+// ── 单品 Tab：照片 ────────────────────────────────────────────────────────────
 function onPhotoChange(e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
-    _photoB64 = ev.target.result.split(',')[1];  // 去掉 data:image/...;base64,
-    // 显示缩略图
+    _photoB64 = ev.target.result.split(',')[1];
     const area = document.getElementById('photo-area');
     area.innerHTML = `<img src="${ev.target.result}" alt="商品照片">`;
-    checkReady();
+    checkSingleReady();
   };
   reader.readAsDataURL(file);
 }
 
-// ── 就绪检查 ─────────────────────────────────────────────────────────────────
-function checkReady() {
+// ── 单品 Tab：就绪检查 ────────────────────────────────────────────────────────
+function checkSingleReady() {
   const ready = _selSup && _selCat;
   document.getElementById('btn-preview').disabled = !ready;
 }
 
-// ── AI 识别 & 预览 ────────────────────────────────────────────────────────────
+// ── 单品 Tab：AI 识别 & 预览 ──────────────────────────────────────────────────
 async function doPreview() {
   if (!_selSup || !_selCat) return;
   const btn = document.getElementById('btn-preview');
   btn.innerHTML = '<span class="spinner"></span>AI 识别中…';
   btn.disabled = true;
-  hideStatus();
+  hideSingleStatus();
 
   try {
-    const body = {
-      account:     _account,
-      tax_no:      _selSup.tax_no,
-      cat_id:      _selCat.id,
-      image_b64:   _photoB64 || '',
-    };
-    const res = await fetch(`${BASE}/register/preview`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    const body = { account: _account, tax_no: _selSup.tax_no,
+                   cat_id: _selCat.id, image_b64: _photoB64 || '' };
+    const res  = await fetch(`${BASE}/register/preview`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
     _previewData = data;
-
-    // 显示预览
     document.getElementById('prev-code').textContent = data.product_number;
     document.getElementById('prev-seq').textContent  = data.seq_next;
     document.getElementById('prev-ean').textContent  = '（确认后生成）';
 
-    // AI 建议填入可编辑字段
     const ai = data.ai_result || {};
     document.getElementById('f-name').value = ai.name || '';
     document.getElementById('f-spec').value = ai.spec || '';
@@ -479,71 +847,59 @@ async function doPreview() {
     document.getElementById('btn-confirm').style.display  = 'block';
     document.getElementById('btn-confirm').disabled = false;
     document.getElementById('result-card').style.display  = 'none';
-
-    // 滚动到预览区
     document.getElementById('preview-card').scrollIntoView({behavior: 'smooth', block: 'start'});
-
   } catch(e) {
-    showStatus('识别失败: ' + e.message, 'error');
+    showSingleStatus('识别失败: ' + e.message, 'error');
   } finally {
     btn.innerHTML = 'AI 识别 &amp; 预览编码';
     btn.disabled = false;
   }
 }
 
-// ── 确认建档 ──────────────────────────────────────────────────────────────────
+// ── 单品 Tab：确认建档 ────────────────────────────────────────────────────────
 async function doConfirm() {
   const name = document.getElementById('f-name').value.trim();
-  if (!name) {
-    showStatus('请填写商品名称', 'error');
-    return;
-  }
+  if (!name) { showSingleStatus('请填写商品名称', 'error'); return; }
 
   const btn = document.getElementById('btn-confirm');
   btn.innerHTML = '<span class="spinner"></span>写入精斗云…';
   btn.disabled = true;
-  hideStatus();
+  hideSingleStatus();
 
   try {
     const body = {
-      account:      _account,
-      tax_no:       _selSup.tax_no,
-      cat_id:       _selCat.id,
+      account: _account, tax_no: _selSup.tax_no, cat_id: _selCat.id,
       product_name: name,
       spec:         document.getElementById('f-spec').value.trim(),
       unit:         document.getElementById('f-unit').value.trim(),
       remark:       document.getElementById('f-remark').value.trim(),
       supplier_id:  _selSup.id,
     };
-    const res = await fetch(`${BASE}/register/confirm`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    const res  = await fetch(`${BASE}/register/confirm`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '建档失败');
 
-    // 成功
     document.getElementById('res-code').textContent = data.product_number;
     document.getElementById('res-ean').textContent  = data.ean13 || '—';
     document.getElementById('res-name').textContent = name;
     document.getElementById('result-card').style.display = 'block';
     document.getElementById('preview-card').style.display = 'none';
     document.getElementById('btn-confirm').style.display  = 'none';
-    showStatus(`建档成功！编码: ${data.product_number}  (重试${data.attempts}次)`, 'success');
+    showSingleStatus(`建档成功！编码: ${data.product_number}`, 'success');
     document.getElementById('result-card').scrollIntoView({behavior: 'smooth'});
-
   } catch(e) {
-    showStatus('建档失败: ' + e.message, 'error');
+    showSingleStatus('建档失败: ' + e.message, 'error');
     btn.innerHTML = '✅ 确认建档，写入精斗云';
     btn.disabled = false;
   }
 }
 
-// ── 重置 ──────────────────────────────────────────────────────────────────────
+// ── 单品 Tab：重置 ────────────────────────────────────────────────────────────
 function resetForm() {
-  _photoB64 = null;
-  _previewData = null;
+  _photoB64 = null; _previewData = null;
   document.getElementById('photo-area').innerHTML =
     '<div class="photo-icon">📷</div><div class="photo-hint">点击拍照 / 选择图片</div>';
   document.getElementById('photo-input').value = '';
@@ -552,20 +908,469 @@ function resetForm() {
   document.getElementById('preview-card').style.display = 'none';
   document.getElementById('btn-confirm').style.display  = 'none';
   document.getElementById('result-card').style.display  = 'none';
-  hideStatus();
+  hideSingleStatus();
   window.scrollTo({top: 0, behavior: 'smooth'});
 }
 
+// ── 批量 Tab：供应商（Step1 可选） ────────────────────────────────────────────
+function bRenderSupList(sups, listId) {
+  const ul = document.getElementById(listId);
+  if (!ul) return;
+  ul.innerHTML = '';
+  sups.slice(0, 80).forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'sup-item';
+    div.innerHTML = `<div class="name">${escHtml(s.name)}</div>
+                     <div class="code">${escHtml(s.tax_no)}  →  ${escHtml(s.transformed)}</div>`;
+    div.onclick = () => {
+      if (listId === 'b-sup-list') bSelectSupplier(s);
+      else bSelectSupConfirm(s);
+    };
+    ul.appendChild(div);
+  });
+  ul.style.display = sups.length ? 'block' : 'none';
+}
+
+function bFilterSuppliers() {
+  const q = document.getElementById('b-sup-search').value.trim().toLowerCase();
+  const matched = q ? _suppliers.filter(s =>
+    s.name.toLowerCase().includes(q) || s.tax_no.toLowerCase().includes(q) ||
+    s.transformed.toLowerCase().includes(q)
+  ) : _suppliers;
+  bRenderSupList(matched, 'b-sup-list');
+}
+
+function bSelectSupplier(s) {
+  _bSelSup = s;
+  document.getElementById('b-sup-search').value = '';
+  document.getElementById('b-sup-list').style.display = 'none';
+  document.getElementById('b-sup-sel-name').textContent = s.name;
+  document.getElementById('b-sup-sel-code').textContent = `${s.tax_no}  →  ${s.transformed}`;
+  document.getElementById('b-sup-selected').style.display = 'flex';
+  checkBParseReady();
+}
+
+function bClearSupplier() {
+  _bSelSup = null;
+  document.getElementById('b-sup-search').value = '';
+  document.getElementById('b-sup-list').style.display = 'none';
+  document.getElementById('b-sup-selected').style.display = 'none';
+  checkBParseReady();
+}
+
+// ── 批量 Tab：供应商（Step3 必须确认） ────────────────────────────────────────
+function bFilterSuppliersConfirm() {
+  const q = document.getElementById('b-sup-confirm-search').value.trim().toLowerCase();
+  const matched = q ? _suppliers.filter(s =>
+    s.name.toLowerCase().includes(q) || s.tax_no.toLowerCase().includes(q)
+  ) : _suppliers;
+  bRenderSupList(matched, 'b-sup-confirm-list');
+}
+
+function bSelectSupConfirm(s) {
+  _bConfirmSup = s;
+  document.getElementById('b-sup-confirm-search').value = '';
+  document.getElementById('b-sup-confirm-list').style.display = 'none';
+  document.getElementById('b-sup-confirm-name').textContent = s.name;
+  document.getElementById('b-sup-confirm-code').textContent = `${s.tax_no}  →  ${s.transformed}`;
+  document.getElementById('b-sup-confirm-selected').style.display = 'flex';
+  checkBConfirmReady();
+}
+
+function bClearSupConfirm() {
+  _bConfirmSup = null;
+  document.getElementById('b-sup-confirm-search').value = '';
+  document.getElementById('b-sup-confirm-list').style.display = 'none';
+  document.getElementById('b-sup-confirm-selected').style.display = 'none';
+  checkBConfirmReady();
+}
+
+// ── 批量 Tab：订单照片 ────────────────────────────────────────────────────────
+function onOrderPhotoChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    _orderPhotoB64 = ev.target.result.split(',')[1];
+    const area = document.getElementById('order-photo-area');
+    area.innerHTML = `<img src="${ev.target.result}" alt="订单照片">`;
+    checkBParseReady();
+  };
+  reader.readAsDataURL(file);
+}
+
+function checkBParseReady() {
+  document.getElementById('btn-parse').disabled = !_orderPhotoB64;
+}
+
+// ── 批量 Tab：Step 控制 ───────────────────────────────────────────────────────
+function showBStep(n) {
+  [1,2,3,4,5].forEach(i => {
+    const el = document.getElementById(`b-step${i}`);
+    if (el) el.style.display = (i === n) ? '' : 'none';
+    const dot = document.getElementById(`bdot-${i}`);
+    if (dot) {
+      dot.classList.remove('active', 'done');
+      if (i < n) dot.classList.add('done');
+      else if (i === n) dot.classList.add('active');
+    }
+  });
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+// ── 批量 Tab：AI 解析订单 ─────────────────────────────────────────────────────
+async function doParse() {
+  showBStep(2);
+  hideBatchStatus();
+
+  try {
+    const body = {
+      account:     _account,
+      supplier_id: _bSelSup ? _bSelSup.id : '',
+      image_b64:   _orderPhotoB64,
+    };
+    const res  = await fetch(`${BASE}/register/order/parse`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    // 填充 AI 供应商名
+    document.getElementById('b-ai-sup-name').textContent =
+      data.ai_supplier_name || '（未识别）';
+
+    // 如果 AI 匹配到供应商，预填到确认框
+    const matched = data.supplier_matched;
+    if (matched) {
+      // 先将匹配到的供应商填入确认框（用户仍需确认）
+      const sup = _suppliers.find(s => s.id === matched.id);
+      if (sup) {
+        // 仅预填搜索框，不直接 confirm
+        document.getElementById('b-sup-confirm-search').value = sup.name;
+        bFilterSuppliersConfirm();
+      }
+    }
+
+    // 渲染产品行
+    _bLines = (data.products || []).map((p, i) => ({
+      rowId:       ++_bRowCounter,
+      line:        p.line || (i + 1),
+      name:        p.name || '',
+      spec:        p.spec || '',
+      cat_id:      p.cat_id || '',
+      unit_id:     '',
+      qty:         p.qty || 0,
+      price:       p.price || 0,
+      ctn_qty:     p.ctn_qty || 0,
+      pcs_per_ctn: p.pcs_per_ctn || 0,
+      image_b64:   '',
+      existing_pno: '',
+    }));
+    renderOrderTable();
+    showBStep(3);
+
+  } catch(e) {
+    showBatchStatus('解析失败: ' + e.message, 'error');
+    showBStep(1);
+  }
+}
+
+// ── 批量 Tab：渲染产品明细表 ──────────────────────────────────────────────────
+function renderOrderTable() {
+  const tbody = document.getElementById('order-tbody');
+  tbody.innerHTML = '';
+  _bLines.forEach(line => tbody.appendChild(buildRow(line)));
+  checkBConfirmReady();
+}
+
+function buildRow(line) {
+  const tr = document.createElement('tr');
+  tr.id = `brow-${line.rowId}`;
+
+  // 分类下拉
+  let catOpts = '<option value="">—分类—</option>';
+  _categories.forEach(c => {
+    const sel = c.id === line.cat_id ? ' selected' : '';
+    catOpts += `<option value="${escAttr(c.id)}"${sel}>${escHtml(c.path.split('/').pop())} [${escHtml(c.prefix||c.letter)}]</option>`;
+  });
+
+  // 单位下拉
+  let unitOpts = '<option value="">—单位—</option>';
+  _units.forEach(u => {
+    const sel = u.unitId === line.unit_id ? ' selected' : '';
+    unitOpts += `<option value="${escAttr(u.unitId)}"${sel}>${escHtml(u.unitName)}</option>`;
+  });
+
+  tr.innerHTML = `
+    <td class="td-name"><input type="text" value="${escAttr(line.name)}" oninput="bUpdateLine(${line.rowId},'name',this.value)" placeholder="商品名"></td>
+    <td class="td-spec"><input type="text" value="${escAttr(line.spec)}" oninput="bUpdateLine(${line.rowId},'spec',this.value)" placeholder="规格颜色"></td>
+    <td class="td-cat"><select onchange="bUpdateLine(${line.rowId},'cat_id',this.value)">${catOpts}</select></td>
+    <td class="td-unit"><select onchange="bUpdateLine(${line.rowId},'unit_id',this.value)">${unitOpts}</select></td>
+    <td class="td-num"><input type="number" value="${line.qty}" min="0" oninput="bUpdateLine(${line.rowId},'qty',+this.value)" style="width:56px"></td>
+    <td class="td-num">
+      <div class="price-wrap">
+        <input type="number" value="${line.price}" min="0" step="0.1" oninput="bUpdateLine(${line.rowId},'price',+this.value)" style="width:56px" id="price-input-${line.rowId}">
+        <button class="price-hist-btn" onclick="showPriceHistory(event,${line.rowId})" title="历史价">⏱</button>
+      </div>
+    </td>
+    <td class="td-num"><input type="number" value="${line.ctn_qty}" min="0" placeholder="PAC数" title="订购PAC数" oninput="bUpdateLine(${line.rowId},'ctn_qty',+this.value)" style="width:48px"></td>
+    <td class="td-num"><input type="number" value="${line.pcs_per_ctn}" min="0" placeholder="如12" title="1PAC含多少件，写入备注" oninput="bUpdateLine(${line.rowId},'pcs_per_ctn',+this.value)" style="width:48px"></td>
+    <td class="td-photo">
+      <div class="line-photo-wrap" id="photo-wrap-${line.rowId}">
+        <div class="line-photo-placeholder" onclick="document.getElementById('line-photo-${line.rowId}').click()">📷</div>
+        <input type="file" accept="image/*" id="line-photo-${line.rowId}" style="display:none" onchange="onLinePhotoChange(event,${line.rowId})">
+      </div>
+    </td>
+    <td class="td-exist"><input type="text" value="${escAttr(line.existing_pno)}" oninput="bUpdateLine(${line.rowId},'existing_pno',this.value)" placeholder="已有编号可跳过建档"></td>
+    <td class="td-del"><button class="del-btn" onclick="bDeleteRow(${line.rowId})">✕</button></td>
+  `;
+  return tr;
+}
+
+function bUpdateLine(rowId, field, value) {
+  const line = _bLines.find(l => l.rowId === rowId);
+  if (line) line[field] = value;
+  checkBConfirmReady();
+}
+
+function bDeleteRow(rowId) {
+  _bLines = _bLines.filter(l => l.rowId !== rowId);
+  const tr = document.getElementById(`brow-${rowId}`);
+  if (tr) tr.remove();
+  checkBConfirmReady();
+}
+
+function bAddRow() {
+  const newLine = {
+    rowId: ++_bRowCounter, line: _bRowCounter,
+    name:'', spec:'', cat_id:'', unit_id:'',
+    qty:0, price:0, ctn_qty:0, pcs_per_ctn:0,
+    image_b64:'', existing_pno:''
+  };
+  _bLines.push(newLine);
+  document.getElementById('order-tbody').appendChild(buildRow(newLine));
+  checkBConfirmReady();
+}
+
+function onLinePhotoChange(e, rowId) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const b64 = ev.target.result.split(',')[1];
+    bUpdateLine(rowId, 'image_b64', b64);
+    // 显示缩略图
+    const wrap = document.getElementById(`photo-wrap-${rowId}`);
+    if (wrap) {
+      wrap.innerHTML = `<img class="line-photo-thumb" src="${ev.target.result}" onclick="document.getElementById('line-photo-${rowId}').click()">
+        <input type="file" accept="image/*" id="line-photo-${rowId}" style="display:none" onchange="onLinePhotoChange(event,${rowId})">`;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function checkBConfirmReady() {
+  const hasLines = _bLines.length > 0;
+  const hasSupConfirm = !!_bConfirmSup;
+  document.getElementById('btn-order-confirm').disabled = !(hasLines && hasSupConfirm);
+}
+
+// ── 历史价 Popover ────────────────────────────────────────────────────────────
+async function showPriceHistory(event, rowId) {
+  event.stopPropagation();
+  const line = _bLines.find(l => l.rowId === rowId);
+  if (!line) return;
+
+  const pno = (line.existing_pno || '').trim();
+  if (!pno) {
+    showBatchStatus('请先填写"已有编号"再查历史价', 'error');
+    return;
+  }
+
+  const popover = document.getElementById('price-popover');
+  const content = document.getElementById('price-popover-content');
+  content.innerHTML = '<div style="color:#999;font-size:12px;text-align:center;padding:8px">加载中…</div>';
+  positionPopover(event, popover);
+  popover.classList.add('show');
+
+  // 点击其他地方关闭
+  setTimeout(() => document.addEventListener('click', closePricePopoverOnOutside, {once: true}), 100);
+
+  try {
+    const res = await fetch(`${BASE}/register/price_history?account=${_account}&product_number=${encodeURIComponent(pno)}`);
+    const data = await res.json();
+    const history = data.history || [];
+
+    if (history.length === 0) {
+      content.innerHTML = '<div style="color:#999;font-size:12px;text-align:center;padding:8px">暂无历史记录</div>';
+    } else {
+      content.innerHTML = history.map(h =>
+        `<div class="ph-row">
+          <span class="ph-date">${h.order_date}</span>
+          <span class="ph-price">¥${h.price}</span>
+          <span class="ph-qty">×${h.qty}</span>
+        </div>`
+      ).join('');
+
+      // 最近一次价格填入单价框
+      const lastPrice = history[0].price;
+      const priceInput = document.getElementById(`price-input-${rowId}`);
+      if (priceInput && !priceInput.value) {
+        priceInput.value = lastPrice;
+        bUpdateLine(rowId, 'price', lastPrice);
+      }
+    }
+  } catch(e) {
+    content.innerHTML = `<div style="color:#cf1322;font-size:12px">查询失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function positionPopover(event, popover) {
+  const rect = event.target.getBoundingClientRect();
+  popover.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+  popover.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 290) + 'px';
+}
+
+function closePricePopover() {
+  document.getElementById('price-popover').classList.remove('show');
+}
+
+function closePricePopoverOnOutside(e) {
+  const pop = document.getElementById('price-popover');
+  if (!pop.contains(e.target)) pop.classList.remove('show');
+}
+
+// ── 批量 Tab：确认建档 + 生成购货订单 ────────────────────────────────────────
+async function doOrderConfirm() {
+  if (!_bConfirmSup) {
+    showBatchStatus('请先确认供应商', 'error');
+    return;
+  }
+  if (_bLines.length === 0) {
+    showBatchStatus('没有产品行', 'error');
+    return;
+  }
+
+  showBStep(4);
+  hideBatchStatus();
+
+  const lines = _bLines.map(l => ({
+    name:                    l.name,
+    spec:                    l.spec,
+    cat_id:                  l.cat_id,
+    unit_id:                 l.unit_id,
+    qty:                     l.qty,
+    price:                   l.price,
+    ctn_qty:                 l.ctn_qty,
+    pcs_per_ctn:             l.pcs_per_ctn,
+    existing_product_number: l.existing_pno,
+    image_b64:               l.image_b64,
+    line:                    l.line,
+  }));
+
+  try {
+    const body = {
+      account:              _account,
+      supplier_jdy_number:  _bConfirmSup.number,
+      supplier_id:          _bConfirmSup.id,
+      supplier_name:        _bConfirmSup.name,
+      tax_no:               _bConfirmSup.tax_no,
+      lines,
+    };
+    const res  = await fetch(`${BASE}/register/order/confirm`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    // 渲染结果
+    const rl = document.getElementById('b-result-list');
+    rl.innerHTML = '';
+    (data.results || []).forEach(r => {
+      const div = document.createElement('div');
+      div.className = `result-item ${r.status}`;
+      let icon = r.status === 'new' ? '✅' : r.status === 'existing' ? '♻️' : '❌';
+      let statusLabel = r.status === 'new' ? '新建' : r.status === 'existing' ? '已有' : '失败';
+      div.innerHTML = `
+        <span class="ri-icon">${icon}</span>
+        <div class="ri-info">
+          <div class="ri-pno">${statusLabel}  ${escHtml(r.product_number || '—')}</div>
+          ${r.error ? `<div class="ri-err">${escHtml(r.error)}</div>` : ''}
+        </div>`;
+      rl.appendChild(div);
+    });
+
+    // 购货订单卡片
+    const poCard = document.getElementById('b-po-card');
+    const poNum  = data.purchase_order_number;
+    if (poNum) {
+      document.getElementById('b-po-number').textContent = poNum;
+      document.getElementById('b-po-hint').textContent = '已生成购货订单，请在精斗云查看';
+      poCard.style.display = 'block';
+    } else if (data.purchase_order_error) {
+      document.getElementById('b-po-number').textContent = '生成失败';
+      document.getElementById('b-po-hint').textContent = data.purchase_order_error;
+      poCard.style.display = 'block';
+    }
+
+    showBStep(5);
+  } catch(e) {
+    showBatchStatus('建档失败: ' + e.message, 'error');
+    showBStep(3);
+  }
+}
+
+// ── 批量 Tab：重置 ────────────────────────────────────────────────────────────
+function bReset() {
+  _bSelSup = null; _bConfirmSup = null;
+  _orderPhotoB64 = null;
+  _bLines = []; _bRowCounter = 0;
+
+  document.getElementById('b-sup-search').value = '';
+  document.getElementById('b-sup-selected').style.display = 'none';
+  document.getElementById('b-sup-list').style.display = 'none';
+  document.getElementById('b-sup-confirm-search').value = '';
+  document.getElementById('b-sup-confirm-selected').style.display = 'none';
+  document.getElementById('b-sup-confirm-list').style.display = 'none';
+  document.getElementById('b-ai-sup-name').textContent = '—';
+  document.getElementById('order-photo-area').innerHTML =
+    '<div class="photo-icon">🧾</div><div class="photo-hint">点击上传手写订单照片</div>';
+  document.getElementById('order-photo-input').value = '';
+  document.getElementById('order-tbody').innerHTML = '';
+  document.getElementById('b-result-list').innerHTML = '';
+  document.getElementById('b-po-card').style.display = 'none';
+  hideBatchStatus();
+  showBStep(1);
+}
+
 // ── 状态提示 ──────────────────────────────────────────────────────────────────
-function showStatus(msg, type) {
-  const bar = document.getElementById('status-bar');
+function showSingleStatus(msg, type) {
+  const bar = document.getElementById('single-status-bar');
   bar.textContent = msg;
   bar.className = 'status-bar ' + (type || '');
   bar.style.display = 'block';
 }
-function hideStatus() {
-  document.getElementById('status-bar').style.display = 'none';
+function hideSingleStatus() {
+  document.getElementById('single-status-bar').style.display = 'none';
 }
+function showBatchStatus(msg, type) {
+  const bar = document.getElementById('batch-status-bar');
+  bar.textContent = msg;
+  bar.className = 'status-bar ' + (type || '');
+  bar.style.display = 'block';
+}
+function hideBatchStatus() {
+  document.getElementById('batch-status-bar').style.display = 'none';
+}
+
+// ── 工具函数 ──────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) { return escHtml(s); }
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 init();

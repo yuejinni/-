@@ -2,11 +2,19 @@
 JDY 建档编码生成模块
 
 功能:
-  - transform_vendor_code(tax_no)       档口号变换
-  - generate_product_number(...)        商品编码生成
-  - generate_ean13(cat_code_2d, seq, date) EAN-13 条码
-  - get_next_seq(account, transformed, cat_letter) 获取下一序号（线程安全）
-  - peek_next_seq(account, transformed, cat_letter) 预览下一序号（不自增）
+  - transform_vendor_code(tax_no)            档口号变换
+  - generate_product_number(prefix, transformed, small_code, seq)
+                                             商品编码生成（新格式）
+  - generate_ean13(code_2d, seq, date)       EAN-13 条码
+  - get_next_seq(account)                    获取账套全局下一序号（线程安全）
+  - peek_next_seq(account)                   预览下一序号（不自增）
+  - rollback_seq(account)                    回滚全局序号
+
+全局序号说明:
+  每个账套只有一个全局计数器（key='global'），所有品类+供应商共用。
+  sequence_counters.json 结构:
+    {"account1": {"global": {"current": 5}}, "account2": {"global": {"current": 3}}}
+  旧格式（per-category）数据保留不清除，新产品只使用 global 计数器。
 """
 
 import json
@@ -57,20 +65,27 @@ def transform_vendor_code(tax_no: str) -> tuple[str, str | None]:
         return s, f'首位数字+次位字母({s[:2]})，请手动设置'
 
 
-def generate_product_number(cat_letter: str, transformed: str, seq: int) -> str:
+def generate_product_number(prefix: str, transformed: str, small_code: str, seq: int) -> str:
     """
-    生成商品编码
-    格式: {cat_letter}.{transformed}{cat_letter}-{seq:04d}
-    示例: C.A12629C-0008
+    生成商品编码（新格式）
+    格式: {prefix}.{transformed}{small_code:02d}-{seq:04d}
+    示例: C.A1262902-0001  （prefix=C, transformed=A12629, small_code=02, seq=1）
+    示例: LF.A1262901-0001 （prefix=LF, transformed=A12629, small_code=01, seq=1）
+
+    参数:
+        prefix:     产品编号点前部分（中类字母，如 'C' 或 'LF'）
+        transformed: 变换后档口号（如 'A12629'）
+        small_code: Excel 小类顺序码（如 '02'）
+        seq:        全局序号整数
     """
-    return f'{cat_letter.upper()}.{transformed.upper()}{cat_letter.upper()}-{seq:04d}'
+    return f'{prefix.upper()}.{transformed.upper()}{str(small_code).zfill(2)}-{seq:04d}'
 
 
 def generate_ean13(cat_code_2d: str, seq: int, dt: datetime | date_type | None = None) -> str:
     """
     生成 EAN-13 条码（复用 Odoo 算法）
-    cat_code_2d: 2位数字字符串，如 '01'
-    seq: 序号整数
+    cat_code_2d: 2位数字字符串，如 '01'（EAN 专用码，全局唯一）
+    seq: 序号整数（全局序号）
     dt: 日期（默认今天）
     """
     if dt is None:
@@ -98,6 +113,8 @@ _COUNTERS_FILE = os.path.join(
 )
 _counters_lock = threading.Lock()
 
+_GLOBAL_KEY = 'global'
+
 
 def _load_counters() -> dict:
     try:
@@ -116,31 +133,27 @@ def _save_counters(data: dict):
     os.replace(tmp, _COUNTERS_FILE)
 
 
-def _counter_key(transformed: str, cat_letter: str) -> str:
-    """计数器的 key = 变换后档口号 + 分类字母"""
-    return f'{transformed.upper()}_{cat_letter.upper()}'
+def _get_global_current(acc_data: dict) -> int:
+    """从账套数据中读取 global 计数器当前值"""
+    val = acc_data.get(_GLOBAL_KEY)
+    if isinstance(val, dict):
+        return val.get('current', 0)
+    elif isinstance(val, int):
+        return val
+    return 0
 
 
-def peek_next_seq(account: str, transformed: str, cat_letter: str) -> int:
-    """预览下一个序号（不自增，不写文件）"""
+def peek_next_seq(account: str) -> int:
+    """预览账套全局下一个序号（不自增，不写文件）"""
     with _counters_lock:
         data = _load_counters()
         acc_data = data.get(account, {})
-        key = _counter_key(transformed, cat_letter)
-        # key 可能是旧格式 {"current": N} 或直接 N
-        val = acc_data.get(key)
-        if isinstance(val, dict):
-            current = val.get('current', 0)
-        elif isinstance(val, int):
-            current = val
-        else:
-            current = 0
-        return current + 1
+        return _get_global_current(acc_data) + 1
 
 
-def get_next_seq(account: str, transformed: str, cat_letter: str) -> int:
+def get_next_seq(account: str) -> int:
     """
-    获取并自增序号（线程安全）。
+    获取并自增账套全局序号（线程安全）。
     返回本次应使用的序号（从1开始）。
     """
     with _counters_lock:
@@ -148,54 +161,43 @@ def get_next_seq(account: str, transformed: str, cat_letter: str) -> int:
         if account not in data:
             data[account] = {}
         acc_data = data[account]
-        key = _counter_key(transformed, cat_letter)
-
-        val = acc_data.get(key)
-        if isinstance(val, dict):
-            current = val.get('current', 0)
-        elif isinstance(val, int):
-            current = val
-        else:
-            current = 0
-
+        current = _get_global_current(acc_data)
         next_seq = current + 1
-        acc_data[key] = {'current': next_seq, 'label': f'{transformed}_{cat_letter}'}
+        acc_data[_GLOBAL_KEY] = {'current': next_seq}
         _save_counters(data)
         return next_seq
 
 
-def rollback_seq(account: str, transformed: str, cat_letter: str):
-    """回滚序号（创建失败时调用）"""
+def rollback_seq(account: str):
+    """回滚账套全局序号（创建失败时调用）"""
     with _counters_lock:
         data = _load_counters()
         acc_data = data.get(account, {})
-        key = _counter_key(transformed, cat_letter)
-        val = acc_data.get(key)
-        if isinstance(val, dict):
-            current = val.get('current', 0)
-        elif isinstance(val, int):
-            current = val
-        else:
-            current = 0
+        current = _get_global_current(acc_data)
         if current > 0:
-            acc_data[key] = {'current': current - 1, 'label': f'{transformed}_{cat_letter}'}
+            acc_data[_GLOBAL_KEY] = {'current': current - 1}
             _save_counters(data)
 
 
-def set_initial_seq(account: str, transformed: str, cat_letter: str, initial: int):
-    """手动设置某个key的初始序号（从分析表读取后写入）"""
+def set_global_seq(account: str, value: int):
+    """手动设置账套全局序号（初始化或修正时使用）"""
     with _counters_lock:
         data = _load_counters()
         if account not in data:
             data[account] = {}
-        key = _counter_key(transformed, cat_letter)
-        data[account][key] = {'current': initial, 'label': f'{transformed}_{cat_letter}'}
+        data[account][_GLOBAL_KEY] = {'current': value}
         _save_counters(data)
+        print(f'[code_gen] {account} global seq set to {value}')
+
+
+def set_initial_seq(account: str, value: int):
+    """set_global_seq 的别名，保持兼容"""
+    set_global_seq(account, value)
 
 
 # ── 完整建档参数计算 ──────────────────────────────────────────────────────────
-def build_product_code(account: str, tax_no: str, cat_letter: str, cat_code_2d: str,
-                       dt: datetime | date_type | None = None) -> dict:
+def build_product_code(account: str, tax_no: str, prefix: str, small_code: str,
+                       cat_code_2d: str, dt: datetime | date_type | None = None) -> dict:
     """
     一步生成建档所需的编码信息。
     返回:
@@ -211,13 +213,13 @@ def build_product_code(account: str, tax_no: str, cat_letter: str, cat_code_2d: 
     if err:
         return {'error': err, 'transformed': transformed}
 
-    seq = get_next_seq(account, transformed, cat_letter)
-    product_number = generate_product_number(cat_letter, transformed, seq)
+    seq = get_next_seq(account)
+    product_number = generate_product_number(prefix, transformed, small_code, seq)
 
     try:
         ean13 = generate_ean13(cat_code_2d, seq, dt)
     except Exception as e:
-        rollback_seq(account, transformed, cat_letter)
+        rollback_seq(account)
         return {'error': f'EAN-13 生成失败: {e}', 'transformed': transformed}
 
     return {
@@ -251,6 +253,8 @@ if __name__ == '__main__':
     ean = generate_ean13('01', 37, date(2025, 5, 1))
     print(f'  cat=01, seq=37, date=250501 → {ean}  (长度={len(ean)})')
 
-    print('\n商品编码测试:')
-    pno = generate_product_number('C', 'A12629', 8)
-    print(f'  cat=C, transformed=A12629, seq=8 → {pno}')
+    print('\n商品编码测试（新格式）:')
+    pno = generate_product_number('C', 'A12629', '02', 1)
+    print(f'  prefix=C, transformed=A12629, small_code=02, seq=1 → {pno}')
+    pno2 = generate_product_number('LF', 'A12629', '01', 1)
+    print(f'  prefix=LF, transformed=A12629, small_code=01, seq=1 → {pno2}')
