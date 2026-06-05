@@ -178,6 +178,8 @@ def _admin_path_required():
         '/system-update/upload', '/system-update/backups', '/system-update/rollback',
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
         '/jdy-webhook/status', '/jdy-webhook/worker-control', '/jdy-webhook/recover-stale',
+        '/jdy-webhook/failures', '/jdy-webhook/retry-failed-dry-run', '/jdy-webhook/retry-failed',
+        '/jdy-webhook/resolve-recorded-only-dry-run', '/jdy-webhook/resolve-recorded-only',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
@@ -4073,7 +4075,7 @@ def _webhook_status_snapshot(limit=20):
                 'payload_preview': payload[:200],
             })
         for row in conn.execute('''
-            SELECT resource, bill_no, COUNT(*) AS c
+            SELECT resource, bill_no, COUNT(*) AS c, GROUP_CONCAT(id) AS ids
             FROM webhook_events
             WHERE status = 'pending'
               AND COALESCE(resource, '') <> ''
@@ -4088,6 +4090,10 @@ def _webhook_status_snapshot(limit=20):
                 'bill_no': row['bill_no'] or '',
                 'count': int(row['c'] or 0),
                 'pending_count': int(row['c'] or 0),
+                'ids': [
+                    int(x) for x in str(row['ids'] or '').split(',')
+                    if str(x or '').strip().isdigit()
+                ],
             })
         stale_cutoff = datetime.now() - timedelta(minutes=30)
         stale_rows = conn.execute('''
@@ -5294,6 +5300,110 @@ def _webhook_stale_processing_rows(conn, older_than_minutes=30, limit=100):
         LIMIT ?
     ''', (cutoff, cutoff, limit)).fetchall()
     return [dict(row) for row in rows], minutes, cutoff
+
+
+def _webhook_int_arg(value, default=0, min_value=0, max_value=1000):
+    try:
+        num = int(value)
+    except Exception:
+        num = default
+    return max(min_value, min(num, max_value))
+
+
+def _webhook_failure_params(source):
+    source = source or {}
+    resource = str(source.get('resource') or '').strip()
+    error_keyword = str(source.get('error_keyword') or source.get('error') or '').strip()
+    order = str(source.get('order') or 'oldest').strip().lower()
+    if order not in ('oldest', 'newest'):
+        order = 'oldest'
+    limit = _webhook_int_arg(source.get('limit'), 20, 1, 500)
+    offset = _webhook_int_arg(source.get('offset'), 0, 0, 100000)
+    return {
+        'resource': resource,
+        'error_keyword': error_keyword,
+        'order': order,
+        'limit': limit,
+        'offset': offset,
+    }
+
+
+def _webhook_failed_where(params, recorded_only=False):
+    clauses = ["status = 'failed'"]
+    values = []
+    resource = str((params or {}).get('resource') or '').strip()
+    error_keyword = str((params or {}).get('error_keyword') or '').strip()
+    if resource:
+        clauses.append('resource = ?')
+        values.append(resource)
+    if error_keyword:
+        clauses.append('LOWER(COALESCE(error, "")) LIKE ?')
+        values.append(f'%{error_keyword.lower()}%')
+    if recorded_only:
+        clauses.append('(LOWER(COALESCE(error, "")) LIKE ? OR COALESCE(error, "") LIKE ?)')
+        values.extend(['%recorded only%', '%仅记录%'])
+    return ' AND '.join(clauses), values
+
+
+def _webhook_failed_rows(conn, params, recorded_only=False):
+    params = _webhook_failure_params(params)
+    where, values = _webhook_failed_where(params, recorded_only=recorded_only)
+    direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
+    rows = conn.execute(f'''
+        SELECT id, account, biz_type, resource, bill_no, action, status, attempts, error, created_at, processed_at
+        FROM webhook_events
+        WHERE {where}
+        ORDER BY id {direction}
+        LIMIT ? OFFSET ?
+    ''', values + [params['limit'], params['offset']]).fetchall()
+    return [dict(row) for row in rows], params
+
+
+def _webhook_failures_snapshot(params):
+    params = _webhook_failure_params(params)
+    conn = _sales_readonly_conn()
+    empty = {
+        'total': 0,
+        'by_resource': [],
+        'by_error': [],
+        'items': [],
+        'params': params,
+    }
+    if conn is None:
+        return empty
+    try:
+        where, values = _webhook_failed_where(params)
+        total = conn.execute(f'SELECT COUNT(*) AS c FROM webhook_events WHERE {where}', values).fetchone()['c']
+        by_resource = [
+            dict(row) for row in conn.execute(f'''
+                SELECT COALESCE(resource, '') AS resource, COUNT(*) AS count
+                FROM webhook_events
+                WHERE {where}
+                GROUP BY resource
+                ORDER BY count DESC, resource
+                LIMIT 30
+            ''', values).fetchall()
+        ]
+        by_error = [
+            dict(row) for row in conn.execute(f'''
+                SELECT COALESCE(error, '') AS error, COUNT(*) AS count
+                FROM webhook_events
+                WHERE {where}
+                GROUP BY error
+                ORDER BY count DESC, error
+                LIMIT 30
+            ''', values).fetchall()
+        ]
+        items, _ = _webhook_failed_rows(conn, params)
+        return {
+            'total': int(total or 0),
+            'by_resource': by_resource,
+            'by_error': by_error,
+            'items': items,
+            'params': params,
+        }
+    finally:
+        conn.close()
 
 
 def _flatten_webhook_items(value):
@@ -9609,6 +9719,135 @@ def jdy_webhook_recover_stale():
             'recovered': len(ids),
             'ids': ids,
             'message': 'stale processing events recovered to pending; worker was not started',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/failures', methods=['GET'])
+def jdy_webhook_failures():
+    try:
+        snapshot = _webhook_failures_snapshot(request.args)
+        return jsonify({
+            'success': True,
+            'total': snapshot['total'],
+            'by_resource': snapshot['by_resource'],
+            'by_error': snapshot['by_error'],
+            'items': snapshot['items'],
+            'params': snapshot['params'],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/retry-failed-dry-run', methods=['POST'])
+def jdy_webhook_retry_failed_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        conn = _sales_readonly_conn()
+        if conn is None:
+            return jsonify({'success': True, 'dry_run': True, 'count': 0, 'items': []})
+        try:
+            rows, params = _webhook_failed_rows(conn, data)
+        finally:
+            conn.close()
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'count': len(rows),
+            'items': rows,
+            'params': params,
+            'message': 'dry run only; no failed events were changed',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/retry-failed', methods=['POST'])
+def jdy_webhook_retry_failed():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '') != 'RETRY_FAILED_WEBHOOK':
+            return jsonify({'success': False, 'error': '缺少确认码 RETRY_FAILED_WEBHOOK，未恢复失败事件。'}), 400
+        with _sales_cache_conn() as conn:
+            rows, params = _webhook_failed_rows(conn, data)
+            ids = [int(row['id']) for row in rows]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'pending',
+                        error = 'recovered for retry',
+                        processed_at = ''
+                    WHERE id IN ({marks}) AND status = 'failed'
+                ''', ids)
+                conn.commit()
+        _webhook_state.update({
+            'pending': _webhook_pending_count(),
+            'message': f'recovered {len(ids)} failed webhook event(s) to pending',
+        })
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'recovered': len(ids),
+            'ids': ids,
+            'params': params,
+            'message': 'failed events recovered to pending; worker was not started',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/resolve-recorded-only-dry-run', methods=['POST'])
+def jdy_webhook_resolve_recorded_only_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        conn = _sales_readonly_conn()
+        if conn is None:
+            return jsonify({'success': True, 'dry_run': True, 'count': 0, 'items': []})
+        try:
+            rows, params = _webhook_failed_rows(conn, data, recorded_only=True)
+        finally:
+            conn.close()
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'count': len(rows),
+            'items': rows,
+            'params': params,
+            'message': 'dry run only; no recorded-only failures were changed',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/resolve-recorded-only', methods=['POST'])
+def jdy_webhook_resolve_recorded_only():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '') != 'RESOLVE_RECORDED_ONLY':
+            return jsonify({'success': False, 'error': '缺少确认码 RESOLVE_RECORDED_ONLY，未归档 recorded only 历史失败。'}), 400
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with _sales_cache_conn() as conn:
+            rows, params = _webhook_failed_rows(conn, data, recorded_only=True)
+            ids = [int(row['id']) for row in rows]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'done',
+                        error = 'recorded only resolved',
+                        processed_at = ?
+                    WHERE id IN ({marks}) AND status = 'failed'
+                ''', [now] + ids)
+                conn.commit()
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'resolved': len(ids),
+            'ids': ids,
+            'params': params,
+            'message': 'recorded-only failed events resolved to done; worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

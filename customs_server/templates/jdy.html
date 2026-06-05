@@ -1997,9 +1997,28 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
         <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('manual')">切换为手动</button>
         <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
+        <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
+      </div>
+      <div class="webhook-control-row" id="webhook-manual-panel">
+        <b>手动处理区</b>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1)">处理 1 条</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5)">处理 5 条</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10)">处理 10 条</button>
+        <input id="webhook-manual-count" type="number" min="1" max="500" value="10" style="width:90px;">
+        <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual()">处理指定数量</button>
+        <button class="btn btn-warn btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">暂停处理</button>
+        <span class="tip">手动模式不会自动处理，需要管理员点击按钮。</span>
+      </div>
+      <div class="webhook-control-row" id="webhook-auto-panel">
+        <b>自动处理区</b>
+        <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
+        <span class="tip">自动模式按 300 条/分钟处理，积压较多最高 450 条/分钟，频率限制时降速保护。</span>
+      </div>
+      <div class="webhook-control-row">
+        <b>卡住事件</b>
         <button class="btn btn-ghost btn-sm" type="button" onclick="recoverStaleWebhook('dry_run')">查看卡住事件</button>
         <button class="btn btn-warn btn-sm" type="button" onclick="recoverStaleWebhook('recover_to_pending')">恢复卡住事件为待处理</button>
-        <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
       </div>
       <div id="webhook-stale-recover-status" class="tip" style="margin-top:4px;"></div>
       <div class="webhook-status-grid" id="webhook-status-counts">
@@ -2017,6 +2036,21 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div id="webhook-notes" class="tip" style="margin-top:10px;line-height:1.7;"></div>
       <div id="webhook-resource-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
       <div id="webhook-duplicate-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
+      <div style="margin-top:12px;border-top:1px solid #edf0f5;padding-top:12px;">
+        <b>失败治理</b>
+        <div class="webhook-control-row">
+          <input id="webhook-failure-resource" placeholder="类型筛选，如 product" style="max-width:180px;">
+          <input id="webhook-failure-keyword" placeholder="错误关键词" style="max-width:220px;">
+          <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:90px;">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
+          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败为待处理</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">recorded only 归档 dry-run</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档 recorded only</button>
+        </div>
+        <div id="webhook-failure-summary" class="tip" style="margin-top:6px;line-height:1.7;">待读取失败统计</div>
+        <div id="webhook-failure-list" class="tip" style="margin-top:6px;line-height:1.7;"></div>
+      </div>
       <div class="webhook-events-wrap" style="margin-top:10px;">
         <table class="webhook-events-table">
           <thead>
@@ -5588,6 +5622,134 @@ async function recoverStaleWebhook(action) {
   }
 }
 
+function webhookFailureParams() {
+  const resource = document.getElementById('webhook-failure-resource')?.value?.trim() || '';
+  const errorKeyword = document.getElementById('webhook-failure-keyword')?.value?.trim() || '';
+  const limit = Number(document.getElementById('webhook-failure-limit')?.value || 10);
+  return {
+    resource,
+    error_keyword: errorKeyword,
+    order: 'oldest',
+    limit: Math.max(1, Math.min(limit || 10, 500)),
+  };
+}
+
+async function startWebhookManual(count) {
+  const inputCount = Number(document.getElementById('webhook-manual-count')?.value || 10);
+  const maxItems = Math.max(1, Math.min(Number(count || inputCount || 1), 500));
+  const ok = window.confirm(`确认手动处理 ${maxItems} 条 Webhook pending 吗？处理过程可能调用 JDY 只读接口并写本地缓存。`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`${API}/jdy-webhook/worker-control`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ action: 'start', max_items: maxItems }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '启动失败');
+    const help = document.getElementById('webhook-mode-help');
+    if (help) help.textContent = `已启动手动处理 ${maxItems} 条；可随时暂停。`;
+    await loadWebhookStatus();
+  } catch (e) {
+    alert('启动手动处理失败：' + e.message);
+  }
+}
+
+async function loadWebhookFailures() {
+  const summaryEl = document.getElementById('webhook-failure-summary');
+  const listEl = document.getElementById('webhook-failure-list');
+  const params = webhookFailureParams();
+  const query = new URLSearchParams({
+    resource: params.resource,
+    error_keyword: params.error_keyword,
+    order: params.order,
+    limit: String(params.limit),
+  });
+  try {
+    if (summaryEl) summaryEl.textContent = '正在读取失败队列...';
+    const res = await fetch(`${API}/jdy-webhook/failures?${query.toString()}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    const byError = data.by_error || [];
+    const byResource = data.by_resource || [];
+    if (summaryEl) {
+      const errorText = byError.slice(0, 5).map(x => `${webhookHtml(translateWebhookError(x.error || ''))} × ${Number(x.count || 0)}`).join('；') || '暂无';
+      const resourceText = byResource.slice(0, 5).map(x => `${webhookHtml(translateWebhookResource(x.resource || 'unknown'))} × ${Number(x.count || 0)}`).join('；') || '暂无';
+      summaryEl.innerHTML = `失败总数：${Number(data.total || 0)}<br>错误 Top：${errorText}<br>类型 Top：${resourceText}`;
+    }
+    if (listEl) {
+      const items = data.items || [];
+      listEl.innerHTML = items.length ? items.map(row =>
+        `#${Number(row.id || 0)} ${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} ${webhookHtml(row.bill_no || '')}：${webhookHtml(translateWebhookError(row.error || ''))}`
+      ).join('<br>') : '暂无失败记录';
+    }
+  } catch (e) {
+    if (summaryEl) summaryEl.textContent = '读取失败队列失败：' + e.message;
+  }
+}
+
+async function retryFailedWebhook(dryRun) {
+  const params = webhookFailureParams();
+  const endpoint = dryRun ? 'retry-failed-dry-run' : 'retry-failed';
+  if (!dryRun) {
+    const ok = window.confirm(`确认把最多 ${params.limit} 条 failed 恢复为 pending 吗？这不会自动处理队列。`);
+    if (!ok) return;
+    params.confirm = 'RETRY_FAILED_WEBHOOK';
+  }
+  try {
+    const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '操作失败');
+    const listEl = document.getElementById('webhook-failure-list');
+    if (listEl) {
+      if (dryRun) {
+        listEl.innerHTML = `将恢复 ${Number(data.count || 0)} 条 failed：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
+      } else {
+        listEl.innerHTML = `已恢复 ${Number(data.recovered || 0)} 条 failed 为 pending；请到手动处理区处理 N 条。`;
+      }
+    }
+    await loadWebhookStatus();
+    await loadWebhookFailures();
+  } catch (e) {
+    alert('失败队列重试操作失败：' + e.message);
+  }
+}
+
+async function resolveRecordedOnly(dryRun) {
+  const params = webhookFailureParams();
+  const endpoint = dryRun ? 'resolve-recorded-only-dry-run' : 'resolve-recorded-only';
+  if (!dryRun) {
+    const ok = window.confirm(`确认把最多 ${params.limit} 条 recorded only 历史 failed 归档为 done 吗？这不会调用 JDY。`);
+    if (!ok) return;
+    params.confirm = 'RESOLVE_RECORDED_ONLY';
+  }
+  try {
+    const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '操作失败');
+    const listEl = document.getElementById('webhook-failure-list');
+    if (listEl) {
+      if (dryRun) {
+        listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条 recorded only：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
+      } else {
+        listEl.innerHTML = `已归档 ${Number(data.resolved || 0)} 条 recorded only failed 为 done。`;
+      }
+    }
+    await loadWebhookStatus();
+    await loadWebhookFailures();
+  } catch (e) {
+    alert('recorded only 归档失败：' + e.message);
+  }
+}
+
 async function loadWebhookStatus() {
   const endpointEl = document.getElementById('webhook-endpoint-status');
   const countsEl = document.getElementById('webhook-status-counts');
@@ -5598,6 +5760,8 @@ async function loadWebhookStatus() {
   const bodyEl = document.getElementById('webhook-events-body');
   const modeEl = document.getElementById('webhook-processing-mode');
   const modeHelpEl = document.getElementById('webhook-mode-help');
+  const manualPanel = document.getElementById('webhook-manual-panel');
+  const autoPanel = document.getElementById('webhook-auto-panel');
   if (endpointEl) endpointEl.textContent = '读取中...';
   try {
     const res = await fetch(`${API}/jdy-webhook/status?limit=20`);
@@ -5629,6 +5793,12 @@ async function loadWebhookStatus() {
       } else {
         modeHelpEl.textContent = '手动模式下不会自动处理 pending，需要管理员手动执行。';
       }
+    }
+    if (manualPanel) {
+      manualPanel.style.background = processingMode === 'manual' ? '#f5fbff' : '';
+    }
+    if (autoPanel) {
+      autoPanel.style.background = processingMode === 'auto' ? '#fff7e6' : '';
     }
     const policy = data.current_rate_policy || {};
     const estimate = data.backlog_estimate || {};
@@ -5674,7 +5844,10 @@ async function loadWebhookStatus() {
     const duplicates = data.duplicate_summary || [];
     if (duplicateEl) {
       duplicateEl.innerHTML = duplicates.length
-        ? `重复待处理 Top：${duplicates.map(row => `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}`).join('；')}`
+        ? `重复待处理 Top：${duplicates.map(row => {
+            const ids = (row.ids || []).slice(0, 8).join(',');
+            return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
+          }).join('；')}`
         : '重复待处理：暂无';
     }
     const recent = data.recent || [];
@@ -5695,6 +5868,7 @@ async function loadWebhookStatus() {
         `;
       }).join('') : '<tr><td colspan="8" class="tip">暂无 Webhook 事件</td></tr>';
     }
+    await loadWebhookFailures();
   } catch (e) {
     if (endpointEl) {
       endpointEl.textContent = '读取 Webhook 状态失败：' + e.message;
