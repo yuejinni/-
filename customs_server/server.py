@@ -177,7 +177,7 @@ def _admin_path_required():
         '/jdy-config', '/jdy-refresh-auth', '/jdy-test',
         '/system-update/upload', '/system-update/backups', '/system-update/rollback',
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
-        '/jdy-webhook/status',
+        '/jdy-webhook/status', '/jdy-webhook/worker-control',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
     }
@@ -3849,6 +3849,70 @@ def _sales_readonly_conn():
     return conn
 
 
+WEBHOOK_RATE_NORMAL_PER_MIN = 300
+WEBHOOK_RATE_BOOST_PER_MIN = 450
+WEBHOOK_RATE_HARD_MAX_PER_MIN = 450
+WEBHOOK_BOOST_PENDING_THRESHOLD = 3000
+WEBHOOK_BOOST_ETA_MINUTES = 20
+WEBHOOK_BOOST_COOLDOWN_PENDING = 1000
+WEBHOOK_BACKOFF_PER_MIN = 120
+WEBHOOK_ERROR_BACKOFF_SECONDS = 300
+
+
+def _webhook_backlog_estimate(pending_total):
+    pending_total = max(0, int(pending_total or 0))
+    normal = min(WEBHOOK_RATE_NORMAL_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN)
+    boost = min(WEBHOOK_RATE_BOOST_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN)
+    return {
+        'pending_total': pending_total,
+        'normal_rate_per_min': normal,
+        'boost_rate_per_min': boost,
+        'eta_minutes_normal': round(pending_total / normal, 2) if normal else 0,
+        'eta_minutes_boost': round(pending_total / boost, 2) if boost else 0,
+    }
+
+
+def _webhook_backoff_active():
+    until = float(_webhook_state.get('backoff_until') or 0)
+    return until > time.time()
+
+
+def _webhook_rate_policy(pending_total=None):
+    pending_total = _webhook_pending_count() if pending_total is None else int(pending_total or 0)
+    estimate = _webhook_backlog_estimate(pending_total)
+    if _webhook_state.get('paused'):
+        return {
+            'current_rate_per_min': 0,
+            'mode': 'paused',
+            'reason': _webhook_state.get('pause_reason') or 'manual processing required',
+            'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
+        }
+    if _webhook_backoff_active():
+        return {
+            'current_rate_per_min': min(WEBHOOK_BACKOFF_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
+            'mode': 'backoff',
+            'reason': _webhook_state.get('backoff_reason') or 'recent API/network errors',
+            'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
+        }
+    if (
+        pending_total >= WEBHOOK_BOOST_PENDING_THRESHOLD
+        or estimate['eta_minutes_normal'] > WEBHOOK_BOOST_ETA_MINUTES
+        or (_webhook_state.get('mode') == 'boost' and pending_total > WEBHOOK_BOOST_COOLDOWN_PENDING)
+    ):
+        return {
+            'current_rate_per_min': min(WEBHOOK_RATE_BOOST_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
+            'mode': 'boost',
+            'reason': 'pending backlog is high',
+            'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
+        }
+    return {
+        'current_rate_per_min': min(WEBHOOK_RATE_NORMAL_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
+        'mode': 'normal',
+        'reason': 'default controlled processing',
+        'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
+    }
+
+
 def _webhook_status_snapshot(limit=20):
     try:
         limit = int(limit or 20)
@@ -3858,12 +3922,19 @@ def _webhook_status_snapshot(limit=20):
     counts = {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
     recent = []
     resource_map = {}
+    duplicate_summary = []
+    stale_processing = 0
     conn = _sales_readonly_conn()
     if conn is None:
         return {
             'counts': counts,
             'recent': recent,
             'resource_summary': [],
+            'by_resource': [],
+            'duplicate_summary': [],
+            'stale_processing': 0,
+            'backlog_estimate': _webhook_backlog_estimate(0),
+            'current_rate_policy': _webhook_rate_policy(0),
             'notes': ['本地缓存库不存在，尚无 Webhook 事件记录'],
         }
     try:
@@ -3914,9 +3985,44 @@ def _webhook_status_snapshot(limit=20):
                 'processed_at': row['processed_at'] or '',
                 'payload_preview': payload[:200],
             })
+        for row in conn.execute('''
+            SELECT resource, bill_no, COUNT(*) AS c
+            FROM webhook_events
+            WHERE status = 'pending'
+              AND COALESCE(resource, '') <> ''
+              AND COALESCE(bill_no, '') <> ''
+            GROUP BY resource, bill_no
+            HAVING c > 1
+            ORDER BY c DESC, resource, bill_no
+            LIMIT 20
+        '''):
+            duplicate_summary.append({
+                'resource': row['resource'] or 'unknown',
+                'bill_no': row['bill_no'] or '',
+                'count': int(row['c'] or 0),
+                'pending_count': int(row['c'] or 0),
+            })
+        stale_cutoff = datetime.now() - timedelta(minutes=30)
+        stale_rows = conn.execute('''
+            SELECT created_at, processed_at
+            FROM webhook_events
+            WHERE status = 'processing'
+        ''').fetchall()
+        for row in stale_rows:
+            raw_ts = str(row['processed_at'] or row['created_at'] or '').strip()
+            if not raw_ts:
+                continue
+            try:
+                parsed_ts = datetime.fromisoformat(raw_ts.replace('Z', '').replace('T', ' '))
+            except Exception:
+                continue
+            if parsed_ts <= stale_cutoff:
+                stale_processing += 1
     finally:
         conn.close()
 
+    pending_total = counts.get('pending', 0)
+    policy = _webhook_rate_policy(pending_total)
     notes = [
         'inventory/product/supplier/purchase_inbound 当前只轻记录',
         '请在 JDY 后台确认消息订阅地址是否配置为 http://gongdashuai.top:5008/jdy-webhook',
@@ -3929,6 +4035,11 @@ def _webhook_status_snapshot(limit=20):
         'counts': counts,
         'recent': recent,
         'resource_summary': sorted(resource_map.values(), key=lambda x: x['resource']),
+        'by_resource': sorted(resource_map.values(), key=lambda x: x['resource']),
+        'duplicate_summary': duplicate_summary,
+        'stale_processing': stale_processing,
+        'backlog_estimate': _webhook_backlog_estimate(pending_total),
+        'current_rate_policy': policy,
         'notes': notes,
     }
 
@@ -5128,12 +5239,21 @@ def _webhook_pending_count():
 def _claim_webhook_event():
     with _webhook_queue_lock:
         with _sales_cache_conn() as conn:
-            row = conn.execute('''
-                SELECT * FROM webhook_events
-                WHERE status = 'pending'
-                ORDER BY id ASC
-                LIMIT 1
-            ''').fetchone()
+            resource_filter = str(_webhook_state.get('resource_filter') or '').strip()
+            if resource_filter:
+                row = conn.execute('''
+                    SELECT * FROM webhook_events
+                    WHERE status = 'pending' AND resource = ?
+                    ORDER BY id ASC
+                    LIMIT 1
+                ''', (resource_filter,)).fetchone()
+            else:
+                row = conn.execute('''
+                    SELECT * FROM webhook_events
+                    WHERE status = 'pending'
+                    ORDER BY id ASC
+                    LIMIT 1
+                ''').fetchone()
             if not row:
                 return None
             conn.execute(
@@ -5186,9 +5306,63 @@ def _process_webhook_event(event):
     return True
 
 
+def _webhook_wait_for_rate_slot():
+    global _webhook_last_claim_at
+    policy = _webhook_rate_policy()
+    _webhook_state.update({
+        'mode': policy.get('mode'),
+        'current_rate_per_min': policy.get('current_rate_per_min'),
+        'rate_reason': policy.get('reason'),
+    })
+    rate = max(1, min(int(policy.get('current_rate_per_min') or 1), WEBHOOK_RATE_HARD_MAX_PER_MIN))
+    interval = 60.0 / rate
+    now = time.time()
+    wait_for = (_webhook_last_claim_at + interval) - now
+    if wait_for > 0:
+        _webhook_worker_stop.wait(wait_for)
+    _webhook_last_claim_at = time.time()
+
+
+def _webhook_record_backoff(error):
+    msg = str(error or '')
+    lowered = msg.lower()
+    _webhook_state['consecutive_failures'] = int(_webhook_state.get('consecutive_failures') or 0) + 1
+    should_backoff = (
+        '429' in lowered
+        or 'rate limit' in lowered
+        or 'too many requests' in lowered
+        or 'frequency' in lowered
+        or '频率' in msg
+        or int(_webhook_state.get('consecutive_failures') or 0) >= 3
+    )
+    if should_backoff:
+        _webhook_state['backoff_until'] = time.time() + WEBHOOK_ERROR_BACKOFF_SECONDS
+        _webhook_state['backoff_reason'] = msg[:160] or 'consecutive webhook processing failures'
+
+
 def _webhook_worker_loop():
     _webhook_state['running'] = True
     while not _webhook_worker_stop.is_set():
+        if _webhook_state.get('paused'):
+            _webhook_state.update({
+                'running': False,
+                'mode': 'paused',
+                'pending': _webhook_pending_count(),
+                'message': _webhook_state.get('pause_reason') or 'manual processing required',
+            })
+            _webhook_worker_stop.wait(5)
+            continue
+        max_items = _webhook_state.get('max_items_remaining')
+        if max_items is not None and int(max_items or 0) <= 0:
+            _webhook_state.update({
+                'paused': True,
+                'pause_reason': 'max_items reached',
+                'running': False,
+                'mode': 'paused',
+            })
+            _webhook_worker_stop.wait(5)
+            continue
+        _webhook_wait_for_rate_slot()
         event = _claim_webhook_event()
         if not event:
             _webhook_state.update({'running': False, 'pending': _webhook_pending_count()})
@@ -5203,10 +5377,19 @@ def _webhook_worker_loop():
             ok = _process_webhook_event(event)
             _finish_webhook_event(event['id'], True, '' if ok else 'recorded only')
             _webhook_state['processed'] = int(_webhook_state.get('processed') or 0) + 1
-            time.sleep(1.5)
+            _webhook_state['consecutive_failures'] = 0
+            if _webhook_state.get('max_items_remaining') is not None:
+                _webhook_state['max_items_remaining'] = max(0, int(_webhook_state.get('max_items_remaining') or 0) - 1)
+            if _webhook_state.get('stop_after_current'):
+                _webhook_state.update({
+                    'paused': True,
+                    'pause_reason': 'stopped after current item',
+                    'stop_after_current': False,
+                })
         except Exception as e:
             _finish_webhook_event(event['id'], False, _short_sync_error(e))
             _log_event('JDY_WEBHOOK_ERROR', f"{event.get('resource')} {event.get('bill_no')}: {_short_sync_error(e)}")
+            _webhook_record_backoff(_short_sync_error(e))
             time.sleep(3)
 
 
@@ -5354,11 +5537,21 @@ _SALES_ORDER_HASH_VERSION = 'sales-order-v2'
 _webhook_queue_lock = threading.Lock()
 _webhook_worker_thread = None
 _webhook_worker_stop = threading.Event()
+_webhook_last_claim_at = 0.0
 _webhook_state = {
     'running': False,
+    'paused': True,
+    'pause_reason': 'manual processing required',
+    'stop_after_current': False,
+    'max_items_remaining': None,
+    'resource_filter': '',
+    'mode': 'paused',
     'last_event_at': '',
     'last_processed_at': '',
     'last_error': '',
+    'backoff_until': 0,
+    'backoff_reason': '',
+    'consecutive_failures': 0,
     'pending': 0,
     'processed': 0,
     'message': '',
@@ -7738,8 +7931,81 @@ def jdy_webhook_status():
         'counts': snapshot['counts'],
         'recent': snapshot['recent'],
         'resource_summary': snapshot['resource_summary'],
+        'by_resource': snapshot['by_resource'],
+        'duplicate_summary': snapshot['duplicate_summary'],
+        'stale_processing': snapshot['stale_processing'],
+        'backlog_estimate': snapshot['backlog_estimate'],
+        'current_rate_policy': snapshot['current_rate_policy'],
         'notes': snapshot['notes'],
     })
+
+
+@app.route('/jdy-webhook/worker-control', methods=['POST'])
+def jdy_webhook_worker_control():
+    try:
+        data = request.get_json(silent=True) or {}
+        action = str(data.get('action') or '').strip().lower()
+        dry_run = str(data.get('dry_run') or '').strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        max_items = data.get('max_items')
+        resource_filter = str(data.get('resource_filter') or '').strip()
+        snapshot = _webhook_status_snapshot(20)
+
+        if dry_run:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'action': action or 'status',
+                'would_change_state': action in ('start', 'resume', 'pause', 'stop_after_current'),
+                'counts': snapshot['counts'],
+                'backlog_estimate': snapshot['backlog_estimate'],
+                'current_rate_policy': snapshot['current_rate_policy'],
+                'duplicate_summary': snapshot['duplicate_summary'],
+                'stale_processing': snapshot['stale_processing'],
+            })
+
+        if action not in ('start', 'resume', 'pause', 'stop_after_current'):
+            return jsonify({'success': False, 'error': 'unsupported action; use start/resume/pause/stop_after_current or dry_run=true'}), 400
+
+        if action in ('start', 'resume'):
+            try:
+                max_items_value = int(max_items) if max_items not in (None, '') else None
+            except Exception:
+                max_items_value = None
+            _webhook_state.update({
+                'paused': False,
+                'pause_reason': '',
+                'stop_after_current': False,
+                'max_items_remaining': max_items_value,
+                'resource_filter': resource_filter,
+                'message': 'manual webhook processing enabled',
+            })
+            _start_webhook_worker()
+        elif action == 'pause':
+            _webhook_state.update({
+                'paused': True,
+                'pause_reason': 'manual pause',
+                'message': 'manual pause',
+            })
+        elif action == 'stop_after_current':
+            _webhook_state.update({
+                'stop_after_current': True,
+                'message': 'will stop after current item',
+            })
+
+        snapshot = _webhook_status_snapshot(20)
+        state = dict(_webhook_state)
+        state['pending'] = snapshot['counts'].get('pending', 0)
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'action': action,
+            'state': state,
+            'counts': snapshot['counts'],
+            'backlog_estimate': snapshot['backlog_estimate'],
+            'current_rate_policy': snapshot['current_rate_policy'],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/sales-sync-run', methods=['POST'])

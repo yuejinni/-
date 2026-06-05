@@ -1980,8 +1980,15 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="webhook-stat"><span class="tip">done</span><b>0</b></div>
         <div class="webhook-stat"><span class="tip">failed</span><b>0</b></div>
       </div>
+      <div class="webhook-status-grid" id="webhook-rate-status" style="margin-top:10px;">
+        <div class="webhook-stat"><span class="tip">stale processing</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">当前模式</span><b style="font-size:18px;">paused</b></div>
+        <div class="webhook-stat"><span class="tip">当前限速</span><b>0/min</b></div>
+        <div class="webhook-stat"><span class="tip">预计耗时</span><b style="font-size:18px;">0 / 0 分</b></div>
+      </div>
       <div id="webhook-notes" class="tip" style="margin-top:10px;line-height:1.7;"></div>
       <div id="webhook-resource-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
+      <div id="webhook-duplicate-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
       <div class="webhook-events-wrap" style="margin-top:10px;">
         <table class="webhook-events-table">
           <thead>
@@ -5402,8 +5409,10 @@ function webhookStatusClass(status) {
 async function loadWebhookStatus() {
   const endpointEl = document.getElementById('webhook-endpoint-status');
   const countsEl = document.getElementById('webhook-status-counts');
+  const rateEl = document.getElementById('webhook-rate-status');
   const notesEl = document.getElementById('webhook-notes');
   const resourcesEl = document.getElementById('webhook-resource-summary');
+  const duplicateEl = document.getElementById('webhook-duplicate-summary');
   const bodyEl = document.getElementById('webhook-events-body');
   if (endpointEl) endpointEl.textContent = '读取中...';
   try {
@@ -5424,6 +5433,35 @@ async function loadWebhookStatus() {
         </div>
       `).join('');
     }
+    const policy = data.current_rate_policy || {};
+    const estimate = data.backlog_estimate || {};
+    if (rateEl) {
+      const stale = Number(data.stale_processing || 0);
+      const mode = webhookHtml(policy.mode || 'normal');
+      const reason = webhookHtml(policy.reason || '');
+      const rate = Number(policy.current_rate_per_min || 0);
+      const etaNormal = Number(estimate.eta_minutes_normal || 0);
+      const etaBoost = Number(estimate.eta_minutes_boost || 0);
+      rateEl.innerHTML = `
+        <div class="webhook-stat">
+          <span class="tip">stale processing</span>
+          <b>${stale}</b>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">当前模式</span>
+          <b style="font-size:18px;">${mode}</b>
+          <span class="tip">${reason}</span>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">当前限速</span>
+          <b>${rate}/min</b>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">预计耗时 300/450</span>
+          <b style="font-size:18px;">${etaNormal} / ${etaBoost} 分</b>
+        </div>
+      `;
+    }
     const notes = data.notes || [];
     if (notesEl) {
       notesEl.innerHTML = notes.length
@@ -5433,8 +5471,14 @@ async function loadWebhookStatus() {
     const resources = data.resource_summary || [];
     if (resourcesEl) {
       resourcesEl.innerHTML = resources.length
-        ? `Resource 汇总：${resources.map(r => `${webhookHtml(r.resource || 'unknown')} 共 ${Number(r.total || 0)}，成功 ${Number(r.done || 0)}，失败 ${Number(r.failed || 0)}`).join('；')}`
+        ? `Resource 汇总：${resources.map(r => `${webhookHtml(r.resource || 'unknown')} 共 ${Number(r.total || 0)}，pending ${Number(r.pending || 0)}，processing ${Number(r.processing || 0)}，done ${Number(r.done || 0)}，failed ${Number(r.failed || 0)}`).join('；')}`
         : 'Resource 汇总：暂无事件';
+    }
+    const duplicates = data.duplicate_summary || [];
+    if (duplicateEl) {
+      duplicateEl.innerHTML = duplicates.length
+        ? `重复 pending Top：${duplicates.map(row => `${webhookHtml(row.resource || 'unknown')} / ${webhookHtml(row.bill_no || '')} × ${Number(row.count || 0)}`).join('；')}`
+        : '重复 pending：暂无';
     }
     const recent = data.recent || [];
     if (bodyEl) {
