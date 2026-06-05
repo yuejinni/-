@@ -3995,6 +3995,57 @@ def _webhook_rate_policy(pending_total=None):
     }
 
 
+def _webhook_now_text():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _webhook_worker_alive():
+    thread = globals().get('_webhook_worker_thread')
+    return bool(thread and thread.is_alive())
+
+
+def _webhook_auto_should_run(pending_total=None):
+    try:
+        pending_total = _webhook_pending_count() if pending_total is None else int(pending_total or 0)
+    except Exception:
+        pending_total = 0
+    mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+    return mode == 'auto' and not bool(_webhook_state.get('paused')) and pending_total > 0
+
+
+def _webhook_worker_status_fields(pending_total=None):
+    worker_alive = _webhook_worker_alive()
+    auto_should = _webhook_auto_should_run(pending_total)
+    return {
+        'worker_alive': worker_alive,
+        'worker_thread_name': str(_webhook_state.get('worker_thread_name') or ''),
+        'worker_thread_id': str(_webhook_state.get('worker_thread_id') or ''),
+        'worker_last_heartbeat_at': str(_webhook_state.get('worker_last_heartbeat_at') or ''),
+        'worker_last_loop_at': str(_webhook_state.get('worker_last_loop_at') or ''),
+        'worker_last_exception': str(_webhook_state.get('worker_last_exception') or ''),
+        'auto_should_be_running': auto_should,
+        'auto_recovery_needed': bool(auto_should and not worker_alive),
+        'auto_recovery_action': 'restart_worker' if auto_should and not worker_alive else '',
+        'auto_recovery_last_at': str(_webhook_state.get('auto_recovery_last_at') or ''),
+        'auto_recovery_reason': str(_webhook_state.get('auto_recovery_reason') or ''),
+    }
+
+
+def _webhook_maybe_restart_auto_worker(pending_total=None, reason='status'):
+    if not _webhook_auto_should_run(pending_total):
+        return False
+    if _webhook_worker_alive():
+        return False
+    _webhook_state.update({
+        'auto_recovery_last_at': _webhook_now_text(),
+        'auto_recovery_reason': str(reason or 'auto'),
+        'worker_last_exception': '',
+        'message': 'auto recovery restarting webhook worker',
+    })
+    _start_webhook_worker()
+    return True
+
+
 def _webhook_status_snapshot(limit=20):
     try:
         limit = int(limit or 20)
@@ -4032,6 +4083,7 @@ def _webhook_status_snapshot(limit=20):
             'current_rate_limit': policy.get('current_rate_per_min') or 0,
             'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
             'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
+            **_webhook_worker_status_fields(0),
             'notes': ['本地缓存库不存在，尚无 Webhook 事件记录'],
         }
     try:
@@ -4178,6 +4230,7 @@ def _webhook_status_snapshot(limit=20):
         'current_rate_limit': policy.get('current_rate_per_min') or 0,
         'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
         'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
+        **_webhook_worker_status_fields(pending_total),
         'notes': notes,
     }
 
@@ -5746,86 +5799,130 @@ def _webhook_record_backoff(error):
 
 
 def _webhook_worker_loop():
-    _webhook_state['running'] = True
-    while not _webhook_worker_stop.is_set():
-        if _webhook_state.get('paused'):
-            processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+    _webhook_state.update({
+        'running': True,
+        'worker_thread_name': threading.current_thread().name,
+        'worker_thread_id': str(threading.get_ident()),
+        'worker_last_exception': '',
+    })
+    try:
+        while not _webhook_worker_stop.is_set():
+            heartbeat = _webhook_now_text()
             _webhook_state.update({
-                'running': False,
-                'mode': 'paused' if processing_mode == 'paused' else 'manual',
-                'pending': _webhook_pending_count(),
-                'retry_pending': _webhook_pending_count('retry'),
-                'message': _webhook_state.get('pause_reason') or 'manual processing required',
+                'worker_last_loop_at': heartbeat,
+                'worker_last_heartbeat_at': heartbeat,
             })
-            _webhook_worker_stop.wait(5)
-            continue
-        max_items = _webhook_state.get('max_items_remaining')
-        if max_items is not None and int(max_items or 0) <= 0:
-            _webhook_state.update({
-                'paused': True,
-                'pause_reason': 'max_items reached',
-                'running': False,
-                'mode': 'paused',
-            })
-            _webhook_worker_stop.wait(5)
-            continue
-        processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
-        queue_name = 'normal' if processing_mode == 'auto' else _webhook_queue_name(_webhook_state.get('queue') or 'normal')
-        _webhook_state['queue'] = queue_name
-        _webhook_wait_for_rate_slot()
-        event = _claim_webhook_event(queue_name)
-        if not event:
-            _webhook_state.update({
-                'running': False,
-                'pending': _webhook_pending_count(),
-                'retry_pending': _webhook_pending_count('retry'),
-            })
-            _webhook_worker_stop.wait(5)
-            _webhook_state['running'] = True
-            continue
-        try:
-            event_queue = event.get('_webhook_queue') or queue_name
-            _webhook_state.update({
-                'message': f"processing {event_queue} {event.get('resource')} {event.get('bill_no')}",
-                'pending': _webhook_pending_count(),
-                'retry_pending': _webhook_pending_count('retry'),
-                'queue': event_queue,
-            })
-            result = _process_webhook_event(event)
-            success, message = _webhook_result_to_finish(result)
-            _finish_webhook_event(event['id'], success, message)
-            if not success:
-                if event_queue != 'retry':
-                    _webhook_record_backoff(message)
-                else:
-                    _webhook_state['retry_last_error'] = str(message or '')[:300]
-                time.sleep(3)
-                continue
-            _webhook_state['processed'] = int(_webhook_state.get('processed') or 0) + 1
-            if event_queue != 'retry':
-                _webhook_state['consecutive_failures'] = 0
-            if _webhook_state.get('max_items_remaining') is not None:
-                _webhook_state['max_items_remaining'] = max(0, int(_webhook_state.get('max_items_remaining') or 0) - 1)
-            if _webhook_state.get('stop_after_current'):
+            try:
+                if _webhook_state.get('paused'):
+                    processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+                    _webhook_state.update({
+                        'running': False,
+                        'mode': 'paused' if processing_mode == 'paused' else 'manual',
+                        'pending': _webhook_pending_count(),
+                        'retry_pending': _webhook_pending_count('retry'),
+                        'message': _webhook_state.get('pause_reason') or 'manual processing required',
+                    })
+                    _webhook_worker_stop.wait(5)
+                    continue
+                max_items = _webhook_state.get('max_items_remaining')
+                if max_items is not None and int(max_items or 0) <= 0:
+                    _webhook_state.update({
+                        'paused': True,
+                        'pause_reason': 'max_items reached',
+                        'running': False,
+                        'mode': 'paused',
+                    })
+                    _webhook_worker_stop.wait(5)
+                    continue
+                processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+                queue_name = 'normal' if processing_mode == 'auto' else _webhook_queue_name(_webhook_state.get('queue') or 'normal')
+                _webhook_state.update({'queue': queue_name, 'running': True})
+                _webhook_wait_for_rate_slot()
+                event = _claim_webhook_event(queue_name)
+                if not event:
+                    _webhook_state.update({
+                        'running': False,
+                        'pending': _webhook_pending_count(),
+                        'retry_pending': _webhook_pending_count('retry'),
+                    })
+                    _webhook_worker_stop.wait(5)
+                    _webhook_state['running'] = True
+                    continue
+                try:
+                    event_queue = event.get('_webhook_queue') or queue_name
+                    _webhook_state.update({
+                        'message': f"processing {event_queue} {event.get('resource')} {event.get('bill_no')}",
+                        'pending': _webhook_pending_count(),
+                        'retry_pending': _webhook_pending_count('retry'),
+                        'queue': event_queue,
+                    })
+                    result = _process_webhook_event(event)
+                    success, message = _webhook_result_to_finish(result)
+                    _finish_webhook_event(event['id'], success, message)
+                    if not success:
+                        if event_queue != 'retry':
+                            _webhook_record_backoff(message)
+                        else:
+                            _webhook_state['retry_last_error'] = str(message or '')[:300]
+                        _webhook_worker_stop.wait(3)
+                        continue
+                    _webhook_state['processed'] = int(_webhook_state.get('processed') or 0) + 1
+                    if event_queue != 'retry':
+                        _webhook_state['consecutive_failures'] = 0
+                    if _webhook_state.get('max_items_remaining') is not None:
+                        _webhook_state['max_items_remaining'] = max(0, int(_webhook_state.get('max_items_remaining') or 0) - 1)
+                    if _webhook_state.get('stop_after_current'):
+                        _webhook_state.update({
+                            'paused': True,
+                            'pause_reason': 'stopped after current item',
+                            'stop_after_current': False,
+                        })
+                except Exception as e:
+                    err = _short_sync_error(e)
+                    _finish_webhook_event(event['id'], False, err)
+                    _log_event('JDY_WEBHOOK_ERROR', f"{event.get('resource')} {event.get('bill_no')}: {err}")
+                    _webhook_state.update({
+                        'last_error': err,
+                        'worker_last_exception': err,
+                    })
+                    if (event.get('_webhook_queue') or queue_name) != 'retry':
+                        _webhook_record_backoff(err)
+                    else:
+                        _webhook_state['retry_last_error'] = err
+                    _webhook_worker_stop.wait(3)
+            except Exception as e:
+                err = _short_sync_error(e)
                 _webhook_state.update({
-                    'paused': True,
-                    'pause_reason': 'stopped after current item',
-                    'stop_after_current': False,
+                    'running': False,
+                    'last_error': err,
+                    'worker_last_exception': err,
+                    'message': f'webhook worker loop error: {err}',
                 })
-        except Exception as e:
-            _finish_webhook_event(event['id'], False, _short_sync_error(e))
-            _log_event('JDY_WEBHOOK_ERROR', f"{event.get('resource')} {event.get('bill_no')}: {_short_sync_error(e)}")
-            if (event.get('_webhook_queue') or queue_name) != 'retry':
-                _webhook_record_backoff(_short_sync_error(e))
-            else:
-                _webhook_state['retry_last_error'] = _short_sync_error(e)
-            time.sleep(3)
+                _log_event('JDY_WEBHOOK_WORKER_ERROR', err)
+                queue_name = _webhook_queue_name(_webhook_state.get('queue') or 'normal')
+                if queue_name != 'retry':
+                    _webhook_record_backoff(err)
+                else:
+                    _webhook_state['retry_last_error'] = err
+                _webhook_worker_stop.wait(3)
+    finally:
+        _webhook_state.update({
+            'running': False,
+            'worker_last_heartbeat_at': _webhook_now_text(),
+        })
 
 
 def _start_webhook_worker():
     global _webhook_worker_thread
     if _webhook_worker_thread and _webhook_worker_thread.is_alive():
         return
+    _webhook_state.update({
+        'worker_thread_name': 'jdy-webhook-worker',
+        'worker_thread_id': '',
+        'worker_last_exception': '',
+        'worker_last_heartbeat_at': _webhook_now_text(),
+        'worker_last_loop_at': '',
+    })
     _webhook_worker_thread = threading.Thread(target=_webhook_worker_loop, daemon=True, name='jdy-webhook-worker')
     _webhook_worker_thread.start()
 
@@ -5986,6 +6083,13 @@ _webhook_state = {
     'consecutive_failures': 0,
     'pending': 0,
     'processed': 0,
+    'worker_thread_name': '',
+    'worker_thread_id': '',
+    'worker_last_heartbeat_at': '',
+    'worker_last_loop_at': '',
+    'worker_last_exception': '',
+    'auto_recovery_last_at': '',
+    'auto_recovery_reason': '',
     'message': '',
 }
 _daily_compare_state = {
@@ -9587,8 +9691,12 @@ def jdy_webhook_accessory_diagnose_live():
 @app.route('/jdy-webhook/status', methods=['GET'])
 def jdy_webhook_status():
     snapshot = _webhook_status_snapshot(request.args.get('limit') or 20)
+    restarted = _webhook_maybe_restart_auto_worker(snapshot.get('pending_count') or 0, 'status')
+    if restarted:
+        snapshot = _webhook_status_snapshot(request.args.get('limit') or 20)
     state = dict(_webhook_state)
     state['pending'] = snapshot['counts'].get('pending', 0)
+    state['retry_pending'] = snapshot['counts'].get('retry_pending', 0)
     return jsonify({
         'success': True,
         'endpoint': {
@@ -9618,6 +9726,17 @@ def jdy_webhook_status():
         'current_rate_limit': snapshot.get('current_rate_limit'),
         'estimated_minutes_300': snapshot.get('estimated_minutes_300'),
         'estimated_minutes_450': snapshot.get('estimated_minutes_450'),
+        'worker_alive': snapshot.get('worker_alive'),
+        'worker_thread_name': snapshot.get('worker_thread_name'),
+        'worker_thread_id': snapshot.get('worker_thread_id'),
+        'worker_last_heartbeat_at': snapshot.get('worker_last_heartbeat_at'),
+        'worker_last_loop_at': snapshot.get('worker_last_loop_at'),
+        'worker_last_exception': snapshot.get('worker_last_exception'),
+        'auto_should_be_running': snapshot.get('auto_should_be_running'),
+        'auto_recovery_needed': snapshot.get('auto_recovery_needed'),
+        'auto_recovery_action': 'restarted worker from status check' if restarted else snapshot.get('auto_recovery_action'),
+        'auto_recovery_last_at': snapshot.get('auto_recovery_last_at'),
+        'auto_recovery_reason': snapshot.get('auto_recovery_reason'),
         'notes': snapshot['notes'],
     })
 

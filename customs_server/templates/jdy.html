@@ -5866,6 +5866,12 @@ async function loadWebhookStatus() {
       const rate = Number(policy.current_rate_per_min || 0);
       const etaNormal = Number(estimate.eta_minutes_normal || 0);
       const etaBoost = Number(estimate.eta_minutes_boost || 0);
+      const workerAlive = !!data.worker_alive;
+      const autoShouldRun = !!data.auto_should_be_running;
+      const recoveryAction = data.auto_recovery_action || '';
+      const workerLastLoop = data.worker_last_loop_at || data.worker_last_heartbeat_at || '暂无';
+      const workerException = data.worker_last_exception || data.state?.last_error || '';
+      const consecutiveFailures = Number(data.state?.consecutive_failures || 0);
       rateEl.innerHTML = `
         <div class="webhook-stat">
           <span class="tip">卡住的处理中</span>
@@ -5883,6 +5889,21 @@ async function loadWebhookStatus() {
         <div class="webhook-stat">
           <span class="tip">预计耗时 常规/加速</span>
           <b style="font-size:18px;">${etaNormal} / ${etaBoost} 分</b>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">Worker 状态</span>
+          <b style="color:${workerAlive ? '#18a058' : '#d93025'};">${workerAlive ? '存活' : '未运行'}</b>
+          <span class="tip">${autoShouldRun ? '自动模式应运行' : '当前无需自动运行'}</span>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">Worker 心跳</span>
+          <b style="font-size:14px;">${webhookHtml(workerLastLoop)}</b>
+          <span class="tip">${recoveryAction ? webhookHtml(recoveryAction) : '无自恢复动作'}</span>
+        </div>
+        <div class="webhook-stat">
+          <span class="tip">连续失败</span>
+          <b>${consecutiveFailures}</b>
+          <span class="tip">${workerException ? webhookHtml(workerException) : '暂无异常'}</span>
         </div>
       `;
     }
