@@ -177,7 +177,8 @@ def _admin_path_required():
         '/jdy-config', '/jdy-refresh-auth', '/jdy-test',
         '/system-update/upload', '/system-update/backups', '/system-update/rollback',
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
-        '/jdy-webhook/status', '/jdy-webhook/worker-control', '/jdy-webhook/accessory-diagnose',
+        '/jdy-webhook/status', '/jdy-webhook/worker-control',
+        '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
     }
@@ -8231,6 +8232,370 @@ def jdy_webhook_accessory_diagnose():
             '本诊断接口不联网、不重试、不写库，只解释本地已有信息',
         ],
         'likely_reason': likely,
+        'recommended_next_action': recommended,
+    })
+
+
+def _webhook_event_by_id_or_bill_no(conn, event_id='', bill_no=''):
+    event_id = str(event_id or '').strip()
+    bill_no = str(bill_no or '').strip()
+    if event_id:
+        return conn.execute('''
+            SELECT * FROM webhook_events WHERE id = ? LIMIT 1
+        ''', (event_id,)).fetchone()
+    if bill_no:
+        return conn.execute('''
+            SELECT * FROM webhook_events
+            WHERE bill_no = ?
+            ORDER BY id DESC
+            LIMIT 1
+        ''', (bill_no,)).fetchone()
+    return None
+
+
+def _webhook_event_public(row):
+    return {k: row[k] for k in row.keys() if k != 'payload_json'}
+
+
+def _parse_webhook_payload(raw):
+    try:
+        payload = json.loads(raw) if raw else {}
+        return payload, ''
+    except Exception as e:
+        return {}, str(e)
+
+
+def _analyze_webhook_payload(payload, current_bill_no):
+    visible_numbers = _extract_webhook_values(payload, [
+        'number', 'billNo', 'billNumber', 'bill_no',
+        'orderNo', 'orderNumber', 'sourceBillNo', 'srcBillNo',
+    ])
+    internal_ids = _extract_webhook_values(payload, ['id', 'billId'])
+    all_numbers = _extract_webhook_bill_numbers(payload)
+    bill_kind = _webhook_bill_no_kind(current_bill_no)
+    return {
+        'visible_numbers': visible_numbers,
+        'internal_ids': internal_ids,
+        'all_extracted_numbers': all_numbers,
+        'current_bill_no': str(current_bill_no or '').strip(),
+        'current_bill_no_kind': bill_kind,
+        'looks_like_internal_id': bill_kind == 'internal_id',
+        'looks_like_visible_number': bill_kind == 'visible_number',
+        'suspected_internal_id_used_as_number': bill_kind == 'internal_id' and not visible_numbers,
+    }
+
+
+def _accessory_supplier_match_terms(supplier, order=None):
+    supplier = supplier or {}
+    order = order or {}
+    terms = [str(t or '').strip() for t in _accessory_supplier_terms() if str(t or '').strip()]
+    fields = [
+        'supplierCategoryName', 'supplierCategory', 'categoryName', 'category',
+        'typeName', 'supplierTypeName', 'className', 'groupName',
+        'newRecTypeName', 'recTypeName', 'remark', 'description',
+    ]
+    values = []
+    for src in (supplier, order):
+        for key in fields:
+            val = src.get(key)
+            if val not in (None, ''):
+                values.append(str(val))
+    values.extend([
+        str(_first_value(order, ['supplierName', 'vendorName'], '')),
+        str(_first_value(supplier, ['name', 'supplierName'], '')),
+    ])
+    haystack = '\n'.join(values).lower()
+    return [term for term in terms if term.lower() in haystack]
+
+
+def _find_purchase_order_by_visible_number_readonly(cli, number):
+    attempts = []
+    number = str(number or '').strip()
+    if not cli or not number:
+        return None, attempts
+    attempt = {
+        'method': 'visible_number',
+        'query': number,
+        'found': False,
+        'note': '按可见采购订单编号搜索',
+    }
+    result = cli.get_purchase_order_requests(
+        page=1,
+        page_size=5,
+        search=number,
+        bill_status=None,
+    )
+    rows = result.get('list') or []
+    attempt['result_count'] = len(rows)
+    exact = None
+    for row in rows:
+        row_no = str(_first_value(row, ['number', 'billNo', 'billNumber'], '')).strip()
+        if row_no == number:
+            exact = row
+            break
+    if exact:
+        attempt['found'] = True
+        attempt['matched_by'] = 'visible_number'
+        attempt['note'] = '按可见采购订单编号精确命中'
+    elif rows:
+        attempt['note'] = '查询有返回，但没有精确匹配可见采购订单编号'
+    else:
+        attempt['note'] = '当前查询方式未命中'
+    attempts.append(attempt)
+    return exact, attempts
+
+
+def _purchase_order_live_preview(order, account, supplier=None):
+    normalized = _normalize_accessory_purchase_order(order or {}, account, supplier or {})
+    preview = []
+    for entry in (normalized.get('entries') or [])[:20]:
+        preview.append({
+            'code': entry.get('code') or '',
+            'name': entry.get('name') or '',
+            'spec': entry.get('spec') or '',
+            'qty': entry.get('qty') or 0,
+            'unit': entry.get('unit') or '',
+            'price': entry.get('price') or 0,
+            'amount': entry.get('amount') or 0,
+        })
+    return normalized, preview
+
+
+@app.route('/jdy-webhook/accessory-diagnose-live', methods=['POST'])
+def jdy_webhook_accessory_diagnose_live():
+    data = request.get_json(silent=True) or {}
+    if str(data.get('confirm') or '').strip() != 'READ_ONLY_JDY':
+        return jsonify({
+            'success': False,
+            'error': '必须确认 confirm=READ_ONLY_JDY 才能执行 JDY 只读诊断',
+        }), 400
+
+    event_id = str(data.get('id') or '').strip()
+    bill_no = str(data.get('bill_no') or '').strip()
+    if not event_id and not bill_no:
+        return jsonify({'success': False, 'error': '请提供 id 或 bill_no'}), 400
+
+    with _sales_cache_conn() as conn:
+        row = _webhook_event_by_id_or_bill_no(conn, event_id, bill_no)
+    if not row:
+        return jsonify({
+            'success': False,
+            'error': '未找到对应 webhook 事件',
+            'mode': 'read_only_jdy',
+            'query': {'id': event_id, 'bill_no': bill_no},
+            'jdy_query': {'called': False, 'reason': 'event_not_found'},
+        }), 404
+
+    payload_raw = row['payload_json'] or ''
+    payload, payload_error = _parse_webhook_payload(payload_raw)
+    event = _webhook_event_public(row)
+    payload_analysis = _analyze_webhook_payload(payload, row['bill_no'] or '')
+    payload_analysis.update({
+        'has_payload_json': bool(payload_raw),
+        'payload_parse_error': payload_error,
+    })
+
+    cfg1 = _load_jdy_config()
+    cfg2 = _load_jdy_config2()
+    account = str(row['account'] or '').strip() or _jdy_account_from_payload(payload)
+    cli = None
+    account_name = account
+    if account and account == str(cfg2.get('name') or ''):
+        cli = _ensure_jdy_client2()
+        account_name = cfg2.get('name') or account
+    elif account and account == str(cfg1.get('name') or ''):
+        cli = _ensure_jdy_client()
+        account_name = cfg1.get('name') or account
+
+    local_diag = {
+        'resource': row['resource'] or '',
+        'historical_error': row['error'] or '',
+        'note': '本接口只做 JDY 单条只读诊断，不重试 webhook，不写本地缓存',
+    }
+    live_reasons = []
+    recommended = []
+    jdy_query = {
+        'called': False,
+        'account': account_name or '',
+        'search_attempts': [],
+        'found': False,
+        'order': {},
+        'product_lines_preview': [],
+    }
+
+    if not account_name or not cli:
+        live_reasons.append('无法确定账套或账套 JDY 客户端未配置，未调用 JDY')
+        recommended.append('请检查 webhook 的 account/appKey/dbId 与设置页账套配置是否匹配')
+        return jsonify({
+            'success': True,
+            'mode': 'read_only_jdy',
+            'event': event,
+            'payload_analysis': payload_analysis,
+            'local_diagnosis': local_diag,
+            'jdy_query': jdy_query,
+            'supplier_check': {
+                'supplier_found': False,
+                'supplier_source': '',
+                'is_accessory_supplier': None,
+                'accessory_supplier_terms': _accessory_supplier_terms(),
+                'message': '未调用 JDY，无法判断供应商',
+            },
+            'live_likely_reason': live_reasons,
+            'recommended_next_action': recommended,
+        })
+
+    visible_numbers = payload_analysis.get('visible_numbers') or []
+    internal_ids = payload_analysis.get('internal_ids') or []
+    current_bill_no = str(row['bill_no'] or '').strip()
+    if not visible_numbers and _webhook_bill_no_kind(current_bill_no) == 'visible_number':
+        visible_numbers = [current_bill_no]
+
+    if visible_numbers:
+        try:
+            order, attempts = _find_purchase_order_by_visible_number_readonly(cli, visible_numbers[0])
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'mode': 'read_only_jdy',
+                'event': event,
+                'payload_analysis': payload_analysis,
+                'local_diagnosis': local_diag,
+                'jdy_query': {
+                    **jdy_query,
+                    'called': True,
+                    'account': account_name,
+                    'error': str(e),
+                },
+                'live_likely_reason': ['JDY 只读查询报错'],
+                'recommended_next_action': ['稍后再试，或检查 JDY 网关/账号授权状态'],
+            }), 502
+        jdy_query['called'] = True
+        jdy_query['search_attempts'] = attempts
+        if order:
+            jdy_query['found'] = True
+            jdy_query['matched_by'] = 'visible_number'
+        else:
+            live_reasons.append('当前查询方式未查到订单，不能证明订单不存在')
+            recommended.append('请确认 webhook payload 中的可见采购订单编号是否正确')
+    else:
+        if internal_ids or _webhook_bill_no_kind(current_bill_no) == 'internal_id':
+            live_reasons.append('当前只读 API 暂不支持按内部 id 查询采购订单')
+            recommended.append('如果必须按内部 id 诊断，需要先确认 JDY 是否提供采购订单内部 id 查询接口')
+        else:
+            live_reasons.append('payload 中没有可见采购订单编号，未调用 JDY')
+            recommended.append('建议从 JDY 页面复制可见采购订单编号后再诊断')
+        return jsonify({
+            'success': True,
+            'mode': 'read_only_jdy',
+            'event': event,
+            'payload_analysis': payload_analysis,
+            'local_diagnosis': local_diag,
+            'jdy_query': jdy_query,
+            'supplier_check': {
+                'supplier_found': False,
+                'supplier_source': '',
+                'is_accessory_supplier': None,
+                'accessory_supplier_terms': _accessory_supplier_terms(),
+                'message': '没有可见采购订单编号，未调用 JDY',
+            },
+            'live_likely_reason': live_reasons,
+            'recommended_next_action': recommended,
+        })
+
+    supplier = None
+    supplier_source = ''
+    supplier_error = ''
+    order_summary = {}
+    preview = []
+    supplier_check = {
+        'supplier_found': False,
+        'supplier_source': '',
+        'supplier_number': '',
+        'supplier_name': '',
+        'is_accessory_supplier': None,
+        'matched_terms': [],
+        'accessory_supplier_terms': _accessory_supplier_terms(),
+        'message': '未查到采购订单，无法判断供应商',
+    }
+    if jdy_query.get('found'):
+        supplier_no = str(_first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')).strip()
+        supplier_name = str(_first_value(order, ['supplierName', 'vendorName'], '')).strip()
+        with _sales_cache_conn() as conn:
+            supplier = _read_cached_jdy_supplier(conn, account_name, supplier_no) if supplier_no else None
+        if supplier:
+            supplier_source = 'local_jdy_suppliers'
+        elif supplier_no and hasattr(cli, 'get_supplier_by_number'):
+            try:
+                supplier = cli.get_supplier_by_number(supplier_no, status=2) or None
+                supplier_source = 'jdy_supplier_readonly' if supplier else ''
+            except Exception as e:
+                supplier_error = str(e)
+                supplier = None
+
+        normalized, preview = _purchase_order_live_preview(order, account_name, supplier or {})
+        order_summary = {
+            'visible_number': normalized.get('number') or '',
+            'internal_id': str(_first_value(order, ['id', 'billId'], '') or ''),
+            'date': normalized.get('date') or '',
+            'bill_status': normalized.get('billStatus') or '',
+            'bill_status_name': normalized.get('billStatusName') or '',
+            'check_status': normalized.get('checkStatus'),
+            'supplier_name': normalized.get('supplierName') or supplier_name,
+            'supplier_number': normalized.get('supplierNumber') or supplier_no,
+            'entries_count': len(normalized.get('entries') or []),
+            'total_qty': normalized.get('totalQty') or 0,
+            'total_amount': normalized.get('totalAmount') or 0,
+            'would_cache': bool(normalized.get('entries')),
+        }
+        supplier_hint = {
+            'supplierNumber': order_summary['supplier_number'],
+            'supplierName': order_summary['supplier_name'],
+        }
+        is_accessory = _supplier_matches_accessory(supplier or {}, {**order, **supplier_hint})
+        matched_terms = _accessory_supplier_match_terms(supplier or {}, {**order, **supplier_hint})
+        supplier_check.update({
+            'supplier_found': bool(supplier) or bool(supplier_no or supplier_name),
+            'supplier_source': supplier_source or ('purchase_order_fields' if (supplier_no or supplier_name) else ''),
+            'supplier_number': order_summary['supplier_number'],
+            'supplier_name': order_summary['supplier_name'],
+            'is_accessory_supplier': is_accessory,
+            'matched_terms': matched_terms,
+            'message': '',
+        })
+        if supplier_error:
+            supplier_check['supplier_error'] = supplier_error
+        if is_accessory and order_summary['entries_count']:
+            live_reasons.append('JDY 查询到了订单，供应商像辅料供应商，理论上可以单条补缓存')
+            recommended.append('如确认无误，下一步可单独做“管理员确认后单条补缓存”')
+            supplier_check['message'] = '供应商匹配辅料关键词'
+        elif is_accessory and not order_summary['entries_count']:
+            live_reasons.append('JDY 查询到了订单，供应商像辅料供应商，但采购订单无商品明细')
+            recommended.append('请在 JDY 检查该采购订单明细是否为空')
+            supplier_check['message'] = '供应商匹配辅料关键词，但订单无明细'
+        elif not is_accessory:
+            live_reasons.append('JDY 查询到了订单，但供应商不是辅料供应商')
+            recommended.append('不建议进入辅料页面；如判断错误，请检查供应商分类或辅料关键词')
+            supplier_check['message'] = '供应商未匹配辅料关键词'
+        else:
+            live_reasons.append('JDY 查询到了订单，但供应商资料不足，无法判断是否为辅料供应商')
+            recommended.append('建议先补供应商缓存或检查供应商分类/关键词')
+            supplier_check['message'] = '供应商资料不足，无法判断'
+
+    jdy_query.update({
+        'account': account_name,
+        'order': order_summary,
+        'product_lines_preview': preview,
+    })
+
+    return jsonify({
+        'success': True,
+        'mode': 'read_only_jdy',
+        'event': event,
+        'payload_analysis': payload_analysis,
+        'local_diagnosis': local_diag,
+        'jdy_query': jdy_query,
+        'supplier_check': supplier_check,
+        'live_likely_reason': live_reasons,
         'recommended_next_action': recommended,
     })
 
