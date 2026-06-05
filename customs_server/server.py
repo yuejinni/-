@@ -8308,41 +8308,90 @@ def _accessory_supplier_match_terms(supplier, order=None):
     return [term for term in terms if term.lower() in haystack]
 
 
-def _find_purchase_order_by_visible_number_readonly(cli, number):
+def _purchase_order_candidate_preview(rows, limit=5):
+    preview = []
+    for row in (rows or [])[:limit]:
+        entries = (
+            row.get('entries') or row.get('items') or row.get('details') or
+            row.get('entryList') or row.get('goods') or []
+        )
+        preview.append({
+            'visible_number': str(_first_value(row, ['number', 'billNo', 'billNumber'], '') or ''),
+            'internal_id': str(_first_value(row, ['id', 'billId'], '') or ''),
+            'date': str(_first_value(row, ['date', 'billDate', 'orderDate'], '') or '')[:10],
+            'check_status': row.get('checkStatus'),
+            'bill_status': row.get('billStatus'),
+            'bill_status_name': _first_value(row, ['billStatusName', 'statusName', 'status'], ''),
+            'supplier_name': str(_first_value(row, ['supplierName', 'vendorName'], '') or ''),
+            'supplier_number': str(_first_value(row, ['supplierNumber', 'supplierNo', 'vendorNumber'], '') or ''),
+            'entries_count': len(entries) if isinstance(entries, list) else 0,
+        })
+    return preview
+
+
+def _find_purchase_order_by_number_list_readonly(cli, number, method='visible_number',
+                                                note='', page_size=10,
+                                                allow_internal_match=False):
     attempts = []
     number = str(number or '').strip()
     if not cli or not number:
-        return None, attempts
+        return None, attempts, []
     attempt = {
-        'method': 'visible_number',
+        'method': method,
         'query': number,
         'found': False,
-        'note': '按可见采购订单编号搜索',
+        'note': note or '使用 purchaseOrder/list 的 filter.number 只读查询',
     }
     result = cli.get_purchase_order_requests(
         page=1,
-        page_size=5,
+        page_size=page_size,
         search=number,
         bill_status=None,
+        check_status=2,
     )
     rows = result.get('list') or []
     attempt['result_count'] = len(rows)
+    attempt['candidate_count'] = len(rows)
     exact = None
+    matched_by = ''
     for row in rows:
         row_no = str(_first_value(row, ['number', 'billNo', 'billNumber'], '')).strip()
+        row_id = str(_first_value(row, ['id', 'billId'], '')).strip()
         if row_no == number:
             exact = row
+            matched_by = 'visible_number'
+            break
+        if allow_internal_match and row_id and row_id == number:
+            exact = row
+            matched_by = method
             break
     if exact:
         attempt['found'] = True
-        attempt['matched_by'] = 'visible_number'
-        attempt['note'] = '按可见采购订单编号精确命中'
+        attempt['matched_by'] = matched_by or method
+        if method == 'internal_id_as_number_list_search':
+            attempt['note'] = '把内部 id 作为 filter.number 做受控只读尝试并命中候选；这不等同于官方内部 ID 精确查询'
+        else:
+            attempt['note'] = '按可见采购订单编号精确命中'
     elif rows:
-        attempt['note'] = '查询有返回，但没有精确匹配可见采购订单编号'
+        attempt['note'] = '查询有返回，但没有精确匹配；需要人工确认可见采购订单编号'
     else:
-        attempt['note'] = '当前查询方式未命中'
+        if method == 'internal_id_as_number_list_search':
+            attempt['note'] = '当前 list 查询方式未命中；不能证明订单不存在'
+        else:
+            attempt['note'] = '当前查询方式未命中'
     attempts.append(attempt)
-    return exact, attempts
+    return exact, attempts, rows
+
+
+def _find_purchase_order_by_visible_number_readonly(cli, number):
+    return _find_purchase_order_by_number_list_readonly(
+        cli,
+        number,
+        method='visible_number',
+        note='按可见采购订单编号使用 purchaseOrder/list filter.number 查询；checkStatus=2 查询全部审核状态',
+        page_size=10,
+        allow_internal_match=False,
+    )
 
 
 def _purchase_order_live_preview(order, account, supplier=None):
@@ -8372,6 +8421,8 @@ def jdy_webhook_accessory_diagnose_live():
 
     event_id = str(data.get('id') or '').strip()
     bill_no = str(data.get('bill_no') or '').strip()
+    allow_internal_id_search = data.get('allow_internal_id_search') is True
+    internal_id_confirm = str(data.get('internal_id_confirm') or '').strip()
     if not event_id and not bill_no:
         return jsonify({'success': False, 'error': '请提供 id 或 bill_no'}), 400
 
@@ -8419,6 +8470,9 @@ def jdy_webhook_accessory_diagnose_live():
         'account': account_name or '',
         'search_attempts': [],
         'found': False,
+        'matched_by': '',
+        'order_candidates_count': 0,
+        'order_candidates_preview': [],
         'order': {},
         'product_lines_preview': [],
     }
@@ -8450,9 +8504,10 @@ def jdy_webhook_accessory_diagnose_live():
     if not visible_numbers and _webhook_bill_no_kind(current_bill_no) == 'visible_number':
         visible_numbers = [current_bill_no]
 
+    order = None
     if visible_numbers:
         try:
-            order, attempts = _find_purchase_order_by_visible_number_readonly(cli, visible_numbers[0])
+            order, attempts, candidates = _find_purchase_order_by_visible_number_readonly(cli, visible_numbers[0])
         except Exception as e:
             return jsonify({
                 'success': False,
@@ -8471,6 +8526,8 @@ def jdy_webhook_accessory_diagnose_live():
             }), 502
         jdy_query['called'] = True
         jdy_query['search_attempts'] = attempts
+        jdy_query['order_candidates_count'] = len(candidates or [])
+        jdy_query['order_candidates_preview'] = _purchase_order_candidate_preview(candidates or [])
         if order:
             jdy_query['found'] = True
             jdy_query['matched_by'] = 'visible_number'
@@ -8478,29 +8535,98 @@ def jdy_webhook_accessory_diagnose_live():
             live_reasons.append('当前查询方式未查到订单，不能证明订单不存在')
             recommended.append('请确认 webhook payload 中的可见采购订单编号是否正确')
     else:
-        if internal_ids or _webhook_bill_no_kind(current_bill_no) == 'internal_id':
-            live_reasons.append('当前只读 API 暂不支持按内部 id 查询采购订单')
-            recommended.append('如果必须按内部 id 诊断，需要先确认 JDY 是否提供采购订单内部 id 查询接口')
+        internal_query = (internal_ids[0] if internal_ids else current_bill_no).strip()
+        if internal_query and (internal_ids or _webhook_bill_no_kind(current_bill_no) == 'internal_id'):
+            if not allow_internal_id_search:
+                live_reasons.append('只有内部 id，没有可见采购订单编号；默认不调用 JDY')
+                recommended.append('如需受控只读尝试，请传 allow_internal_id_search=true 且 internal_id_confirm=TRY_INTERNAL_ID_SEARCH')
+                return jsonify({
+                    'success': True,
+                    'mode': 'read_only_jdy',
+                    'event': event,
+                    'payload_analysis': payload_analysis,
+                    'local_diagnosis': local_diag,
+                    'jdy_query': jdy_query,
+                    'supplier_check': {
+                        'supplier_found': False,
+                        'supplier_source': '',
+                        'is_accessory_supplier': None,
+                        'accessory_supplier_terms': _accessory_supplier_terms(),
+                        'message': '只有内部 id，未显式允许受控只读查询，未调用 JDY',
+                    },
+                    'live_likely_reason': live_reasons,
+                    'recommended_next_action': recommended,
+                })
+            if internal_id_confirm != 'TRY_INTERNAL_ID_SEARCH':
+                return jsonify({
+                    'success': False,
+                    'mode': 'read_only_jdy',
+                    'event': event,
+                    'payload_analysis': payload_analysis,
+                    'local_diagnosis': local_diag,
+                    'jdy_query': jdy_query,
+                    'error': '内部 id 受控只读尝试需要 internal_id_confirm=TRY_INTERNAL_ID_SEARCH',
+                }), 400
+            try:
+                order, attempts, candidates = _find_purchase_order_by_number_list_readonly(
+                    cli,
+                    internal_query,
+                    method='internal_id_as_number_list_search',
+                    note='把内部 id 当作 purchaseOrder/list 的 filter.number 做受控只读尝试；不等同于官方内部 ID 精确查询',
+                    page_size=10,
+                    allow_internal_match=True,
+                )
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'mode': 'read_only_jdy',
+                    'event': event,
+                    'payload_analysis': payload_analysis,
+                    'local_diagnosis': local_diag,
+                    'jdy_query': {
+                        **jdy_query,
+                        'called': True,
+                        'account': account_name,
+                        'error': str(e),
+                    },
+                    'live_likely_reason': ['JDY 内部 id 受控只读尝试报错'],
+                    'recommended_next_action': ['稍后再试，或检查 JDY 网关/账号授权状态'],
+                }), 502
+            jdy_query['called'] = True
+            jdy_query['search_attempts'] = attempts
+            jdy_query['order_candidates_count'] = len(candidates or [])
+            jdy_query['order_candidates_preview'] = _purchase_order_candidate_preview(candidates or [])
+            if order:
+                jdy_query['found'] = True
+                jdy_query['matched_by'] = 'internal_id_as_number_list_search'
+                live_reasons.append('通过内部 id 作为 filter.number 的受控只读尝试找到了候选采购订单')
+                recommended.append('这不是官方内部 ID 精确查询；如需补缓存，建议先人工核对可见采购订单编号')
+            elif candidates:
+                live_reasons.append('通过内部 id 作为 filter.number 查询到了候选订单，但没有精确匹配，需要人工确认')
+                recommended.append('请从候选列表或 JDY 页面确认可见采购订单编号后再决定是否补缓存')
+            else:
+                live_reasons.append('当前 list 查询方式未命中，不能证明订单不存在')
+                recommended.append('请从 JDY 页面复制可见采购订单编号，或向官方确认是否有内部 ID 查询接口')
         else:
             live_reasons.append('payload 中没有可见采购订单编号，未调用 JDY')
             recommended.append('建议从 JDY 页面复制可见采购订单编号后再诊断')
-        return jsonify({
-            'success': True,
-            'mode': 'read_only_jdy',
-            'event': event,
-            'payload_analysis': payload_analysis,
-            'local_diagnosis': local_diag,
-            'jdy_query': jdy_query,
-            'supplier_check': {
-                'supplier_found': False,
-                'supplier_source': '',
-                'is_accessory_supplier': None,
-                'accessory_supplier_terms': _accessory_supplier_terms(),
-                'message': '没有可见采购订单编号，未调用 JDY',
-            },
-            'live_likely_reason': live_reasons,
-            'recommended_next_action': recommended,
-        })
+            return jsonify({
+                'success': True,
+                'mode': 'read_only_jdy',
+                'event': event,
+                'payload_analysis': payload_analysis,
+                'local_diagnosis': local_diag,
+                'jdy_query': jdy_query,
+                'supplier_check': {
+                    'supplier_found': False,
+                    'supplier_source': '',
+                    'is_accessory_supplier': None,
+                    'accessory_supplier_terms': _accessory_supplier_terms(),
+                    'message': '没有可见采购订单编号，未调用 JDY',
+                },
+                'live_likely_reason': live_reasons,
+                'recommended_next_action': recommended,
+            })
 
     supplier = None
     supplier_source = ''
