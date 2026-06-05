@@ -506,13 +506,25 @@ class JDYClient:
         total = result.get('records') or result.get('totalsize') or len(items)
         return {'list': items, 'total': total, 'raw': result}
 
-    def get_suppliers(self, page=1, page_size=50, status=2, search=''):
+    def get_suppliers(self, page=1, page_size=50, status=2, search='', key='', contat='',
+                      upd_time_begin='', upd_time_end='', number=''):
         """Read suppliers. status: 0=enabled, 1=disabled, 2=all."""
         f = {'page': page, 'pageSize': page_size}
         if status is not None:
             f['status'] = status
+        if number:
+            f['number'] = number
         if search:
             f['name'] = search
+        if key:
+            f['key'] = key
+        if contat:
+            # JDY's supplier/list parameter is spelled "contat" in the official API.
+            f['contat'] = contat
+        if upd_time_begin:
+            f['updTimeBegin'] = upd_time_begin
+        if upd_time_end:
+            f['updTimeEnd'] = upd_time_end
         result = self._request_with_retry('POST', '/jdyscm/supplier/list',
                                           body={'filter': f},
                                           query=self._api_query(),

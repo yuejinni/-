@@ -179,6 +179,7 @@ def _admin_path_required():
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
         '/jdy-webhook/status', '/jdy-webhook/worker-control',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
+        '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
     }
@@ -3869,6 +3870,57 @@ def _sales_readonly_conn():
     return conn
 
 
+JDY_SUPPLIER_EXTRA_COLUMNS = {
+    'status_code': 'TEXT',
+    'status': 'TEXT',
+    'status_name': 'TEXT',
+    'contact': 'TEXT',
+    'phone': 'TEXT',
+    'last_seen_at': 'TEXT',
+    'last_seen_enabled_at': 'TEXT',
+    'disabled_at': 'TEXT',
+    'manual_category_text': 'TEXT',
+    'manual_tags': 'TEXT',
+    'manual_note': 'TEXT',
+    'accessory_override': 'TEXT',
+}
+
+
+def _jdy_supplier_columns(conn):
+    try:
+        return [str(row['name'] if isinstance(row, sqlite3.Row) else row[1]) for row in conn.execute('PRAGMA table_info(jdy_suppliers)').fetchall()]
+    except Exception:
+        return []
+
+
+def _missing_jdy_supplier_columns(columns):
+    existing = {str(c) for c in (columns or [])}
+    return [name for name in JDY_SUPPLIER_EXTRA_COLUMNS if name not in existing]
+
+
+def _ensure_jdy_suppliers_schema(conn):
+    columns = _jdy_supplier_columns(conn)
+    if not columns:
+        return []
+    added = []
+    for name in _missing_jdy_supplier_columns(columns):
+        conn.execute(f'ALTER TABLE jdy_suppliers ADD COLUMN {name} {JDY_SUPPLIER_EXTRA_COLUMNS[name]}')
+        added.append(name)
+    return added
+
+
+def _backup_sales_cache_db(reason='supplier_refresh'):
+    if not os.path.exists(_SALES_CACHE_DB):
+        raise FileNotFoundError(_SALES_CACHE_DB)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_reason = ''.join(ch if ch.isalnum() or ch in ('_', '-') else '_' for ch in str(reason or 'backup'))
+    backup_path = os.path.join(_SALES_CACHE_DIR, f'sales_cache.sqlite3.bak_{stamp}_{safe_reason}')
+    shutil.copy2(_SALES_CACHE_DB, backup_path)
+    if not os.path.exists(backup_path) or os.path.getsize(backup_path) != os.path.getsize(_SALES_CACHE_DB):
+        raise RuntimeError('sales_cache backup failed or size mismatch')
+    return backup_path
+
+
 WEBHOOK_RATE_NORMAL_PER_MIN = 300
 WEBHOOK_RATE_BOOST_PER_MIN = 450
 WEBHOOK_RATE_HARD_MAX_PER_MIN = 450
@@ -6214,34 +6266,123 @@ def _accessory_supplier_terms():
     return [x for x in dict.fromkeys(terms)]
 
 
-def _supplier_matches_accessory(supplier, order=None):
-    supplier = supplier or {}
+def _supplier_payload(supplier):
+    supplier = dict(supplier or {})
+    raw = supplier.get('data_json')
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                merged = dict(parsed)
+                merged.update({k: v for k, v in supplier.items() if k != 'data_json'})
+                return merged
+        except Exception:
+            pass
+    return supplier
+
+
+def _supplier_status_parts(supplier, forced_status_code=None):
+    supplier = _supplier_payload(supplier)
+    raw = forced_status_code if forced_status_code is not None else _first_value(
+        supplier,
+        ['status_code', 'statusCode', 'status', 'enableStatus', 'forbidStatus', 'disabled'],
+        ''
+    )
+    text = str(raw if raw is not None else '').strip().lower()
+    status_name = str(_first_value(supplier, ['status_name', 'statusName', 'statusText', 'enableStatusName'], '') or '').strip()
+    if text in ('0', 'enabled', 'enable', 'active', 'true', '启用', '正常'):
+        return '0', 'enabled', status_name or '启用'
+    if text in ('1', 'disabled', 'disable', 'inactive', 'false', '禁用', '停用'):
+        return '1', 'disabled', status_name or '禁用'
+    if status_name:
+        low_name = status_name.lower()
+        if '禁用' in status_name or '停用' in status_name or 'disable' in low_name:
+            return '1', 'disabled', status_name
+        if '启用' in status_name or '正常' in status_name or 'enable' in low_name:
+            return '0', 'enabled', status_name
+    return '', 'unknown', status_name
+
+
+def _supplier_contact_text(supplier):
+    supplier = _supplier_payload(supplier)
+    return str(_first_value(supplier, ['contat', 'contact', 'contactName', 'linkMan', 'linkman'], '') or '').strip()
+
+
+def _supplier_phone_text(supplier):
+    supplier = _supplier_payload(supplier)
+    return str(_first_value(supplier, ['phone', 'mobile', 'tel', 'telephone', 'contactPhone'], '') or '').strip()
+
+
+def _supplier_accessory_match_info(supplier, order=None):
+    supplier = _supplier_payload(supplier or {})
     order = order or {}
     terms = [t.lower() for t in _accessory_supplier_terms() if t]
+    result = {
+        'is_accessory': False,
+        'matched_terms': [],
+        'source': '',
+        'status': _supplier_status_parts(supplier)[1],
+        'override': str(supplier.get('accessory_override') or '').strip().lower(),
+    }
     if not terms:
-        return False
+        return result
+    override = result['override']
+    if override in ('no', 'false', '0', 'n', '否', '不是'):
+        result['source'] = 'accessory_override_no'
+        return result
+    if override in ('yes', 'true', '1', 'y', '是', '辅料', '輔料'):
+        result.update({'is_accessory': True, 'matched_terms': ['accessory_override'], 'source': 'accessory_override_yes'})
+        return result
+    if result['status'] == 'disabled':
+        result['source'] = 'disabled_supplier'
+        return result
+
+    manual_values = [
+        str(supplier.get('manual_category_text') or ''),
+        str(supplier.get('manual_tags') or ''),
+        str(supplier.get('manual_note') or ''),
+    ]
+    manual_matches = [term for term in terms if term in '\n'.join(manual_values).lower()]
+    if manual_matches:
+        result.update({'is_accessory': True, 'matched_terms': manual_matches, 'source': 'manual_fields'})
+        return result
+
     fields = [
         'supplierCategoryName', 'supplierCategory', 'categoryName', 'category',
         'typeName', 'supplierTypeName', 'className', 'groupName',
         'newRecTypeName', 'recTypeName', 'remark', 'description',
     ]
     values = []
+    if supplier.get('category_text'):
+        values.append(str(supplier.get('category_text') or ''))
     for src in (supplier, order):
         for key in fields:
             val = src.get(key)
             if val not in (None, ''):
                 values.append(str(val))
-    # Fallback for accounts where supplier category is stored in the visible supplier name.
+    matches = [term for term in terms if term in '\n'.join(values).lower()]
+    if matches:
+        result.update({'is_accessory': True, 'matched_terms': matches, 'source': 'category_or_remark'})
+        return result
+
     values.extend([
         str(_first_value(order, ['supplierName', 'vendorName'], '')),
+        str(_first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')),
         str(_first_value(supplier, ['name', 'supplierName'], '')),
+        str(_first_value(supplier, ['number', 'supplierNumber', 'supplierNo'], '')),
     ])
-    haystack = '\n'.join(values).lower()
-    return any(term in haystack for term in terms)
+    matches = [term for term in terms if term in '\n'.join(values).lower()]
+    if matches:
+        result.update({'is_accessory': True, 'matched_terms': matches, 'source': 'name_or_number'})
+    return result
+
+
+def _supplier_matches_accessory(supplier, order=None):
+    return bool(_supplier_accessory_match_info(supplier, order).get('is_accessory'))
 
 
 def _supplier_category_text(supplier):
-    supplier = supplier or {}
+    supplier = _supplier_payload(supplier)
     fields = [
         'supplierCategoryName', 'supplierCategory', 'categoryName', 'category',
         'typeName', 'supplierTypeName', 'className', 'groupName',
@@ -6255,16 +6396,61 @@ def _supplier_category_text(supplier):
     return '\n'.join(values)
 
 
-def _cache_upsert_jdy_supplier(conn, account, supplier):
+def _cache_upsert_jdy_supplier(conn, account, supplier, status_code=None, now=None):
     number = str(_first_value(supplier, ['number', 'supplierNumber', 'supplierNo'], '')).strip()
     if not number:
         return
     name = str(_first_value(supplier, ['name', 'supplierName'], '')).strip()
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    columns = set(_jdy_supplier_columns(conn))
+    if 'status_code' not in columns:
+        conn.execute('''
+            INSERT INTO jdy_suppliers
+            (account, number, name, category_text, data_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account, number) DO UPDATE SET
+                name = excluded.name,
+                category_text = excluded.category_text,
+                data_json = excluded.data_json,
+                updated_at = excluded.updated_at
+        ''', (
+            account or '',
+            number,
+            name,
+            _supplier_category_text(supplier),
+            json.dumps(supplier, ensure_ascii=False),
+            now,
+        ))
+        return
+    status_code_val, status_val, status_name = _supplier_status_parts(supplier, status_code)
+    last_seen_enabled_at = now if status_val == 'enabled' else ''
+    disabled_at = '' if status_val == 'enabled' else (now if status_val == 'disabled' else '')
     conn.execute('''
-        INSERT OR REPLACE INTO jdy_suppliers
-        (account, number, name, category_text, data_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO jdy_suppliers
+        (account, number, name, category_text, data_json, updated_at,
+         status_code, status, status_name, contact, phone,
+         last_seen_at, last_seen_enabled_at, disabled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account, number) DO UPDATE SET
+            name = excluded.name,
+            category_text = excluded.category_text,
+            data_json = excluded.data_json,
+            updated_at = excluded.updated_at,
+            status_code = excluded.status_code,
+            status = excluded.status,
+            status_name = excluded.status_name,
+            contact = excluded.contact,
+            phone = excluded.phone,
+            last_seen_at = excluded.last_seen_at,
+            last_seen_enabled_at = CASE
+                WHEN excluded.last_seen_enabled_at != '' THEN excluded.last_seen_enabled_at
+                ELSE jdy_suppliers.last_seen_enabled_at
+            END,
+            disabled_at = CASE
+                WHEN excluded.status = 'enabled' THEN ''
+                WHEN excluded.disabled_at != '' THEN excluded.disabled_at
+                ELSE jdy_suppliers.disabled_at
+            END
     ''', (
         account or '',
         number,
@@ -6272,7 +6458,54 @@ def _cache_upsert_jdy_supplier(conn, account, supplier):
         _supplier_category_text(supplier),
         json.dumps(supplier, ensure_ascii=False),
         now,
+        status_code_val,
+        status_val,
+        status_name,
+        _supplier_contact_text(supplier),
+        _supplier_phone_text(supplier),
+        now,
+        last_seen_enabled_at,
+        disabled_at,
     ))
+
+
+def _cache_mark_jdy_supplier_disabled(conn, account, supplier, now=None):
+    number = str(_first_value(supplier, ['number', 'supplierNumber', 'supplierNo'], '')).strip()
+    if not number:
+        return False
+    existing = conn.execute('SELECT number FROM jdy_suppliers WHERE account = ? AND number = ?', (account or '', number)).fetchone()
+    if not existing:
+        return False
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    name = str(_first_value(supplier, ['name', 'supplierName'], '')).strip()
+    conn.execute('''
+        UPDATE jdy_suppliers
+        SET name = COALESCE(NULLIF(?, ''), name),
+            category_text = ?,
+            data_json = ?,
+            updated_at = ?,
+            status_code = '1',
+            status = 'disabled',
+            status_name = ?,
+            contact = ?,
+            phone = ?,
+            last_seen_at = ?,
+            disabled_at = COALESCE(NULLIF(disabled_at, ''), ?)
+        WHERE account = ? AND number = ?
+    ''', (
+        name,
+        _supplier_category_text(supplier),
+        json.dumps(supplier, ensure_ascii=False),
+        now,
+        _supplier_status_parts(supplier, 1)[2],
+        _supplier_contact_text(supplier),
+        _supplier_phone_text(supplier),
+        now,
+        now,
+        account or '',
+        number,
+    ))
+    return True
 
 
 def _read_cached_jdy_supplier(conn, account, number):
@@ -6280,15 +6513,21 @@ def _read_cached_jdy_supplier(conn, account, number):
     if not number:
         return None
     row = conn.execute('''
-        SELECT data_json FROM jdy_suppliers
+        SELECT * FROM jdy_suppliers
         WHERE account = ? AND number = ?
     ''', (account or '', number)).fetchone()
     if not row:
         return None
     try:
-        return json.loads(row['data_json'])
+        data = json.loads(row['data_json']) if row['data_json'] else {}
     except Exception:
-        return None
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    for key in row.keys():
+        if key != 'data_json':
+            data[key] = row[key]
+    return data
 
 
 def _supplier_cache_stats(account=''):
@@ -6346,6 +6585,354 @@ def _refresh_supplier_cache_for_account(cli, account_name, max_age_hours=24):
     stats = _supplier_cache_stats(account_name)
     stats.update({'skipped': False, 'seen': total_seen})
     return stats
+
+
+def _supplier_cache_account_specs(account='all'):
+    cfg1 = _load_jdy_config()
+    cfg2 = _load_jdy_config2()
+    name1 = cfg1.get('name') or '饰品'
+    name2 = cfg2.get('name') or '箱包'
+    raw = str(account or 'all').strip()
+    specs = [
+        {'idx': '1', 'account': name1, 'label': name1, 'client_factory': _ensure_jdy_client},
+        {'idx': '2', 'account': name2, 'label': name2, 'client_factory': _ensure_jdy_client2},
+    ]
+    if raw.lower() in ('', 'all', '全部'):
+        return specs
+    selected = []
+    for spec in specs:
+        if raw in (spec['idx'], spec['account'], spec['label'], f'account{spec["idx"]}'):
+            selected.append(spec)
+    return selected
+
+
+def _supplier_cache_json_info(account):
+    path = _local_supplier_cache_path(account)
+    info = {'path': path, 'exists': os.path.exists(path), 'items_count': 0, 'sync_time': '', 'account': ''}
+    if not info['exists']:
+        return info
+    data = _load_local_json_cached(path)
+    items = data.get('items') if isinstance(data, dict) else data
+    info['items_count'] = len(items or [])
+    if isinstance(data, dict):
+        info['sync_time'] = data.get('sync_time') or ''
+        info['account'] = data.get('account') or ''
+    return info
+
+
+def _supplier_row_to_dict(row):
+    if not row:
+        return {}
+    data = {}
+    try:
+        raw = row['data_json']
+        if raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data.update(parsed)
+    except Exception:
+        pass
+    try:
+        keys = row.keys()
+    except Exception:
+        keys = []
+    for key in keys:
+        if key != 'data_json':
+            data[key] = row[key]
+    return data
+
+
+def _supplier_cache_status_from_conn(conn):
+    columns = _jdy_supplier_columns(conn) if conn else []
+    missing = _missing_jdy_supplier_columns(columns) if columns else list(JDY_SUPPLIER_EXTRA_COLUMNS.keys())
+    cfg1 = _load_jdy_config()
+    cfg2 = _load_jdy_config2()
+    accounts = [cfg1.get('name') or '饰品', cfg2.get('name') or '箱包']
+    per_account = {}
+    if not conn or 'account' not in columns:
+        for account in accounts:
+            per_account[account] = {
+                'total': 0, 'enabled': 0, 'disabled': 0, 'unknown': 0,
+                'accessory_matched': 0, 'last_updated_at': '',
+                'last_seen_at': '', 'last_seen_enabled_at': '',
+            }
+        return columns, missing, per_account
+    for account in accounts:
+        rows = conn.execute('SELECT * FROM jdy_suppliers WHERE account = ?', (account,)).fetchall()
+        enabled = disabled = unknown = accessory = 0
+        updated_values = []
+        seen_values = []
+        enabled_seen_values = []
+        for row in rows:
+            supplier = _supplier_row_to_dict(row)
+            status = _supplier_status_parts(supplier)[1]
+            if status == 'enabled':
+                enabled += 1
+            elif status == 'disabled':
+                disabled += 1
+            else:
+                unknown += 1
+            if _supplier_matches_accessory(supplier):
+                accessory += 1
+            if supplier.get('updated_at'):
+                updated_values.append(str(supplier.get('updated_at')))
+            if supplier.get('last_seen_at'):
+                seen_values.append(str(supplier.get('last_seen_at')))
+            if supplier.get('last_seen_enabled_at'):
+                enabled_seen_values.append(str(supplier.get('last_seen_enabled_at')))
+        per_account[account] = {
+            'total': len(rows),
+            'enabled': enabled,
+            'disabled': disabled,
+            'unknown': unknown,
+            'accessory_matched': accessory,
+            'last_updated_at': max(updated_values) if updated_values else '',
+            'last_seen_at': max(seen_values) if seen_values else '',
+            'last_seen_enabled_at': max(enabled_seen_values) if enabled_seen_values else '',
+        }
+    return columns, missing, per_account
+
+
+def _supplier_existing_numbers(conn, account):
+    if not conn:
+        return set()
+    try:
+        rows = conn.execute('SELECT number FROM jdy_suppliers WHERE account = ?', (account or '',)).fetchall()
+        return {str(row['number']).strip() for row in rows if str(row['number'] or '').strip()}
+    except Exception:
+        return set()
+
+
+def _normalize_supplier_cache_request(payload, default_max_pages):
+    payload = payload or {}
+    account = str(payload.get('account') or 'all').strip() or 'all'
+    mode = str(payload.get('mode') or 'enabled_only').strip()
+    if mode not in ('enabled_only', 'status_reconcile', 'full'):
+        raise ValueError('unsupported supplier refresh mode')
+    page_size = max(1, min(int(payload.get('page_size') or 500), 500))
+    max_pages = max(1, min(int(payload.get('max_pages') or default_max_pages), 500))
+    specs = _supplier_cache_account_specs(account)
+    if not specs:
+        raise ValueError('unknown account')
+    return account, mode, page_size, max_pages, specs
+
+
+def _supplier_list_result_rows(result):
+    rows = result.get('list') or result.get('items') or []
+    total = result.get('total') or result.get('records') or result.get('totalsize') or len(rows)
+    try:
+        total = int(total or 0)
+    except Exception:
+        total = len(rows)
+    return rows, total
+
+
+def _run_supplier_cache_mode(conn, cli, account_name, mode, page_size, max_pages, apply_changes=False, now=None):
+    status_code = 0 if mode == 'enabled_only' else 1
+    page = 1
+    seen = 0
+    summary = {
+        'mode': mode,
+        'status_code': status_code,
+        'pages': [],
+        'would_insert': 0,
+        'would_update': 0,
+        'inserted': 0,
+        'updated': 0,
+        'would_mark_disabled': 0,
+        'marked_disabled': 0,
+        'new_disabled_ignored': 0,
+        'ignored': 0,
+    }
+    existing = _supplier_existing_numbers(conn, account_name)
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    while page <= max_pages:
+        result = cli.get_suppliers(page=page, page_size=page_size, status=status_code)
+        rows, total = _supplier_list_result_rows(result)
+        page_info = {'page': page, 'rows': len(rows), 'total': total}
+        if mode == 'enabled_only':
+            for supplier in rows:
+                number = str(_first_value(supplier, ['number', 'supplierNumber', 'supplierNo'], '')).strip()
+                if not number:
+                    summary['ignored'] += 1
+                    continue
+                if number in existing:
+                    summary['would_update'] += 1
+                    if apply_changes:
+                        _cache_upsert_jdy_supplier(conn, account_name, supplier, status_code=0, now=now)
+                        summary['updated'] += 1
+                else:
+                    summary['would_insert'] += 1
+                    if apply_changes:
+                        _cache_upsert_jdy_supplier(conn, account_name, supplier, status_code=0, now=now)
+                        summary['inserted'] += 1
+                        existing.add(number)
+        else:
+            for supplier in rows:
+                number = str(_first_value(supplier, ['number', 'supplierNumber', 'supplierNo'], '')).strip()
+                if not number:
+                    summary['ignored'] += 1
+                    continue
+                if number in existing:
+                    summary['would_mark_disabled'] += 1
+                    if apply_changes and _cache_mark_jdy_supplier_disabled(conn, account_name, supplier, now=now):
+                        summary['marked_disabled'] += 1
+                else:
+                    summary['new_disabled_ignored'] += 1
+        summary['pages'].append(page_info)
+        seen += len(rows)
+        if not rows or len(rows) < page_size:
+            break
+        if total and seen >= total:
+            break
+        page += 1
+        if apply_changes:
+            time.sleep(0.15)
+    summary['seen'] = seen
+    summary['truncated_by_max_pages'] = page > max_pages
+    return summary
+
+
+def _export_supplier_json_cache(conn, account_name, idx):
+    path = _local_supplier_cache_path(account_name)
+    rows = conn.execute('SELECT * FROM jdy_suppliers WHERE account = ?', (account_name or '',)).fetchall()
+    items = []
+    for row in rows:
+        supplier = _supplier_row_to_dict(row)
+        if _supplier_status_parts(supplier)[1] == 'disabled':
+            continue
+        item = _supplier_payload(supplier)
+        item.setdefault('number', supplier.get('number') or '')
+        item.setdefault('name', supplier.get('name') or '')
+        items.append(item)
+    payload = {
+        'items': items,
+        'total': len(items),
+        'sync_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'account': f'account{idx}',
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _LOCAL_JSON_CACHE.pop(os.path.abspath(path), None)
+    return {'path': path, 'total': len(items), 'account': payload['account'], 'sync_time': payload['sync_time']}
+
+
+def _run_supplier_cache_refresh(conn, specs, mode, page_size, max_pages, apply_changes=False):
+    modes = ['enabled_only', 'status_reconcile'] if mode == 'full' else [mode]
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    results = []
+    for spec in specs:
+        cli = spec.get('client') or spec['client_factory']()
+        account_name = spec['account']
+        account_result = {'account': account_name, 'idx': spec['idx'], 'modes': []}
+        for submode in modes:
+            account_result['modes'].append(_run_supplier_cache_mode(
+                conn, cli, account_name, submode, page_size, max_pages,
+                apply_changes=apply_changes, now=now
+            ))
+        results.append(account_result)
+    return results
+
+
+@app.route('/supplier-cache/status')
+def supplier_cache_status():
+    conn = _sales_readonly_conn()
+    try:
+        columns, missing, per_account = _supplier_cache_status_from_conn(conn)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    cfg1 = _load_jdy_config()
+    cfg2 = _load_jdy_config2()
+    name1 = cfg1.get('name') or '饰品'
+    name2 = cfg2.get('name') or '箱包'
+    return jsonify({
+        'success': True,
+        'schema_columns': columns,
+        'missing_columns': missing,
+        'per_account': per_account,
+        'json_cache': {
+            name1: _supplier_cache_json_info(name1),
+            name2: _supplier_cache_json_info(name2),
+        },
+        'notes': [
+            '此接口只读本地供应商缓存，不调用 JDY。',
+            '缺失字段会在管理员确认刷新时幂等补齐。',
+        ],
+    })
+
+
+@app.route('/supplier-cache/refresh-dry-run', methods=['POST'])
+def supplier_cache_refresh_dry_run():
+    try:
+        _, mode, page_size, max_pages, specs = _normalize_supplier_cache_request(request.get_json(silent=True) or {}, 5)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    conn = _sales_readonly_conn()
+    if conn is None:
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        conn.execute('''
+            CREATE TABLE jdy_suppliers (
+                account TEXT NOT NULL,
+                number TEXT NOT NULL,
+                name TEXT,
+                category_text TEXT,
+                data_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (account, number)
+            )
+        ''')
+        _ensure_jdy_suppliers_schema(conn)
+    try:
+        results = _run_supplier_cache_refresh(conn, specs, mode, page_size, max_pages, apply_changes=False)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return jsonify({
+        'success': True,
+        'dry_run': True,
+        'mode': mode,
+        'page_size': page_size,
+        'max_pages': max_pages,
+        'results': results,
+        'message': 'dry-run 只查询 JDY 并估算，不写 SQLite，不写 JSON。',
+    })
+
+
+@app.route('/supplier-cache/refresh', methods=['POST'])
+def supplier_cache_refresh():
+    payload = request.get_json(silent=True) or {}
+    if str(payload.get('confirm') or '') != 'REFRESH_SUPPLIERS':
+        return jsonify({'success': False, 'error': '缺少确认码 REFRESH_SUPPLIERS，未调用 JDY。'}), 400
+    try:
+        _, mode, page_size, max_pages, specs = _normalize_supplier_cache_request(payload, 20)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    backup_path = _backup_sales_cache_db('before_supplier_refresh')
+    exports = []
+    with _sales_cache_conn() as conn:
+        _ensure_jdy_suppliers_schema(conn)
+        results = _run_supplier_cache_refresh(conn, specs, mode, page_size, max_pages, apply_changes=True)
+        conn.commit()
+        for spec in specs:
+            exports.append(_export_supplier_json_cache(conn, spec['account'], spec['idx']))
+    return jsonify({
+        'success': True,
+        'dry_run': False,
+        'mode': mode,
+        'page_size': page_size,
+        'max_pages': max_pages,
+        'backup_path': backup_path,
+        'results': results,
+        'json_exports': exports,
+        'message': '供应商缓存刷新完成；未调用任何 JDY 写接口。',
+    })
 
 
 def _normalize_accessory_purchase_entry(entry):
@@ -6906,7 +7493,6 @@ def _accessory_factory_qty_from_cache(account, code, supplier_number=''):
 
 
 def _read_accessory_supplier_options(account='all'):
-    terms = [t.lower() for t in _accessory_supplier_terms() if t]
     with _sales_cache_conn() as conn:
         params = []
         clauses = []
@@ -6915,15 +7501,15 @@ def _read_accessory_supplier_options(account='all'):
             params.append(account)
         where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
         rows = conn.execute(f'''
-            SELECT account, number, name, category_text
+            SELECT *
             FROM jdy_suppliers
             {where}
             ORDER BY account, number
         ''', params).fetchall()
     result = []
     for row in rows:
-        text = f"{row['category_text'] or ''} {row['name'] or ''}".lower()
-        if terms and not any(t in text for t in terms):
+        supplier = _supplier_row_to_dict(row)
+        if not _supplier_matches_accessory(supplier):
             continue
         result.append({
             'account': row['account'] or '',
