@@ -3952,11 +3952,13 @@ def _webhook_backoff_active():
 def _webhook_rate_policy(pending_total=None):
     pending_total = _webhook_pending_count() if pending_total is None else int(pending_total or 0)
     estimate = _webhook_backlog_estimate(pending_total)
+    processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
     if _webhook_state.get('paused'):
         return {
             'current_rate_per_min': 0,
-            'mode': 'paused',
+            'mode': 'paused' if processing_mode == 'paused' else 'manual',
             'reason': _webhook_state.get('pause_reason') or 'manual processing required',
+            'processing_mode': processing_mode,
             'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
         }
     if _webhook_backoff_active():
@@ -3964,6 +3966,7 @@ def _webhook_rate_policy(pending_total=None):
             'current_rate_per_min': min(WEBHOOK_BACKOFF_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
             'mode': 'backoff',
             'reason': _webhook_state.get('backoff_reason') or 'recent API/network errors',
+            'processing_mode': processing_mode,
             'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
         }
     if (
@@ -3975,12 +3978,14 @@ def _webhook_rate_policy(pending_total=None):
             'current_rate_per_min': min(WEBHOOK_RATE_BOOST_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
             'mode': 'boost',
             'reason': 'pending backlog is high',
+            'processing_mode': processing_mode,
             'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
         }
     return {
         'current_rate_per_min': min(WEBHOOK_RATE_NORMAL_PER_MIN, WEBHOOK_RATE_HARD_MAX_PER_MIN),
         'mode': 'normal',
         'reason': 'default controlled processing',
+        'processing_mode': processing_mode,
         'hard_max_per_min': WEBHOOK_RATE_HARD_MAX_PER_MIN,
     }
 
@@ -3998,6 +4003,9 @@ def _webhook_status_snapshot(limit=20):
     stale_processing = 0
     conn = _sales_readonly_conn()
     if conn is None:
+        policy = _webhook_rate_policy(0)
+        processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+        estimate = _webhook_backlog_estimate(0)
         return {
             'counts': counts,
             'recent': recent,
@@ -4005,8 +4013,15 @@ def _webhook_status_snapshot(limit=20):
             'by_resource': [],
             'duplicate_summary': [],
             'stale_processing': 0,
-            'backlog_estimate': _webhook_backlog_estimate(0),
-            'current_rate_policy': _webhook_rate_policy(0),
+            'backlog_estimate': estimate,
+            'current_rate_policy': policy,
+            'processing_mode': processing_mode,
+            'auto_enabled': processing_mode == 'auto' and not _webhook_state.get('paused'),
+            'manual_processing_required': processing_mode != 'auto',
+            'pending_count': 0,
+            'current_rate_limit': policy.get('current_rate_per_min') or 0,
+            'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
+            'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
             'notes': ['本地缓存库不存在，尚无 Webhook 事件记录'],
         }
     try:
@@ -4095,6 +4110,8 @@ def _webhook_status_snapshot(limit=20):
 
     pending_total = counts.get('pending', 0)
     policy = _webhook_rate_policy(pending_total)
+    processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+    estimate = _webhook_backlog_estimate(pending_total)
     notes = [
         'inventory/product/supplier/purchase_inbound 当前只轻记录',
         '请在 JDY 后台确认消息订阅地址是否配置为 http://gongdashuai.top:5008/jdy-webhook',
@@ -4110,8 +4127,15 @@ def _webhook_status_snapshot(limit=20):
         'by_resource': sorted(resource_map.values(), key=lambda x: x['resource']),
         'duplicate_summary': duplicate_summary,
         'stale_processing': stale_processing,
-        'backlog_estimate': _webhook_backlog_estimate(pending_total),
+        'backlog_estimate': estimate,
         'current_rate_policy': policy,
+        'processing_mode': processing_mode,
+        'auto_enabled': processing_mode == 'auto' and not _webhook_state.get('paused'),
+        'manual_processing_required': processing_mode != 'auto',
+        'pending_count': pending_total,
+        'current_rate_limit': policy.get('current_rate_per_min') or 0,
+        'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
+        'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
         'notes': notes,
     }
 
@@ -5499,9 +5523,10 @@ def _webhook_worker_loop():
     _webhook_state['running'] = True
     while not _webhook_worker_stop.is_set():
         if _webhook_state.get('paused'):
+            processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
             _webhook_state.update({
                 'running': False,
-                'mode': 'paused',
+                'mode': 'paused' if processing_mode == 'paused' else 'manual',
                 'pending': _webhook_pending_count(),
                 'message': _webhook_state.get('pause_reason') or 'manual processing required',
             })
@@ -5706,6 +5731,7 @@ _webhook_state = {
     'max_items_remaining': None,
     'resource_filter': '',
     'mode': 'paused',
+    'processing_mode': 'manual',
     'last_event_at': '',
     'last_processed_at': '',
     'last_error': '',
@@ -9335,6 +9361,13 @@ def jdy_webhook_status():
         'stale_processing': snapshot['stale_processing'],
         'backlog_estimate': snapshot['backlog_estimate'],
         'current_rate_policy': snapshot['current_rate_policy'],
+        'processing_mode': snapshot.get('processing_mode'),
+        'auto_enabled': snapshot.get('auto_enabled'),
+        'manual_processing_required': snapshot.get('manual_processing_required'),
+        'pending_count': snapshot.get('pending_count'),
+        'current_rate_limit': snapshot.get('current_rate_limit'),
+        'estimated_minutes_300': snapshot.get('estimated_minutes_300'),
+        'estimated_minutes_450': snapshot.get('estimated_minutes_450'),
         'notes': snapshot['notes'],
     })
 
@@ -9347,6 +9380,7 @@ def jdy_webhook_worker_control():
         dry_run = str(data.get('dry_run') or '').strip().lower() in ('1', 'true', 'yes', 'y', 'on')
         max_items = data.get('max_items')
         resource_filter = str(data.get('resource_filter') or '').strip()
+        requested_mode = str(data.get('mode') or '').strip().lower()
         snapshot = _webhook_status_snapshot(20)
 
         if dry_run:
@@ -9354,16 +9388,55 @@ def jdy_webhook_worker_control():
                 'success': True,
                 'dry_run': True,
                 'action': action or 'status',
-                'would_change_state': action in ('start', 'resume', 'pause', 'stop_after_current'),
+                'mode': requested_mode or snapshot.get('processing_mode'),
+                'would_change_state': action in ('start', 'resume', 'pause', 'stop_after_current', 'set_mode'),
                 'counts': snapshot['counts'],
                 'backlog_estimate': snapshot['backlog_estimate'],
                 'current_rate_policy': snapshot['current_rate_policy'],
+                'processing_mode': snapshot.get('processing_mode'),
+                'auto_enabled': snapshot.get('auto_enabled'),
+                'manual_processing_required': snapshot.get('manual_processing_required'),
                 'duplicate_summary': snapshot['duplicate_summary'],
                 'stale_processing': snapshot['stale_processing'],
             })
 
-        if action not in ('start', 'resume', 'pause', 'stop_after_current'):
-            return jsonify({'success': False, 'error': 'unsupported action; use start/resume/pause/stop_after_current or dry_run=true'}), 400
+        if action not in ('start', 'resume', 'pause', 'stop_after_current', 'set_mode'):
+            return jsonify({'success': False, 'error': 'unsupported action; use set_mode/start/resume/pause/stop_after_current or dry_run=true'}), 400
+
+        if action == 'set_mode':
+            if str(data.get('confirm') or '') != 'WEBHOOK_MODE':
+                return jsonify({'success': False, 'error': '缺少确认码 WEBHOOK_MODE，未改变 Webhook 处理模式。'}), 400
+            if requested_mode not in ('paused', 'manual', 'auto'):
+                return jsonify({'success': False, 'error': 'mode must be paused/manual/auto'}), 400
+            if requested_mode == 'paused':
+                _webhook_state.update({
+                    'paused': True,
+                    'processing_mode': 'paused',
+                    'pause_reason': 'manual pause',
+                    'stop_after_current': False,
+                    'max_items_remaining': None,
+                    'message': 'webhook processing mode set to paused',
+                })
+            elif requested_mode == 'manual':
+                _webhook_state.update({
+                    'paused': True,
+                    'processing_mode': 'manual',
+                    'pause_reason': 'manual processing required',
+                    'stop_after_current': False,
+                    'max_items_remaining': None,
+                    'message': 'webhook processing mode set to manual',
+                })
+            else:
+                _webhook_state.update({
+                    'paused': False,
+                    'processing_mode': 'auto',
+                    'pause_reason': '',
+                    'stop_after_current': False,
+                    'max_items_remaining': None,
+                    'resource_filter': '',
+                    'message': 'webhook processing mode set to auto',
+                })
+                _start_webhook_worker()
 
         if action in ('start', 'resume'):
             try:
@@ -9372,6 +9445,7 @@ def jdy_webhook_worker_control():
                 max_items_value = None
             _webhook_state.update({
                 'paused': False,
+                'processing_mode': 'manual',
                 'pause_reason': '',
                 'stop_after_current': False,
                 'max_items_remaining': max_items_value,
@@ -9382,6 +9456,7 @@ def jdy_webhook_worker_control():
         elif action == 'pause':
             _webhook_state.update({
                 'paused': True,
+                'processing_mode': 'paused',
                 'pause_reason': 'manual pause',
                 'message': 'manual pause',
             })
@@ -9402,6 +9477,11 @@ def jdy_webhook_worker_control():
             'counts': snapshot['counts'],
             'backlog_estimate': snapshot['backlog_estimate'],
             'current_rate_policy': snapshot['current_rate_policy'],
+            'processing_mode': snapshot.get('processing_mode'),
+            'auto_enabled': snapshot.get('auto_enabled'),
+            'manual_processing_required': snapshot.get('manual_processing_required'),
+            'pending_count': snapshot.get('pending_count'),
+            'current_rate_limit': snapshot.get('current_rate_limit'),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -1110,6 +1110,24 @@ td.code { font-family: monospace; color: #1a2c5b; }
 .webhook-warn {
   color: #b7791f;
 }
+.webhook-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.webhook-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid #d6e2ef;
+  border-radius: 999px;
+  background: #f8fbfd;
+  color: #17315f;
+  font-weight: 700;
+}
 @media (max-width: 980px) {
   .sales-shell { grid-template-columns: 1fr; }
   .sales-phone { height: 620px; }
@@ -1973,6 +1991,13 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <div id="webhook-endpoint-status" class="tip" style="margin-top:4px;">待读取</div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookStatus()">刷新状态</button>
+      </div>
+      <div class="webhook-control-row">
+        <span class="webhook-mode-pill" id="webhook-processing-mode">处理模式：待读取</span>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('manual')">切换为手动</button>
+        <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
+        <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
       </div>
       <div class="webhook-status-grid" id="webhook-status-counts">
         <div class="webhook-stat"><span class="tip">待处理</span><b>0</b></div>
@@ -5412,6 +5437,8 @@ const WEBHOOK_MODE_LABELS = {
   boost: '加速',
   backoff: '降速保护',
   paused: '已暂停',
+  manual: '手动',
+  auto: '自动',
   idle: '空闲',
 };
 const WEBHOOK_RESOURCE_LABELS = {
@@ -5497,6 +5524,29 @@ function webhookStatusClass(status) {
   return '';
 }
 
+async function setWebhookProcessingMode(mode) {
+  const labels = { paused: '暂停模式', manual: '手动模式', auto: '自动模式' };
+  if (!['paused', 'manual', 'auto'].includes(mode)) return;
+  if (mode === 'auto') {
+    const ok = window.confirm('自动模式会按限速处理 pending 队列，可能调用 JDY 只读接口并写本地缓存。确认开启吗？');
+    if (!ok) return;
+  }
+  try {
+    const res = await fetch(`${API}/jdy-webhook/worker-control`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ action: 'set_mode', mode, confirm: 'WEBHOOK_MODE' }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '切换失败');
+    const help = document.getElementById('webhook-mode-help');
+    if (help) help.textContent = `已切换为${labels[mode] || mode}`;
+    await loadWebhookStatus();
+  } catch (e) {
+    alert('切换 Webhook 处理模式失败：' + e.message);
+  }
+}
+
 async function loadWebhookStatus() {
   const endpointEl = document.getElementById('webhook-endpoint-status');
   const countsEl = document.getElementById('webhook-status-counts');
@@ -5505,6 +5555,8 @@ async function loadWebhookStatus() {
   const resourcesEl = document.getElementById('webhook-resource-summary');
   const duplicateEl = document.getElementById('webhook-duplicate-summary');
   const bodyEl = document.getElementById('webhook-events-body');
+  const modeEl = document.getElementById('webhook-processing-mode');
+  const modeHelpEl = document.getElementById('webhook-mode-help');
   if (endpointEl) endpointEl.textContent = '读取中...';
   try {
     const res = await fetch(`${API}/jdy-webhook/status?limit=20`);
@@ -5524,11 +5576,24 @@ async function loadWebhookStatus() {
         </div>
       `).join('');
     }
+    const processingMode = data.processing_mode || data.state?.processing_mode || 'manual';
+    if (modeEl) {
+      modeEl.textContent = `处理模式：${translateWebhookMode(processingMode)}`;
+    }
+    if (modeHelpEl) {
+      if (processingMode === 'auto') {
+        modeHelpEl.textContent = '自动模式会按限速处理 pending，遇到频率限制会自动降速保护。';
+      } else if (processingMode === 'paused') {
+        modeHelpEl.textContent = '暂停模式只接收并排队 webhook，不处理 pending。';
+      } else {
+        modeHelpEl.textContent = '手动模式下不会自动处理 pending，需要管理员手动执行。';
+      }
+    }
     const policy = data.current_rate_policy || {};
     const estimate = data.backlog_estimate || {};
     if (rateEl) {
       const stale = Number(data.stale_processing || 0);
-      const mode = webhookHtml(translateWebhookMode(policy.mode || 'normal'));
+      const mode = webhookHtml(translateWebhookMode(policy.mode || processingMode || 'normal'));
       const reason = webhookHtml(translateWebhookReason(policy.reason || ''));
       const rate = Number(policy.current_rate_per_min || 0);
       const etaNormal = Number(estimate.eta_minutes_normal || 0);
