@@ -177,7 +177,7 @@ def _admin_path_required():
         '/jdy-config', '/jdy-refresh-auth', '/jdy-test',
         '/system-update/upload', '/system-update/backups', '/system-update/rollback',
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
-        '/jdy-webhook/status', '/jdy-webhook/worker-control',
+        '/jdy-webhook/status', '/jdy-webhook/worker-control', '/jdy-webhook/accessory-diagnose',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
     }
@@ -5229,6 +5229,35 @@ def _extract_webhook_bill_numbers(payload):
     return [x for x in dict.fromkeys(numbers) if x]
 
 
+def _extract_webhook_values(payload, keys):
+    values = []
+    keys = list(keys or [])
+    for item in _flatten_webhook_items(payload or {}):
+        for key in keys:
+            val = item.get(key)
+            if val not in (None, ''):
+                values.append(str(val).strip())
+    return [x for x in dict.fromkeys(values) if x]
+
+
+def _looks_like_internal_id(value):
+    text = str(value or '').strip()
+    return bool(text) and text.isdigit() and len(text) >= 8
+
+
+def _looks_like_visible_bill_no(value):
+    text = str(value or '').strip()
+    return any(ch.isalpha() for ch in text) and any(ch.isdigit() for ch in text)
+
+
+def _webhook_bill_no_kind(value):
+    if _looks_like_visible_bill_no(value):
+        return 'visible_number'
+    if _looks_like_internal_id(value):
+        return 'internal_id'
+    return 'unknown'
+
+
 def _jdy_account_from_payload(payload):
     payload = payload or {}
     cfg1 = _load_jdy_config()
@@ -7988,6 +8017,221 @@ def sales_sync_status():
         'state': _sales_sync_state,
         'webhook_state': _webhook_state,
         'daily_compare_state': _daily_compare_state,
+    })
+
+
+@app.route('/jdy-webhook/accessory-diagnose', methods=['GET'])
+def jdy_webhook_accessory_diagnose():
+    event_id = str(request.args.get('id') or '').strip()
+    bill_no = str(request.args.get('bill_no') or '').strip()
+    if not event_id and not bill_no:
+        return jsonify({'success': False, 'error': '请提供 id 或 bill_no'}), 400
+
+    with _sales_cache_conn() as conn:
+        if event_id:
+            row = conn.execute('''
+                SELECT * FROM webhook_events WHERE id = ? LIMIT 1
+            ''', (event_id,)).fetchone()
+        else:
+            row = conn.execute('''
+                SELECT * FROM webhook_events
+                WHERE bill_no = ?
+                ORDER BY id DESC
+                LIMIT 1
+            ''', (bill_no,)).fetchone()
+        if not row:
+            return jsonify({
+                'success': False,
+                'error': '未找到对应 webhook 事件',
+                'query': {'id': event_id, 'bill_no': bill_no},
+            }), 404
+
+        event = {k: row[k] for k in row.keys() if k != 'payload_json'}
+        payload_raw = row['payload_json'] or ''
+        try:
+            payload = json.loads(payload_raw) if payload_raw else {}
+        except Exception as e:
+            payload = {}
+            payload_error = str(e)
+        else:
+            payload_error = ''
+
+        visible_numbers = _extract_webhook_values(payload, [
+            'number', 'billNo', 'billNumber', 'bill_no',
+            'orderNo', 'orderNumber', 'sourceBillNo', 'srcBillNo',
+        ])
+        internal_ids = _extract_webhook_values(payload, ['id', 'billId'])
+        all_numbers = _extract_webhook_bill_numbers(payload)
+        current_bill_no = str(row['bill_no'] or '').strip()
+        candidates = [current_bill_no] + visible_numbers + internal_ids + all_numbers
+        candidates = [x for x in dict.fromkeys(candidates) if x]
+
+        cached_orders = []
+        if candidates:
+            placeholders = ','.join('?' for _ in candidates)
+            params = list(candidates)
+            account = str(row['account'] or '').strip()
+            account_clause = ''
+            if account:
+                account_clause = ' AND account = ?'
+                params.append(account)
+            cached_rows = conn.execute(f'''
+                SELECT account, number, date, supplier_name, supplier_number,
+                       entries_count, data_json, updated_at
+                FROM accessory_purchase_orders
+                WHERE number IN ({placeholders}){account_clause}
+                ORDER BY updated_at DESC
+            ''', params).fetchall()
+            for cached in cached_rows:
+                cached_orders.append({
+                    'account': cached['account'],
+                    'number': cached['number'],
+                    'date': cached['date'],
+                    'supplier_name': cached['supplier_name'],
+                    'supplier_number': cached['supplier_number'],
+                    'entries_count': cached['entries_count'],
+                    'updated_at': cached['updated_at'],
+                })
+
+        supplier_no_values = _extract_webhook_values(payload, [
+            'supplierNumber', 'supplierNo', 'supplier_number',
+            'vendorNumber', 'vendorNo', 'supplierCode',
+        ])
+        supplier_name_values = _extract_webhook_values(payload, [
+            'supplierName', 'supplier_name', 'vendorName', 'vendor',
+        ])
+        if cached_orders:
+            supplier_no_values = [cached_orders[0].get('supplier_number') or ''] + supplier_no_values
+            supplier_name_values = [cached_orders[0].get('supplier_name') or ''] + supplier_name_values
+        supplier_no_values = [x for x in dict.fromkeys(supplier_no_values) if x]
+        supplier_name_values = [x for x in dict.fromkeys(supplier_name_values) if x]
+
+        supplier = None
+        supplier_source = ''
+        account = str(row['account'] or '').strip()
+        if supplier_no_values:
+            params = [account, supplier_no_values[0]]
+            supplier_row = conn.execute('''
+                SELECT data_json FROM jdy_suppliers
+                WHERE account = ? AND number = ?
+                LIMIT 1
+            ''', params).fetchone()
+            if supplier_row:
+                try:
+                    supplier = json.loads(supplier_row['data_json'] or '{}')
+                    supplier_source = 'jdy_suppliers.number'
+                except Exception:
+                    supplier = None
+        if supplier is None and supplier_name_values:
+            supplier_row = conn.execute('''
+                SELECT data_json FROM jdy_suppliers
+                WHERE account = ? AND name = ?
+                LIMIT 1
+            ''', (account, supplier_name_values[0])).fetchone()
+            if supplier_row:
+                try:
+                    supplier = json.loads(supplier_row['data_json'] or '{}')
+                    supplier_source = 'jdy_suppliers.name'
+                except Exception:
+                    supplier = None
+
+    supplier_order_hint = {
+        'supplierNumber': supplier_no_values[0] if supplier_no_values else '',
+        'supplierName': supplier_name_values[0] if supplier_name_values else '',
+    }
+    has_supplier_hint = bool(supplier_no_values or supplier_name_values)
+    supplier_is_accessory = None
+    if supplier or has_supplier_hint:
+        supplier_is_accessory = _supplier_matches_accessory(supplier or {}, supplier_order_hint)
+
+    bill_kind = _webhook_bill_no_kind(current_bill_no)
+    payload_analysis = {
+        'has_payload_json': bool(payload_raw),
+        'payload_parse_error': payload_error,
+        'visible_numbers': visible_numbers,
+        'internal_ids': internal_ids,
+        'all_extracted_numbers': all_numbers,
+        'current_bill_no': current_bill_no,
+        'current_bill_no_kind': bill_kind,
+        'looks_like_internal_id': bill_kind == 'internal_id',
+        'looks_like_visible_number': bill_kind == 'visible_number',
+        'suspected_internal_id_used_as_number': bill_kind == 'internal_id' and not visible_numbers,
+    }
+
+    local_cache_check = {
+        'candidate_numbers_checked': candidates,
+        'exists': bool(cached_orders),
+        'orders': cached_orders,
+        'message': '本地辅料采购订单缓存中已找到' if cached_orders else '本地辅料采购订单缓存中未找到',
+    }
+
+    supplier_check = {
+        'supplier_number_candidates': supplier_no_values,
+        'supplier_name_candidates': supplier_name_values,
+        'cached_supplier_found': supplier is not None,
+        'cached_supplier_source': supplier_source,
+        'is_accessory_supplier': supplier_is_accessory,
+        'terms': _accessory_supplier_terms(),
+        'message': '',
+    }
+    if supplier_is_accessory is True:
+        supplier_check['message'] = '本地信息判断该供应商像辅料供应商'
+    elif supplier_is_accessory is False:
+        supplier_check['message'] = '本地信息判断该供应商不是辅料供应商'
+    else:
+        supplier_check['message'] = '本地信息不足，无法判断供应商是否为辅料供应商'
+
+    likely = []
+    resource = str(row['resource'] or '')
+    error_text = str(row['error'] or '')
+    if resource != 'accessory_purchase':
+        likely.append('这条 webhook 不是 accessory_purchase 类型，当前辅料诊断只做参考')
+    if cached_orders:
+        likely.append('本地已存在对应辅料采购订单；如果页面未显示，优先检查辅料页面筛选条件')
+    else:
+        likely.append('本地 accessory_purchase_orders 未找到该单据')
+    if 'recorded only' in error_text.lower() or '仅记录' in error_text:
+        likely.append('该记录是在旧逻辑下处理的 recorded only，历史记录无法追溯当时的精确原因')
+    if payload_analysis['suspected_internal_id_used_as_number']:
+        likely.append('当前 bill_no 看起来像 JDY 内部 id，且 payload 中没有可见采购订单编号')
+    elif bill_kind == 'internal_id':
+        likely.append('当前 bill_no 看起来像 JDY 内部 id，可能需要按内部 id 做一次只读 JDY 诊断')
+    if not visible_numbers:
+        likely.append('payload 中没有提取到可见采购订单编号')
+    if supplier_is_accessory is False:
+        likely.append('本地供应商判断结果不是辅料供应商')
+    elif supplier_is_accessory is None:
+        likely.append('本地信息不足，无法判断供应商是否为辅料供应商')
+    if not likely:
+        likely.append('本地信息未发现明显原因；需要人工提供可见采购订单编号或单独确认只读 JDY 查询')
+
+    recommended = []
+    if payload_analysis['looks_like_internal_id']:
+        recommended.append('如果这是内部 id，建议后续单独确认后增加“按内部 id 只读查询采购订单”的诊断')
+    if not visible_numbers:
+        recommended.append('建议从 JDY 页面复制可见采购订单编号，再用 bill_no 诊断')
+    if supplier_is_accessory is False:
+        recommended.append('检查供应商分类或设置页 accessory_supplier_terms 是否覆盖该供应商')
+    if cached_orders:
+        recommended.append('检查辅料页面账套、搜索词或筛选条件是否隐藏了该单据')
+    if 'recorded only' in error_text.lower() or '仅记录' in error_text:
+        recommended.append('历史 recorded only 不会自动重跑；以后新事件会写入更明确原因')
+
+    return jsonify({
+        'success': True,
+        'event': event,
+        'payload_analysis': payload_analysis,
+        'local_cache_check': local_cache_check,
+        'supplier_check_local': supplier_check,
+        'expected_logic': [
+            '采购订单 webhook 会被识别为 accessory_purchase',
+            'worker 处理时会按 bill_no 拉取采购订单详情',
+            '系统判断供应商是否属于辅料供应商',
+            '匹配则写入 accessory_purchase_orders 供辅料页面读取',
+            '本诊断接口不联网、不重试、不写库，只解释本地已有信息',
+        ],
+        'likely_reason': likely,
+        'recommended_next_action': recommended,
     })
 
 
