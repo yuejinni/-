@@ -1240,14 +1240,19 @@ def _runtime_config_file():
     return os.path.join(_DATA_BASE, 'ai_config.json')
 
 
+_RUNTIME_CONFIG_LOAD_ERROR = ''
+
+
 def _load_runtime_config():
+    global _RUNTIME_CONFIG_LOAD_ERROR
+    _RUNTIME_CONFIG_LOAD_ERROR = ''
     path = _runtime_config_file()
     if os.path.exists(path):
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8-sig') as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as exc:
+            _RUNTIME_CONFIG_LOAD_ERROR = f'{type(exc).__name__}: {exc}'
     return {}
 
 
@@ -1273,6 +1278,7 @@ def _runtime_config_debug():
         'exists': os.path.exists(path),
         'cwd': os.getcwd(),
         'has_keys': keys,
+        'load_error': _RUNTIME_CONFIG_LOAD_ERROR,
     }
 
 
