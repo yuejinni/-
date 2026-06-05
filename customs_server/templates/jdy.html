@@ -29,6 +29,35 @@ body {
   flex-shrink: 0;
 }
 .topbar h1 { font-size: 15px; font-weight: 600; margin-right: auto; }
+.topbar-user {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  min-width: 0;
+  color: rgba(255,255,255,.88);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.topbar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.logout-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 4px;
+  color: #fff;
+  text-decoration: none;
+  background: rgba(255,255,255,.08);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.logout-link:hover { background: rgba(255,255,255,.18); }
 .tab-btn {
   padding: 6px 14px;
   border-radius: 4px;
@@ -1120,6 +1149,24 @@ td.code { font-family: monospace; color: #1a2c5b; }
     align-items: center;
     justify-content: center;
   }
+  .topbar-user {
+    min-width: 104px;
+    max-width: 150px;
+    padding: 0 8px;
+    align-self: stretch;
+    justify-content: center;
+    border-left: 1px solid rgba(255,255,255,.12);
+  }
+  .topbar-user-name {
+    display: none;
+  }
+  .logout-link {
+    height: 100%;
+    padding: 0 8px;
+    border-radius: 0;
+    border-top: 0;
+    border-bottom: 0;
+  }
   .tab-btn {
     min-width: 58px;
     padding: 8px 10px;
@@ -1295,6 +1342,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
 <div class="topbar">
   <h1>📦 报关助手 — 精斗云工作台</h1>
   <div id="conn-badge" class="conn-indicator conn-none">● 未连接</div>
+  <div id="topbar-user" class="topbar-user" title="">
+    <span id="topbar-user-name" class="topbar-user-name"></span>
+    <a class="logout-link" href="/logout">退出</a>
+  </div>
   <button class="tab-btn active" onclick="showPage('sales-list')">销货单</button>
   <button class="tab-btn" onclick="showPage('sales-summary')">销售汇总</button>
   <button class="tab-btn" onclick="showPage('accessory-list')">辅料</button>
@@ -2368,6 +2419,7 @@ async function loadCurrentUser() {
   } catch (_) {
     currentUser = null;
   }
+  renderCurrentUser();
   const isAdmin = !!(currentUser && currentUser.is_admin);
   document.querySelectorAll('[data-admin-only="1"]').forEach(el => {
     el.style.display = isAdmin ? '' : 'none';
@@ -2376,6 +2428,26 @@ async function loadCurrentUser() {
     loadAdminUsers();
     if (!adminUsersTimer) adminUsersTimer = setInterval(loadAdminUsers, 60000);
   }
+}
+
+function renderCurrentUser() {
+  const wrap = document.getElementById('topbar-user');
+  const nameEl = document.getElementById('topbar-user-name');
+  if (!wrap || !nameEl) return;
+  if (!currentUser) {
+    wrap.style.display = 'none';
+    nameEl.textContent = '';
+    wrap.title = '';
+    return;
+  }
+  const name = currentUser.name || currentUser.username || '';
+  const username = currentUser.username || '';
+  const label = name && username && name !== username
+    ? `当前用户：${name} ${username}`
+    : `当前用户：${username || name}`;
+  nameEl.textContent = label;
+  wrap.title = label;
+  wrap.style.display = 'inline-flex';
 }
 
 // ── 页面切换 ─────────────────────────────────────────────────────
