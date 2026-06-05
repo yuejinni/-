@@ -1302,6 +1302,7 @@ def _load_jdy_config():
         'app_key':       cfg.get('jdy_app_key', ''),
         'app_secret':    cfg.get('jdy_app_secret', ''),
         'db_id':         cfg.get('jdy_db_id', ''),
+        'outer_instance_id': cfg.get('jdy_outer_instance_id', ''),
         'domain':        cfg.get('jdy_domain', ''),
         'app_signature':  cfg.get('jdy_app_signature', ''),
         'client_secret':  cfg.get('jdy_client_secret', ''),
@@ -1317,6 +1318,7 @@ def _load_jdy_config2():
         'app_key':       cfg.get('jdy2_app_key', ''),
         'app_secret':    cfg.get('jdy2_app_secret', ''),
         'db_id':         cfg.get('jdy2_db_id', ''),
+        'outer_instance_id': cfg.get('jdy2_outer_instance_id', ''),
         'domain':        cfg.get('jdy2_domain', ''),
         'app_signature':  cfg.get('jdy2_app_signature', ''),
         'client_secret':  cfg.get('jdy2_client_secret', ''),
@@ -1433,13 +1435,13 @@ def _refresh_jdy_auth_for_idx(idx):
     pfx = '' if int(idx) == 1 else '2'
     client_id = cfg_all.get(f'jdy{pfx}_client_id', '')
     client_secret = cfg_all.get(f'jdy{pfx}_client_secret', '')
-    outer_id = cfg_all.get(f'jdy{pfx}_outer_instance_id', '') or cfg_all.get(f'jdy{pfx}_db_id', '')
+    outer_id = cfg_all.get(f'jdy{pfx}_outer_instance_id', '')
     if not all([client_id, client_secret, outer_id]):
         return {'success': False, 'error': f'账套{idx}缺少 client_id / client_secret / outer_instance_id'}
     result = jdy_api.push_app_authorize(client_id, client_secret, outer_id)
     items = result.get('data') or []
     if not items:
-        return {'success': False, 'error': f'账套{idx}无授权数据'}
+        return {'success': False, 'error': f'账套{idx}无授权数据：请确认 outerInstanceId 是企业授权实例ID，不能用 dbId 代替'}
     item = items[0]
     app_key = item.get('appKey', '')
     app_secret = item.get('appSecret', '')
@@ -1898,6 +1900,7 @@ def jdy_config_get():
             'client_id':  cfg.get('client_id', ''),
             'app_key':    cfg.get('app_key', ''),
             'db_id':      cfg.get('db_id', ''),
+            'outer_instance_id': cfg.get('outer_instance_id', ''),
             'domain':     cfg.get('domain', ''),
             'app_secret_masked':    _mask(cfg.get('app_secret', '')),
             'client_secret_masked': _mask(cfg.get('client_secret', '')),
@@ -1908,6 +1911,7 @@ def jdy_config_get():
             'client_id2':  cfg2.get('client_id', ''),
             'app_key2':    cfg2.get('app_key', ''),
             'db_id2':      cfg2.get('db_id', ''),
+            'outer_instance_id2': cfg2.get('outer_instance_id', ''),
             'domain2':     cfg2.get('domain', ''),
             'app_secret_masked2':    _mask(cfg2.get('app_secret', '')),
             'client_secret_masked2': _mask(cfg2.get('client_secret', '')),
@@ -1926,7 +1930,7 @@ def jdy_config_set():
         data = request.get_json(force=True) or {}
         idx  = int(data.get('idx', 1))   # 1=饰品, 2=箱包
         pfx  = '' if idx == 1 else '2'   # json key 前缀
-        critical_keys = ('client_id', 'app_key', 'app_secret', 'client_secret', 'db_id', 'domain')
+        critical_keys = ('client_id', 'app_key', 'app_secret', 'client_secret', 'db_id', 'outer_instance_id', 'domain')
         if not any(str(data.get(k) or '').strip() for k in critical_keys):
             return jsonify({'success': False, 'error': '配置未加载，禁止保存空配置'}), 400
         updates = {}
@@ -1934,6 +1938,7 @@ def jdy_config_set():
         client_id = str(data.get('client_id') or '').strip()
         app_key = str(data.get('app_key') or '').strip()
         db_id = str(data.get('db_id') or '').strip()
+        outer_instance_id = str(data.get('outer_instance_id') or '').strip()
         domain = str(data.get('domain') or '').strip()
         if name:
             updates[f'jdy{pfx}_name']          = name
@@ -1949,6 +1954,8 @@ def jdy_config_set():
             updates[f'jdy{pfx}_client_secret'] = client_secret
         if db_id:
             updates[f'jdy{pfx}_db_id']         = db_id
+        if outer_instance_id:
+            updates[f'jdy{pfx}_outer_instance_id'] = outer_instance_id
         if domain:
             updates[f'jdy{pfx}_domain']        = domain
         _save_jdy_config(updates)
@@ -2432,7 +2439,7 @@ def jdy_refresh_auth():
         cfg_all = _load_runtime_config()
         client_id     = cfg_all.get(f'jdy{pfx}_client_id', '')
         client_secret = cfg_all.get(f'jdy{pfx}_client_secret', '')
-        outer_id      = cfg_all.get(f'jdy{pfx}_outer_instance_id', '') or cfg_all.get(f'jdy{pfx}_db_id', '')
+        outer_id      = cfg_all.get(f'jdy{pfx}_outer_instance_id', '')
 
         if not all([client_id, client_secret, outer_id]):
             return jsonify({'success': False,

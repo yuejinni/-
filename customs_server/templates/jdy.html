@@ -1839,6 +1839,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <label>账套ID（dbId）</label>
         <input id="s-db-id" type="text" placeholder="如 7947792492442">
       </div>
+      <div class="form-item">
+        <label>授权实例ID（outerInstanceId，用于获取授权密钥）</label>
+        <input id="s-outer-instance-id" type="text" placeholder="不是 dbId；旧版配置里的 jdy_outer_instance_id">
+      </div>
       <div class="form-item full">
         <label>IDC 域名（X-GW-Router-Addr）</label>
         <input id="s-domain" type="text" placeholder="如 https://vip2-hz.jdy.com">
@@ -1879,6 +1883,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div class="form-item">
         <label>账套ID（dbId）</label>
         <input id="s2-db-id" type="text" placeholder="">
+      </div>
+      <div class="form-item">
+        <label>授权实例ID（outerInstanceId，用于获取授权密钥）</label>
+        <input id="s2-outer-instance-id" type="text" placeholder="不是 dbId；旧版配置里的 jdy2_outer_instance_id">
       </div>
       <div class="form-item full">
         <label>IDC 域名（X-GW-Router-Addr）</label>
@@ -5378,6 +5386,7 @@ async function loadSettings() {
       document.getElementById('s-client-id').value = jdy.client_id  || '';
       document.getElementById('s-app-key').value   = jdy.app_key    || '';
       document.getElementById('s-db-id').value     = jdy.db_id      || '';
+      document.getElementById('s-outer-instance-id').value = jdy.outer_instance_id || '';
       document.getElementById('s-domain').value    = jdy.domain     || '';
       setSecretInputState('s-app-secret', jdy.app_secret_masked);
       setSecretInputState('s-client-secret', jdy.client_secret_masked);
@@ -5386,6 +5395,7 @@ async function loadSettings() {
       document.getElementById('s2-client-id').value = jdy.client_id2 || '';
       document.getElementById('s2-app-key').value   = jdy.app_key2   || '';
       document.getElementById('s2-db-id').value     = jdy.db_id2     || '';
+      document.getElementById('s2-outer-instance-id').value = jdy.outer_instance_id2 || '';
       document.getElementById('s2-domain').value    = jdy.domain2    || '';
       setSecretInputState('s2-app-secret', jdy.app_secret_masked2);
       setSecretInputState('s2-client-secret', jdy.client_secret_masked2);
@@ -6219,8 +6229,9 @@ async function saveJdyConfig(idx=1) {
   const as = document.getElementById(`s${p}-app-secret`).value.trim();
   const cs = document.getElementById(`s${p}-client-secret`).value.trim();
   const db = document.getElementById(`s${p}-db-id`).value.trim();
+  const oi = document.getElementById(`s${p}-outer-instance-id`).value.trim();
   const dm = document.getElementById(`s${p}-domain`).value.trim();
-  if (!ci && !ak && !as && !cs && !db && !dm) {
+  if (!ci && !ak && !as && !cs && !db && !oi && !dm) {
     alert('配置未加载，禁止保存空配置。请刷新页面并确认非敏感字段已回显后再保存。');
     return;
   }
@@ -6230,7 +6241,8 @@ async function saveJdyConfig(idx=1) {
   if (as) body.app_secret    = as;
   if (cs) body.client_secret = cs;
   if (db) body.db_id         = db;
-  body.domain = dm;
+  if (oi) body.outer_instance_id = oi;
+  if (dm) body.domain = dm;
   try {
     const res  = await fetch(`${API}/jdy-config`, {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
