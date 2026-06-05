@@ -1975,15 +1975,15 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookStatus()">刷新状态</button>
       </div>
       <div class="webhook-status-grid" id="webhook-status-counts">
-        <div class="webhook-stat"><span class="tip">pending</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">processing</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">done</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">failed</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">待处理</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">处理中</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">已完成</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">失败</span><b>0</b></div>
       </div>
       <div class="webhook-status-grid" id="webhook-rate-status" style="margin-top:10px;">
-        <div class="webhook-stat"><span class="tip">stale processing</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">当前模式</span><b style="font-size:18px;">paused</b></div>
-        <div class="webhook-stat"><span class="tip">当前限速</span><b>0/min</b></div>
+        <div class="webhook-stat"><span class="tip">卡住的处理中</span><b>0</b></div>
+        <div class="webhook-stat"><span class="tip">当前模式</span><b style="font-size:18px;">已暂停</b></div>
+        <div class="webhook-stat"><span class="tip">当前速度</span><b>0 条/分钟</b></div>
         <div class="webhook-stat"><span class="tip">预计耗时</span><b style="font-size:18px;">0 / 0 分</b></div>
       </div>
       <div id="webhook-notes" class="tip" style="margin-top:10px;line-height:1.7;"></div>
@@ -1994,7 +1994,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <thead>
             <tr>
               <th>ID</th>
-              <th>resource</th>
+              <th>类型</th>
               <th>单号</th>
               <th>状态</th>
               <th>次数</th>
@@ -5399,6 +5399,97 @@ function webhookHtml(value) {
   }[ch]));
 }
 
+const WEBHOOK_STATUS_LABELS = {
+  pending: '待处理',
+  processing: '处理中',
+  done: '已完成',
+  failed: '失败',
+  skipped: '已跳过',
+  superseded: '已被更新事件替代',
+};
+const WEBHOOK_MODE_LABELS = {
+  normal: '常规',
+  boost: '加速',
+  backoff: '降速保护',
+  paused: '已暂停',
+  idle: '空闲',
+};
+const WEBHOOK_RESOURCE_LABELS = {
+  product: '商品',
+  bd_material: '商品',
+  material: '商品',
+  sales: '销售单',
+  sal_bill_outbound: '销售单',
+  sales_order: '销售订单',
+  sal_bill_order: '销售订单',
+  purchase_order: '采购订单',
+  pur_bill_order: '采购订单',
+  inventory: '库存',
+  bd_inventory: '库存',
+  supplier: '供应商',
+  bd_supplier: '供应商',
+  purchase_inbound: '购货入库',
+  pur_bill_inbound: '购货入库',
+  accessory_purchase: '辅料采购',
+  ar_creditbill: '收款/应收类单据',
+  ar_othercreditbill: '其他应收单据',
+  ap_otherpaybill: '其他应付单据',
+  transfer: '调拨单',
+  inv_transfer: '调拨单',
+  unknown: '未知类型',
+};
+
+function webhookLabel(value, labels, fallback = '未知') {
+  const raw = String(value ?? '').trim();
+  const key = raw.toLowerCase();
+  const label = labels[key] || fallback;
+  return raw && label !== raw ? `${label}（${raw}）` : label;
+}
+
+function translateWebhookStatus(status) {
+  return webhookLabel(status, WEBHOOK_STATUS_LABELS, status ? '其他状态' : '未知状态');
+}
+
+function translateWebhookMode(mode) {
+  return webhookLabel(mode, WEBHOOK_MODE_LABELS, mode ? '其他模式' : '未知模式');
+}
+
+function translateWebhookResource(resource) {
+  return webhookLabel(resource || 'unknown', WEBHOOK_RESOURCE_LABELS, '未知类型');
+}
+
+function translateWebhookRate(rate) {
+  return `${Number(rate || 0)} 条/分钟`;
+}
+
+function translateWebhookReason(reason) {
+  const raw = String(reason || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return '';
+  if (lower.includes('manual processing required')) return `需要管理员手动开启（${raw}）`;
+  if (lower.includes('manual pause')) return `管理员已暂停（${raw}）`;
+  if (lower.includes('pending backlog is high')) return `队列积压较多（${raw}）`;
+  if (lower.includes('default controlled processing')) return `按常规速度受控处理（${raw}）`;
+  if (lower.includes('recent api/network errors')) return `最近出现接口或网络错误（${raw}）`;
+  if (lower.includes('max_items reached')) return `已达到本次处理上限（${raw}）`;
+  if (lower.includes('stopped after current item')) return `当前事件处理后已停止（${raw}）`;
+  return translateWebhookError(raw);
+}
+
+function translateWebhookError(error) {
+  const raw = String(error || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return '';
+  if (lower.includes('recorded only')) return `仅记录，未处理（${raw}）`;
+  if (lower.includes('account not configured')) return `账套未配置（${raw}）`;
+  if (lower.includes('no-match')) return `账套不匹配（${raw}）`;
+  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('频率')) return `频率限制（${raw}）`;
+  if (lower.includes('missing bill_no')) return `缺少单号（${raw}）`;
+  if (lower.includes('missing resource')) return `缺少类型（${raw}）`;
+  if (lower.includes('unsupported resource')) return `暂不支持的类型（${raw}）`;
+  return raw;
+}
+
 function webhookStatusClass(status) {
   if (status === 'done') return 'webhook-ok';
   if (status === 'failed') return 'webhook-error';
@@ -5421,14 +5512,14 @@ async function loadWebhookStatus() {
     if (!data.success) throw new Error(data.error || '读取失败');
     const endpoint = data.endpoint || {};
     if (endpointEl) {
-      endpointEl.innerHTML = `${endpoint.local_ready ? '✓' : '×'} ${webhookHtml(endpoint.path || '/jdy-webhook')} ready；线上地址：${webhookHtml(endpoint.remote_url || 'http://gongdashuai.top:5008/jdy-webhook')}`;
+      endpointEl.innerHTML = `${endpoint.local_ready ? '✓' : '×'} ${webhookHtml(endpoint.path || '/jdy-webhook')} 可访问；线上地址：${webhookHtml(endpoint.remote_url || 'http://gongdashuai.top:5008/jdy-webhook')}`;
       endpointEl.style.color = endpoint.local_ready ? '#18a058' : '#d93025';
     }
     const counts = data.counts || {};
     if (countsEl) {
       countsEl.innerHTML = ['pending', 'processing', 'done', 'failed'].map(key => `
         <div class="webhook-stat">
-          <span class="tip">${key}</span>
+          <span class="tip">${webhookHtml(translateWebhookStatus(key))}</span>
           <b>${Number(counts[key] || 0)}</b>
         </div>
       `).join('');
@@ -5437,14 +5528,14 @@ async function loadWebhookStatus() {
     const estimate = data.backlog_estimate || {};
     if (rateEl) {
       const stale = Number(data.stale_processing || 0);
-      const mode = webhookHtml(policy.mode || 'normal');
-      const reason = webhookHtml(policy.reason || '');
+      const mode = webhookHtml(translateWebhookMode(policy.mode || 'normal'));
+      const reason = webhookHtml(translateWebhookReason(policy.reason || ''));
       const rate = Number(policy.current_rate_per_min || 0);
       const etaNormal = Number(estimate.eta_minutes_normal || 0);
       const etaBoost = Number(estimate.eta_minutes_boost || 0);
       rateEl.innerHTML = `
         <div class="webhook-stat">
-          <span class="tip">stale processing</span>
+          <span class="tip">卡住的处理中</span>
           <b>${stale}</b>
         </div>
         <div class="webhook-stat">
@@ -5453,11 +5544,11 @@ async function loadWebhookStatus() {
           <span class="tip">${reason}</span>
         </div>
         <div class="webhook-stat">
-          <span class="tip">当前限速</span>
-          <b>${rate}/min</b>
+          <span class="tip">当前速度</span>
+          <b>${webhookHtml(translateWebhookRate(rate))}</b>
         </div>
         <div class="webhook-stat">
-          <span class="tip">预计耗时 300/450</span>
+          <span class="tip">预计耗时 常规/加速</span>
           <b style="font-size:18px;">${etaNormal} / ${etaBoost} 分</b>
         </div>
       `;
@@ -5471,14 +5562,14 @@ async function loadWebhookStatus() {
     const resources = data.resource_summary || [];
     if (resourcesEl) {
       resourcesEl.innerHTML = resources.length
-        ? `Resource 汇总：${resources.map(r => `${webhookHtml(r.resource || 'unknown')} 共 ${Number(r.total || 0)}，pending ${Number(r.pending || 0)}，processing ${Number(r.processing || 0)}，done ${Number(r.done || 0)}，failed ${Number(r.failed || 0)}`).join('；')}`
-        : 'Resource 汇总：暂无事件';
+        ? `类型汇总：${resources.map(r => `${webhookHtml(translateWebhookResource(r.resource || 'unknown'))} 共 ${Number(r.total || 0)}，待处理 ${Number(r.pending || 0)}，处理中 ${Number(r.processing || 0)}，已完成 ${Number(r.done || 0)}，失败 ${Number(r.failed || 0)}`).join('；')}`
+        : '类型汇总：暂无事件';
     }
     const duplicates = data.duplicate_summary || [];
     if (duplicateEl) {
       duplicateEl.innerHTML = duplicates.length
-        ? `重复 pending Top：${duplicates.map(row => `${webhookHtml(row.resource || 'unknown')} / ${webhookHtml(row.bill_no || '')} × ${Number(row.count || 0)}`).join('；')}`
-        : '重复 pending：暂无';
+        ? `重复待处理 Top：${duplicates.map(row => `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}`).join('；')}`
+        : '重复待处理：暂无';
     }
     const recent = data.recent || [];
     if (bodyEl) {
@@ -5487,11 +5578,11 @@ async function loadWebhookStatus() {
         return `
           <tr>
             <td>${Number(row.id || 0)}</td>
-            <td>${webhookHtml(row.resource || 'unknown')}</td>
+            <td>${webhookHtml(translateWebhookResource(row.resource || 'unknown'))}</td>
             <td>${webhookHtml(row.bill_no || '')}</td>
-            <td class="${cls}">${webhookHtml(row.status || '')}</td>
+            <td class="${cls}">${webhookHtml(translateWebhookStatus(row.status || ''))}</td>
             <td>${Number(row.attempts || 0)}</td>
-            <td class="webhook-error">${webhookHtml(row.error || '')}</td>
+            <td class="webhook-error">${webhookHtml(translateWebhookError(row.error || ''))}</td>
             <td>${webhookHtml(row.created_at || '')}</td>
             <td>${webhookHtml(row.processed_at || '')}</td>
           </tr>
