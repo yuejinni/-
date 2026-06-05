@@ -177,7 +177,7 @@ def _admin_path_required():
         '/jdy-config', '/jdy-refresh-auth', '/jdy-test',
         '/system-update/upload', '/system-update/backups', '/system-update/rollback',
         '/system-logs', '/sales-sync-config', '/sales-sync/status', '/sales-sync-run',
-        '/jdy-webhook/status', '/jdy-webhook/worker-control',
+        '/jdy-webhook/status', '/jdy-webhook/worker-control', '/jdy-webhook/recover-stale',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
@@ -5264,7 +5264,36 @@ def _webhook_result_to_finish(result):
         message = str(result.get('message') or result.get('reason') or '')
         return success, message
     ok = bool(result)
-    return ok, '' if ok else 'recorded only'
+    return True, '' if ok else 'recorded only'
+
+
+def _webhook_stale_cutoff(older_than_minutes=30):
+    try:
+        minutes = int(older_than_minutes or 30)
+    except Exception:
+        minutes = 30
+    minutes = max(1, min(minutes, 24 * 60))
+    return minutes, (datetime.now() - timedelta(minutes=minutes)).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _webhook_stale_processing_rows(conn, older_than_minutes=30, limit=100):
+    minutes, cutoff = _webhook_stale_cutoff(older_than_minutes)
+    try:
+        limit = max(1, min(int(limit or 100), 500))
+    except Exception:
+        limit = 100
+    rows = conn.execute('''
+        SELECT id, account, biz_type, resource, bill_no, action, status, attempts, error, created_at, processed_at
+        FROM webhook_events
+        WHERE status = 'processing'
+          AND (
+            (processed_at IS NOT NULL AND processed_at != '' AND processed_at <= ?)
+            OR ((processed_at IS NULL OR processed_at = '') AND created_at <= ?)
+          )
+        ORDER BY id ASC
+        LIMIT ?
+    ''', (cutoff, cutoff, limit)).fetchall()
+    return [dict(row) for row in rows], minutes, cutoff
 
 
 def _flatten_webhook_items(value):
@@ -5335,20 +5364,42 @@ def _webhook_bill_no_kind(value):
     return 'unknown'
 
 
+def _norm_account_token(value):
+    return str(value or '').strip().lower().replace(' ', '').replace('_', '').replace('-', '')
+
+
+def _account_aliases_for_cfg(cfg, index):
+    name = str(cfg.get('name') or '').strip()
+    app_key = str(cfg.get('app_key') or '').strip()
+    db_id = str(cfg.get('db_id') or '').strip()
+    aliases = {str(index), f'account{index}', f'账套{index}', app_key, db_id, name}
+    if index == 1:
+        aliases.update({'饰品', '祺航饰品', 'jdy1', 'accountone'})
+    elif index == 2:
+        aliases.update({'箱包', '祺航箱包', 'jdy2', 'accounttwo'})
+    return {_norm_account_token(x) for x in aliases if str(x or '').strip()}
+
+
+def _account_matches_cfg(account, cfg, index):
+    token = _norm_account_token(account)
+    return bool(token) and token in _account_aliases_for_cfg(cfg, index)
+
+
 def _jdy_account_from_payload(payload):
     payload = payload or {}
     cfg1 = _load_jdy_config()
     cfg2 = _load_jdy_config2()
-    app_key = str(payload.get('appKey') or payload.get('app_key') or '')
-    account_id = str(payload.get('accountId') or payload.get('dbId') or payload.get('dbid') or payload.get('outerInstanceId') or '')
-    if app_key and app_key == str(cfg2.get('app_key') or ''):
-        return cfg2.get('name', '箱包')
-    if app_key and app_key == str(cfg1.get('app_key') or ''):
-        return cfg1.get('name', '饰品')
-    if account_id and account_id == str(cfg2.get('db_id') or ''):
-        return cfg2.get('name', '箱包')
-    if account_id and account_id == str(cfg1.get('db_id') or ''):
-        return cfg1.get('name', '饰品')
+    candidates = [
+        payload.get('account'), payload.get('accountName'), payload.get('account_name'),
+        payload.get('appKey'), payload.get('app_key'),
+        payload.get('accountId'), payload.get('dbId'), payload.get('dbid'),
+        payload.get('outerInstanceId'), payload.get('outer_instance_id'),
+    ]
+    for candidate in candidates:
+        if _account_matches_cfg(candidate, cfg2, 2):
+            return cfg2.get('name') or '祺航箱包'
+        if _account_matches_cfg(candidate, cfg1, 1):
+            return cfg1.get('name') or '祺航饰品'
     return ''
 
 
@@ -5480,9 +5531,17 @@ def _process_webhook_event(event):
         return _cache_one_accessory_purchase_order_from_jdy(cli, account_name, number)
     if resource in ('inventory', 'product', 'supplier', 'purchase_inbound'):
         _log_event('JDY_WEBHOOK', f'light event recorded: resource={resource} account={account_name} number={number}')
-        return True
+        return _webhook_process_result(
+            ok=True,
+            reason='recorded_only',
+            message='recorded only: light event recorded',
+        )
     _log_event('JDY_WEBHOOK', f'unknown event recorded: resource={resource} account={account_name} number={number}')
-    return True
+    return _webhook_process_result(
+        ok=True,
+        reason='unsupported_resource',
+        message=f'skipped: unsupported resource {resource or "unknown"}',
+    )
 
 
 def _webhook_wait_for_rate_slot():
@@ -8207,9 +8266,9 @@ def _enrich_sales_orders_batch(cli, orders, include_quantities=False, account=''
 def _sales_client_for_account(account):
     cfg1 = _load_jdy_config();  name1 = cfg1.get('name', '饰品')
     cfg2 = _load_jdy_config2(); name2 = cfg2.get('name', '箱包')
-    if account == name2:
+    if _account_matches_cfg(account, cfg2, 2):
         return _ensure_jdy_client2(), name2
-    if account == name1:
+    if _account_matches_cfg(account, cfg1, 1):
         return _ensure_jdy_client(), name1
     return None, account
 
@@ -9482,6 +9541,74 @@ def jdy_webhook_worker_control():
             'manual_processing_required': snapshot.get('manual_processing_required'),
             'pending_count': snapshot.get('pending_count'),
             'current_rate_limit': snapshot.get('current_rate_limit'),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/recover-stale', methods=['POST'])
+def jdy_webhook_recover_stale():
+    try:
+        data = request.get_json(silent=True) or {}
+        action = str(data.get('action') or 'dry_run').strip().lower()
+        older_than_minutes = data.get('older_than_minutes') or 30
+        limit = data.get('limit') or 100
+
+        if action == 'dry_run':
+            conn = _sales_readonly_conn()
+            if conn is None:
+                return jsonify({
+                    'success': True,
+                    'dry_run': True,
+                    'older_than_minutes': older_than_minutes,
+                    'cutoff': '',
+                    'count': 0,
+                    'items': [],
+                    'message': 'sales cache database not found',
+                })
+            try:
+                rows, minutes, cutoff = _webhook_stale_processing_rows(conn, older_than_minutes, limit)
+            finally:
+                conn.close()
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'older_than_minutes': minutes,
+                'cutoff': cutoff,
+                'count': len(rows),
+                'items': rows,
+            })
+
+        if action != 'recover_to_pending':
+            return jsonify({'success': False, 'error': 'unsupported action; use dry_run or recover_to_pending'}), 400
+        if str(data.get('confirm') or '') != 'RECOVER_STALE_WEBHOOK':
+            return jsonify({'success': False, 'error': '缺少确认码 RECOVER_STALE_WEBHOOK，未恢复卡住事件。'}), 400
+
+        with _sales_cache_conn() as conn:
+            rows, minutes, cutoff = _webhook_stale_processing_rows(conn, older_than_minutes, limit)
+            ids = [int(row['id']) for row in rows]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'pending',
+                        error = 'recovered from stale processing',
+                        processed_at = ''
+                    WHERE id IN ({marks}) AND status = 'processing'
+                ''', ids)
+                conn.commit()
+        _webhook_state.update({
+            'pending': _webhook_pending_count(),
+            'message': f'recovered {len(ids)} stale webhook event(s) to pending',
+        })
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'older_than_minutes': minutes,
+            'cutoff': cutoff,
+            'recovered': len(ids),
+            'ids': ids,
+            'message': 'stale processing events recovered to pending; worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

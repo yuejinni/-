@@ -1997,8 +1997,11 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
         <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('manual')">切换为手动</button>
         <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="recoverStaleWebhook('dry_run')">查看卡住事件</button>
+        <button class="btn btn-warn btn-sm" type="button" onclick="recoverStaleWebhook('recover_to_pending')">恢复卡住事件为待处理</button>
         <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
       </div>
+      <div id="webhook-stale-recover-status" class="tip" style="margin-top:4px;"></div>
       <div class="webhook-status-grid" id="webhook-status-counts">
         <div class="webhook-stat"><span class="tip">待处理</span><b>0</b></div>
         <div class="webhook-stat"><span class="tip">处理中</span><b>0</b></div>
@@ -5544,6 +5547,44 @@ async function setWebhookProcessingMode(mode) {
     await loadWebhookStatus();
   } catch (e) {
     alert('切换 Webhook 处理模式失败：' + e.message);
+  }
+}
+
+async function recoverStaleWebhook(action) {
+  const statusEl = document.getElementById('webhook-stale-recover-status');
+  const isRecover = action === 'recover_to_pending';
+  if (isRecover) {
+    const ok = window.confirm('确认把卡住的 processing 事件恢复为待处理吗？这不会自动处理队列，也不会调用 JDY。');
+    if (!ok) return;
+  }
+  try {
+    if (statusEl) statusEl.textContent = isRecover ? '正在恢复卡住事件...' : '正在查看卡住事件...';
+    const body = {
+      action: isRecover ? 'recover_to_pending' : 'dry_run',
+      older_than_minutes: 10,
+      limit: 100,
+    };
+    if (isRecover) body.confirm = 'RECOVER_STALE_WEBHOOK';
+    const res = await fetch(`${API}/jdy-webhook/recover-stale`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '操作失败');
+    if (statusEl) {
+      if (isRecover) {
+        statusEl.textContent = `已恢复 ${Number(data.recovered || 0)} 条卡住事件为待处理；未启动处理队列。`;
+      } else {
+        const items = data.items || [];
+        const preview = items.slice(0, 5).map(row => `#${row.id} ${translateWebhookResource(row.resource || 'unknown')} ${row.bill_no || ''}`).join('；');
+        statusEl.textContent = `发现 ${Number(data.count || 0)} 条卡住事件${preview ? '：' + preview : ''}`;
+      }
+    }
+    await loadWebhookStatus();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '卡住事件操作失败：' + e.message;
+    else alert('卡住事件操作失败：' + e.message);
   }
 }
 
