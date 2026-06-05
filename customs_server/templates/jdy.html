@@ -2008,20 +2008,20 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
       </div>
       <div class="webhook-control-row" id="webhook-manual-panel">
-        <b>手动处理区</b>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1)">处理 1 条</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5)">处理 5 条</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10)">处理 10 条</button>
+        <b>正常队列</b>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'normal')">处理正常队列 1 条</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'normal')">处理正常队列 5 条</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'normal')">处理正常队列 10 条</button>
         <input id="webhook-manual-count" type="number" min="1" max="500" value="10" style="width:90px;">
-        <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual()">处理指定数量</button>
+        <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual(null, 'normal')">处理指定数量</button>
         <button class="btn btn-warn btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">暂停处理</button>
-        <span class="tip">手动模式不会自动处理，需要管理员点击按钮。</span>
+        <span class="tip">正常队列只处理新 webhook 的 pending，不处理失败重试队列。</span>
       </div>
       <div class="webhook-control-row" id="webhook-auto-panel">
         <b>自动处理区</b>
         <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
         <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
-        <span class="tip">自动模式按 300 条/分钟处理，积压较多最高 450 条/分钟，频率限制时降速保护。</span>
+        <span class="tip">自动模式只处理正常 pending，不处理 retry_pending；按 300 条/分钟处理，积压较多最高 450 条/分钟，频率限制时降速保护。</span>
       </div>
       <div class="webhook-control-row">
         <b>卡住事件</b>
@@ -2052,9 +2052,22 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:90px;">
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
-          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败为待处理</button>
+          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">recorded only 归档 dry-run</button>
           <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档 recorded only</button>
+        </div>
+        <div class="webhook-control-row">
+          <b>重试队列</b>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'retry')">处理重试队列 1 条</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'retry')">处理重试队列 5 条</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'retry')">处理重试队列 10 条</button>
+          <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual(null, 'retry')">处理指定数量重试</button>
+          <span class="tip">重试队列必须手动处理，自动模式不会处理。</span>
+        </div>
+        <div class="webhook-control-row">
+          <b>误混入检查</b>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="reclassifyRetryPending(true)">检查误混入普通队列的重试事件</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="reclassifyRetryPending(false)">确认移动到重试队列</button>
         </div>
         <div id="webhook-failure-summary" class="tip" style="margin-top:6px;line-height:1.7;">待读取失败统计</div>
         <div id="webhook-failure-list" class="tip" style="margin-top:6px;line-height:1.7;"></div>
@@ -5473,6 +5486,7 @@ function webhookHtml(value) {
 
 const WEBHOOK_STATUS_LABELS = {
   pending: '待处理',
+  retry_pending: '重试待处理',
   processing: '处理中',
   done: '已完成',
   failed: '失败',
@@ -5567,7 +5581,7 @@ function translateWebhookError(error) {
 function webhookStatusClass(status) {
   if (status === 'done') return 'webhook-ok';
   if (status === 'failed') return 'webhook-error';
-  if (status === 'pending' || status === 'processing') return 'webhook-warn';
+  if (status === 'pending' || status === 'retry_pending' || status === 'processing') return 'webhook-warn';
   return '';
 }
 
@@ -5575,7 +5589,7 @@ async function setWebhookProcessingMode(mode) {
   const labels = { paused: '暂停模式', manual: '手动模式', auto: '自动模式' };
   if (!['paused', 'manual', 'auto'].includes(mode)) return;
   if (mode === 'auto') {
-    const ok = window.confirm('自动模式会按限速处理 pending 队列，可能调用 JDY 只读接口并写本地缓存。确认开启吗？');
+    const ok = window.confirm('自动模式只会按限速处理正常 pending 队列，不会处理 retry_pending。处理过程可能调用 JDY 只读接口并写本地缓存。确认开启吗？');
     if (!ok) return;
   }
   try {
@@ -5618,10 +5632,10 @@ async function recoverStaleWebhook(action) {
     if (!data.success) throw new Error(data.error || '操作失败');
     if (statusEl) {
       if (isRecover) {
-        statusEl.textContent = `已恢复 ${Number(data.recovered || 0)} 条卡住事件为待处理；未启动处理队列。`;
+        statusEl.textContent = `已恢复 ${Number(data.normal_recovered || 0)} 条到正常 pending，${Number(data.retry_recovered || 0)} 条到 retry_pending；未启动处理队列。`;
       } else {
         const items = data.items || [];
-        const preview = items.slice(0, 5).map(row => `#${row.id} ${translateWebhookResource(row.resource || 'unknown')} ${row.bill_no || ''}`).join('；');
+        const preview = items.slice(0, 5).map(row => `#${row.id} ${translateWebhookResource(row.resource || 'unknown')} ${row.bill_no || ''} → ${translateWebhookStatus(row.recover_to_status || 'pending')}`).join('；');
         statusEl.textContent = `发现 ${Number(data.count || 0)} 条卡住事件${preview ? '：' + preview : ''}`;
       }
     }
@@ -5644,21 +5658,23 @@ function webhookFailureParams() {
   };
 }
 
-async function startWebhookManual(count) {
+async function startWebhookManual(count, queue = 'normal') {
   const inputCount = Number(document.getElementById('webhook-manual-count')?.value || 10);
   const maxItems = Math.max(1, Math.min(Number(count || inputCount || 1), 500));
-  const ok = window.confirm(`确认手动处理 ${maxItems} 条 Webhook pending 吗？处理过程可能调用 JDY 只读接口并写本地缓存。`);
+  const q = queue === 'retry' ? 'retry' : 'normal';
+  const qLabel = q === 'retry' ? '重试队列 retry_pending' : '正常队列 pending';
+  const ok = window.confirm(`确认手动处理 ${maxItems} 条 ${qLabel} 吗？处理过程可能调用 JDY 只读接口并写本地缓存。`);
   if (!ok) return;
   try {
     const res = await fetch(`${API}/jdy-webhook/worker-control`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ action: 'start', max_items: maxItems }),
+      body: JSON.stringify({ action: 'start', queue: q, max_items: maxItems }),
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '启动失败');
     const help = document.getElementById('webhook-mode-help');
-    if (help) help.textContent = `已启动手动处理 ${maxItems} 条；可随时暂停。`;
+    if (help) help.textContent = `已启动手动处理 ${maxItems} 条${qLabel}；可随时暂停。`;
     await loadWebhookStatus();
   } catch (e) {
     alert('启动手动处理失败：' + e.message);
@@ -5702,7 +5718,7 @@ async function retryFailedWebhook(dryRun) {
   const params = webhookFailureParams();
   const endpoint = dryRun ? 'retry-failed-dry-run' : 'retry-failed';
   if (!dryRun) {
-    const ok = window.confirm(`确认把最多 ${params.limit} 条 failed 恢复为 pending 吗？这不会自动处理队列。`);
+    const ok = window.confirm(`确认把最多 ${params.limit} 条 failed 恢复到重试队列 retry_pending 吗？这不会自动处理队列。`);
     if (!ok) return;
     params.confirm = 'RETRY_FAILED_WEBHOOK';
   }
@@ -5717,15 +5733,46 @@ async function retryFailedWebhook(dryRun) {
     const listEl = document.getElementById('webhook-failure-list');
     if (listEl) {
       if (dryRun) {
-        listEl.innerHTML = `将恢复 ${Number(data.count || 0)} 条 failed：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
+        listEl.innerHTML = `将恢复 ${Number(data.count || 0)} 条 failed 到重试队列：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
       } else {
-        listEl.innerHTML = `已恢复 ${Number(data.recovered || 0)} 条 failed 为 pending；请到手动处理区处理 N 条。`;
+        listEl.innerHTML = `已恢复 ${Number(data.recovered || 0)} 条 failed 到 retry_pending；请在重试队列区手动处理 N 条。`;
       }
     }
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
     alert('失败队列重试操作失败：' + e.message);
+  }
+}
+
+async function reclassifyRetryPending(dryRun) {
+  const params = webhookFailureParams();
+  const endpoint = dryRun ? 'reclassify-retry-pending-dry-run' : 'reclassify-retry-pending';
+  if (!dryRun) {
+    const ok = window.confirm(`确认把最多 ${params.limit} 条已误混入普通 pending 的重试事件移动到 retry_pending 吗？这不会自动处理队列。`);
+    if (!ok) return;
+    params.confirm = 'RECLASSIFY_RETRY_PENDING';
+  }
+  try {
+    const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '操作失败');
+    const listEl = document.getElementById('webhook-failure-list');
+    if (listEl) {
+      if (dryRun) {
+        listEl.innerHTML = `发现 ${Number(data.count || 0)} 条误混入普通队列的重试事件：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
+      } else {
+        listEl.innerHTML = `已移动 ${Number(data.reclassified || 0)} 条事件到 retry_pending。`;
+      }
+    }
+    await loadWebhookStatus();
+    await loadWebhookFailures();
+  } catch (e) {
+    alert('重试队列重新归类失败：' + e.message);
   }
 }
 
@@ -5784,7 +5831,7 @@ async function loadWebhookStatus() {
     }
     const counts = data.counts || {};
     if (countsEl) {
-      countsEl.innerHTML = ['pending', 'processing', 'done', 'failed'].map(key => `
+      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed'].map(key => `
         <div class="webhook-stat">
           <span class="tip">${webhookHtml(translateWebhookStatus(key))}</span>
           <b>${Number(counts[key] || 0)}</b>
@@ -5848,17 +5895,25 @@ async function loadWebhookStatus() {
     const resources = data.resource_summary || [];
     if (resourcesEl) {
       resourcesEl.innerHTML = resources.length
-        ? `类型汇总：${resources.map(r => `${webhookHtml(translateWebhookResource(r.resource || 'unknown'))} 共 ${Number(r.total || 0)}，待处理 ${Number(r.pending || 0)}，处理中 ${Number(r.processing || 0)}，已完成 ${Number(r.done || 0)}，失败 ${Number(r.failed || 0)}`).join('；')}`
+        ? `类型汇总：${resources.map(r => `${webhookHtml(translateWebhookResource(r.resource || 'unknown'))} 共 ${Number(r.total || 0)}，正常待处理 ${Number(r.pending || 0)}，重试待处理 ${Number(r.retry_pending || 0)}，处理中 ${Number(r.processing || 0)}，已完成 ${Number(r.done || 0)}，失败 ${Number(r.failed || 0)}`).join('；')}`
         : '类型汇总：暂无事件';
     }
     const duplicates = data.duplicate_summary || [];
+    const retryDuplicates = data.retry_duplicate_summary || [];
     if (duplicateEl) {
-      duplicateEl.innerHTML = duplicates.length
-        ? `重复待处理 Top：${duplicates.map(row => {
+      const normalText = duplicates.length
+        ? `正常重复待处理 Top：${duplicates.map(row => {
             const ids = (row.ids || []).slice(0, 8).join(',');
             return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
           }).join('；')}`
-        : '重复待处理：暂无';
+        : '正常重复待处理：暂无';
+      const retryText = retryDuplicates.length
+        ? `重试重复待处理 Top：${retryDuplicates.map(row => {
+            const ids = (row.ids || []).slice(0, 8).join(',');
+            return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.retry_pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
+          }).join('；')}`
+        : '重试重复待处理：暂无';
+      duplicateEl.innerHTML = `${normalText}<br>${retryText}`;
     }
     const recent = data.recent || [];
     if (bodyEl) {

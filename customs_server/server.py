@@ -180,6 +180,7 @@ def _admin_path_required():
         '/jdy-webhook/status', '/jdy-webhook/worker-control', '/jdy-webhook/recover-stale',
         '/jdy-webhook/failures', '/jdy-webhook/retry-failed-dry-run', '/jdy-webhook/retry-failed',
         '/jdy-webhook/resolve-recorded-only-dry-run', '/jdy-webhook/resolve-recorded-only',
+        '/jdy-webhook/reclassify-retry-pending-dry-run', '/jdy-webhook/reclassify-retry-pending',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
@@ -4000,10 +4001,11 @@ def _webhook_status_snapshot(limit=20):
     except Exception:
         limit = 20
     limit = max(1, min(limit, 100))
-    counts = {'pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+    counts = {'pending': 0, 'retry_pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
     recent = []
     resource_map = {}
     duplicate_summary = []
+    retry_duplicate_summary = []
     stale_processing = 0
     conn = _sales_readonly_conn()
     if conn is None:
@@ -4016,13 +4018,17 @@ def _webhook_status_snapshot(limit=20):
             'resource_summary': [],
             'by_resource': [],
             'duplicate_summary': [],
+            'retry_duplicate_summary': [],
             'stale_processing': 0,
             'backlog_estimate': estimate,
+            'backlog_estimate_normal': estimate,
+            'backlog_estimate_retry': estimate,
             'current_rate_policy': policy,
             'processing_mode': processing_mode,
             'auto_enabled': processing_mode == 'auto' and not _webhook_state.get('paused'),
             'manual_processing_required': processing_mode != 'auto',
             'pending_count': 0,
+            'retry_pending_count': 0,
             'current_rate_limit': policy.get('current_rate_per_min') or 0,
             'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
             'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
@@ -4045,6 +4051,7 @@ def _webhook_status_snapshot(limit=20):
                 'resource': resource,
                 'total': 0,
                 'pending': 0,
+                'retry_pending': 0,
                 'processing': 0,
                 'done': 0,
                 'failed': 0,
@@ -4097,6 +4104,27 @@ def _webhook_status_snapshot(limit=20):
                     if str(x or '').strip().isdigit()
                 ],
             })
+        for row in conn.execute('''
+            SELECT resource, bill_no, COUNT(*) AS c, GROUP_CONCAT(id) AS ids
+            FROM webhook_events
+            WHERE status = 'retry_pending'
+              AND COALESCE(resource, '') <> ''
+              AND COALESCE(bill_no, '') <> ''
+            GROUP BY resource, bill_no
+            HAVING c > 1
+            ORDER BY c DESC, resource, bill_no
+            LIMIT 20
+        '''):
+            retry_duplicate_summary.append({
+                'resource': row['resource'] or 'unknown',
+                'bill_no': row['bill_no'] or '',
+                'count': int(row['c'] or 0),
+                'retry_pending_count': int(row['c'] or 0),
+                'ids': [
+                    int(x) for x in str(row['ids'] or '').split(',')
+                    if str(x or '').strip().isdigit()
+                ],
+            })
         stale_cutoff = datetime.now() - timedelta(minutes=30)
         stale_rows = conn.execute('''
             SELECT created_at, processed_at
@@ -4117,9 +4145,11 @@ def _webhook_status_snapshot(limit=20):
         conn.close()
 
     pending_total = counts.get('pending', 0)
+    retry_pending_total = counts.get('retry_pending', 0)
     policy = _webhook_rate_policy(pending_total)
     processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
     estimate = _webhook_backlog_estimate(pending_total)
+    retry_estimate = _webhook_backlog_estimate(retry_pending_total)
     notes = [
         'inventory/product/supplier/purchase_inbound 当前只轻记录',
         '请在 JDY 后台确认消息订阅地址是否配置为 http://gongdashuai.top:5008/jdy-webhook',
@@ -4134,13 +4164,17 @@ def _webhook_status_snapshot(limit=20):
         'resource_summary': sorted(resource_map.values(), key=lambda x: x['resource']),
         'by_resource': sorted(resource_map.values(), key=lambda x: x['resource']),
         'duplicate_summary': duplicate_summary,
+        'retry_duplicate_summary': retry_duplicate_summary,
         'stale_processing': stale_processing,
         'backlog_estimate': estimate,
+        'backlog_estimate_normal': estimate,
+        'backlog_estimate_retry': retry_estimate,
         'current_rate_policy': policy,
         'processing_mode': processing_mode,
         'auto_enabled': processing_mode == 'auto' and not _webhook_state.get('paused'),
         'manual_processing_required': processing_mode != 'auto',
         'pending_count': pending_total,
+        'retry_pending_count': retry_pending_total,
         'current_rate_limit': policy.get('current_rate_per_min') or 0,
         'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
         'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
@@ -5301,7 +5335,13 @@ def _webhook_stale_processing_rows(conn, older_than_minutes=30, limit=100):
         ORDER BY id ASC
         LIMIT ?
     ''', (cutoff, cutoff, limit)).fetchall()
-    return [dict(row) for row in rows], minutes, cutoff
+    result = []
+    for row in rows:
+        item = dict(row)
+        err = str(item.get('error') or '').lower()
+        item['recover_to_status'] = 'retry_pending' if 'recovered for retry' in err else 'pending'
+        result.append(item)
+    return result, minutes, cutoff
 
 
 def _webhook_int_arg(value, default=0, min_value=0, max_value=1000):
@@ -5566,33 +5606,45 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
     return inserted
 
 
-def _webhook_pending_count():
+def _webhook_queue_name(queue='normal'):
+    q = str(queue or 'normal').strip().lower()
+    return q if q in ('normal', 'retry') else 'normal'
+
+
+def _webhook_status_for_queue(queue='normal'):
+    return 'retry_pending' if _webhook_queue_name(queue) == 'retry' else 'pending'
+
+
+def _webhook_pending_count(queue='normal'):
     try:
+        status = _webhook_status_for_queue(queue)
         with _sales_cache_conn() as conn:
-            row = conn.execute("SELECT COUNT(*) AS c FROM webhook_events WHERE status = 'pending'").fetchone()
+            row = conn.execute("SELECT COUNT(*) AS c FROM webhook_events WHERE status = ?", (status,)).fetchone()
         return int(row['c'] or 0)
     except Exception:
         return 0
 
 
-def _claim_webhook_event():
+def _claim_webhook_event(queue='normal'):
     with _webhook_queue_lock:
         with _sales_cache_conn() as conn:
             resource_filter = str(_webhook_state.get('resource_filter') or '').strip()
+            queue_name = _webhook_queue_name(queue)
+            status = _webhook_status_for_queue(queue_name)
             if resource_filter:
                 row = conn.execute('''
                     SELECT * FROM webhook_events
-                    WHERE status = 'pending' AND resource = ?
+                    WHERE status = ? AND resource = ?
                     ORDER BY id ASC
                     LIMIT 1
-                ''', (resource_filter,)).fetchone()
+                ''', (status, resource_filter)).fetchone()
             else:
                 row = conn.execute('''
                     SELECT * FROM webhook_events
-                    WHERE status = 'pending'
+                    WHERE status = ?
                     ORDER BY id ASC
                     LIMIT 1
-                ''').fetchone()
+                ''', (status,)).fetchone()
             if not row:
                 return None
             conn.execute(
@@ -5600,7 +5652,9 @@ def _claim_webhook_event():
                 (row['id'],),
             )
             conn.commit()
-            return dict(row)
+            event = dict(row)
+            event['_webhook_queue'] = queue_name
+            return event
 
 
 def _finish_webhook_event(event_id, success=True, error=''):
@@ -5616,6 +5670,7 @@ def _finish_webhook_event(event_id, success=True, error=''):
         'last_processed_at': now,
         'last_error': '' if success else str(error or '')[:300],
         'pending': _webhook_pending_count(),
+        'retry_pending': _webhook_pending_count('retry'),
     })
 
 
@@ -5699,6 +5754,7 @@ def _webhook_worker_loop():
                 'running': False,
                 'mode': 'paused' if processing_mode == 'paused' else 'manual',
                 'pending': _webhook_pending_count(),
+                'retry_pending': _webhook_pending_count('retry'),
                 'message': _webhook_state.get('pause_reason') or 'manual processing required',
             })
             _webhook_worker_stop.wait(5)
@@ -5713,27 +5769,41 @@ def _webhook_worker_loop():
             })
             _webhook_worker_stop.wait(5)
             continue
+        processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
+        queue_name = 'normal' if processing_mode == 'auto' else _webhook_queue_name(_webhook_state.get('queue') or 'normal')
+        _webhook_state['queue'] = queue_name
         _webhook_wait_for_rate_slot()
-        event = _claim_webhook_event()
+        event = _claim_webhook_event(queue_name)
         if not event:
-            _webhook_state.update({'running': False, 'pending': _webhook_pending_count()})
+            _webhook_state.update({
+                'running': False,
+                'pending': _webhook_pending_count(),
+                'retry_pending': _webhook_pending_count('retry'),
+            })
             _webhook_worker_stop.wait(5)
             _webhook_state['running'] = True
             continue
         try:
+            event_queue = event.get('_webhook_queue') or queue_name
             _webhook_state.update({
-                'message': f"processing {event.get('resource')} {event.get('bill_no')}",
+                'message': f"processing {event_queue} {event.get('resource')} {event.get('bill_no')}",
                 'pending': _webhook_pending_count(),
+                'retry_pending': _webhook_pending_count('retry'),
+                'queue': event_queue,
             })
             result = _process_webhook_event(event)
             success, message = _webhook_result_to_finish(result)
             _finish_webhook_event(event['id'], success, message)
             if not success:
-                _webhook_record_backoff(message)
+                if event_queue != 'retry':
+                    _webhook_record_backoff(message)
+                else:
+                    _webhook_state['retry_last_error'] = str(message or '')[:300]
                 time.sleep(3)
                 continue
             _webhook_state['processed'] = int(_webhook_state.get('processed') or 0) + 1
-            _webhook_state['consecutive_failures'] = 0
+            if event_queue != 'retry':
+                _webhook_state['consecutive_failures'] = 0
             if _webhook_state.get('max_items_remaining') is not None:
                 _webhook_state['max_items_remaining'] = max(0, int(_webhook_state.get('max_items_remaining') or 0) - 1)
             if _webhook_state.get('stop_after_current'):
@@ -5745,7 +5815,10 @@ def _webhook_worker_loop():
         except Exception as e:
             _finish_webhook_event(event['id'], False, _short_sync_error(e))
             _log_event('JDY_WEBHOOK_ERROR', f"{event.get('resource')} {event.get('bill_no')}: {_short_sync_error(e)}")
-            _webhook_record_backoff(_short_sync_error(e))
+            if (event.get('_webhook_queue') or queue_name) != 'retry':
+                _webhook_record_backoff(_short_sync_error(e))
+            else:
+                _webhook_state['retry_last_error'] = _short_sync_error(e)
             time.sleep(3)
 
 
@@ -5901,11 +5974,13 @@ _webhook_state = {
     'stop_after_current': False,
     'max_items_remaining': None,
     'resource_filter': '',
+    'queue': 'normal',
     'mode': 'paused',
     'processing_mode': 'manual',
     'last_event_at': '',
     'last_processed_at': '',
     'last_error': '',
+    'retry_last_error': '',
     'backoff_until': 0,
     'backoff_reason': '',
     'consecutive_failures': 0,
@@ -9529,13 +9604,17 @@ def jdy_webhook_status():
         'resource_summary': snapshot['resource_summary'],
         'by_resource': snapshot['by_resource'],
         'duplicate_summary': snapshot['duplicate_summary'],
+        'retry_duplicate_summary': snapshot.get('retry_duplicate_summary') or [],
         'stale_processing': snapshot['stale_processing'],
         'backlog_estimate': snapshot['backlog_estimate'],
+        'backlog_estimate_normal': snapshot.get('backlog_estimate_normal') or snapshot['backlog_estimate'],
+        'backlog_estimate_retry': snapshot.get('backlog_estimate_retry') or {},
         'current_rate_policy': snapshot['current_rate_policy'],
         'processing_mode': snapshot.get('processing_mode'),
         'auto_enabled': snapshot.get('auto_enabled'),
         'manual_processing_required': snapshot.get('manual_processing_required'),
         'pending_count': snapshot.get('pending_count'),
+        'retry_pending_count': snapshot.get('retry_pending_count'),
         'current_rate_limit': snapshot.get('current_rate_limit'),
         'estimated_minutes_300': snapshot.get('estimated_minutes_300'),
         'estimated_minutes_450': snapshot.get('estimated_minutes_450'),
@@ -9552,6 +9631,9 @@ def jdy_webhook_worker_control():
         max_items = data.get('max_items')
         resource_filter = str(data.get('resource_filter') or '').strip()
         requested_mode = str(data.get('mode') or '').strip().lower()
+        requested_queue = str(data.get('queue') or 'normal').strip().lower()
+        if requested_queue not in ('normal', 'retry'):
+            return jsonify({'success': False, 'error': 'queue must be normal or retry'}), 400
         snapshot = _webhook_status_snapshot(20)
 
         if dry_run:
@@ -9568,7 +9650,9 @@ def jdy_webhook_worker_control():
                 'auto_enabled': snapshot.get('auto_enabled'),
                 'manual_processing_required': snapshot.get('manual_processing_required'),
                 'duplicate_summary': snapshot['duplicate_summary'],
+                'retry_duplicate_summary': snapshot.get('retry_duplicate_summary') or [],
                 'stale_processing': snapshot['stale_processing'],
+                'queue': requested_queue,
             })
 
         if action not in ('start', 'resume', 'pause', 'stop_after_current', 'set_mode'):
@@ -9586,6 +9670,7 @@ def jdy_webhook_worker_control():
                     'pause_reason': 'manual pause',
                     'stop_after_current': False,
                     'max_items_remaining': None,
+                    'queue': 'normal',
                     'message': 'webhook processing mode set to paused',
                 })
             elif requested_mode == 'manual':
@@ -9595,6 +9680,7 @@ def jdy_webhook_worker_control():
                     'pause_reason': 'manual processing required',
                     'stop_after_current': False,
                     'max_items_remaining': None,
+                    'queue': 'normal',
                     'message': 'webhook processing mode set to manual',
                 })
             else:
@@ -9605,6 +9691,7 @@ def jdy_webhook_worker_control():
                     'stop_after_current': False,
                     'max_items_remaining': None,
                     'resource_filter': '',
+                    'queue': 'normal',
                     'message': 'webhook processing mode set to auto',
                 })
                 _start_webhook_worker()
@@ -9621,7 +9708,8 @@ def jdy_webhook_worker_control():
                 'stop_after_current': False,
                 'max_items_remaining': max_items_value,
                 'resource_filter': resource_filter,
-                'message': 'manual webhook processing enabled',
+                'queue': requested_queue,
+                'message': f'manual webhook processing enabled ({requested_queue})',
             })
             _start_webhook_worker()
         elif action == 'pause':
@@ -9640,6 +9728,7 @@ def jdy_webhook_worker_control():
         snapshot = _webhook_status_snapshot(20)
         state = dict(_webhook_state)
         state['pending'] = snapshot['counts'].get('pending', 0)
+        state['retry_pending'] = snapshot['counts'].get('retry_pending', 0)
         return jsonify({
             'success': True,
             'dry_run': False,
@@ -9652,6 +9741,8 @@ def jdy_webhook_worker_control():
             'auto_enabled': snapshot.get('auto_enabled'),
             'manual_processing_required': snapshot.get('manual_processing_required'),
             'pending_count': snapshot.get('pending_count'),
+            'retry_pending_count': snapshot.get('retry_pending_count'),
+            'queue': state.get('queue') or 'normal',
             'current_rate_limit': snapshot.get('current_rate_limit'),
         })
     except Exception as e:
@@ -9698,20 +9789,33 @@ def jdy_webhook_recover_stale():
 
         with _sales_cache_conn() as conn:
             rows, minutes, cutoff = _webhook_stale_processing_rows(conn, older_than_minutes, limit)
-            ids = [int(row['id']) for row in rows]
-            if ids:
-                marks = ','.join('?' for _ in ids)
+            normal_ids = [int(row['id']) for row in rows if row.get('recover_to_status') != 'retry_pending']
+            retry_ids = [int(row['id']) for row in rows if row.get('recover_to_status') == 'retry_pending']
+            if normal_ids:
+                marks = ','.join('?' for _ in normal_ids)
                 conn.execute(f'''
                     UPDATE webhook_events
                     SET status = 'pending',
                         error = 'recovered from stale processing',
                         processed_at = ''
                     WHERE id IN ({marks}) AND status = 'processing'
-                ''', ids)
+                ''', normal_ids)
+            if retry_ids:
+                marks = ','.join('?' for _ in retry_ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'retry_pending',
+                        error = 'recovered for retry',
+                        processed_at = ''
+                    WHERE id IN ({marks}) AND status = 'processing'
+                ''', retry_ids)
+            ids = normal_ids + retry_ids
+            if ids:
                 conn.commit()
         _webhook_state.update({
             'pending': _webhook_pending_count(),
-            'message': f'recovered {len(ids)} stale webhook event(s) to pending',
+            'retry_pending': _webhook_pending_count('retry'),
+            'message': f'recovered {len(normal_ids)} stale webhook event(s) to pending and {len(retry_ids)} to retry_pending',
         })
         return jsonify({
             'success': True,
@@ -9719,8 +9823,10 @@ def jdy_webhook_recover_stale():
             'older_than_minutes': minutes,
             'cutoff': cutoff,
             'recovered': len(ids),
+            'normal_recovered': len(normal_ids),
+            'retry_recovered': len(retry_ids),
             'ids': ids,
-            'message': 'stale processing events recovered to pending; worker was not started',
+            'message': 'stale processing events recovered to their original queue; worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -9778,7 +9884,7 @@ def jdy_webhook_retry_failed():
                 marks = ','.join('?' for _ in ids)
                 conn.execute(f'''
                     UPDATE webhook_events
-                    SET status = 'pending',
+                    SET status = 'retry_pending',
                         error = 'recovered for retry',
                         processed_at = ''
                     WHERE id IN ({marks}) AND status = 'failed'
@@ -9786,7 +9892,8 @@ def jdy_webhook_retry_failed():
                 conn.commit()
         _webhook_state.update({
             'pending': _webhook_pending_count(),
-            'message': f'recovered {len(ids)} failed webhook event(s) to pending',
+            'retry_pending': _webhook_pending_count('retry'),
+            'message': f'recovered {len(ids)} failed webhook event(s) to retry_pending',
         })
         return jsonify({
             'success': True,
@@ -9794,7 +9901,80 @@ def jdy_webhook_retry_failed():
             'recovered': len(ids),
             'ids': ids,
             'params': params,
-            'message': 'failed events recovered to pending; worker was not started',
+            'message': 'failed events recovered to retry_pending; worker was not started',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _webhook_reclassify_retry_rows(conn, params):
+    params = _webhook_failure_params(params)
+    direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
+    rows = conn.execute(f'''
+        SELECT id, account, biz_type, resource, bill_no, action, status, attempts, error, created_at, processed_at
+        FROM webhook_events
+        WHERE status = 'pending'
+          AND LOWER(COALESCE(error, '')) LIKE '%recovered for retry%'
+        ORDER BY id {direction}
+        LIMIT ? OFFSET ?
+    ''', (params['limit'], params['offset'])).fetchall()
+    return [dict(row) for row in rows], params
+
+
+@app.route('/jdy-webhook/reclassify-retry-pending-dry-run', methods=['POST'])
+def jdy_webhook_reclassify_retry_pending_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        conn = _sales_readonly_conn()
+        if conn is None:
+            return jsonify({'success': True, 'dry_run': True, 'count': 0, 'items': []})
+        try:
+            rows, params = _webhook_reclassify_retry_rows(conn, data)
+        finally:
+            conn.close()
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'count': len(rows),
+            'items': rows,
+            'params': params,
+            'message': 'dry run only; no pending retry events were reclassified',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/reclassify-retry-pending', methods=['POST'])
+def jdy_webhook_reclassify_retry_pending():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '') != 'RECLASSIFY_RETRY_PENDING':
+            return jsonify({'success': False, 'error': '缺少确认码 RECLASSIFY_RETRY_PENDING，未移动重试事件。'}), 400
+        with _sales_cache_conn() as conn:
+            rows, params = _webhook_reclassify_retry_rows(conn, data)
+            ids = [int(row['id']) for row in rows]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'retry_pending'
+                    WHERE id IN ({marks})
+                      AND status = 'pending'
+                      AND LOWER(COALESCE(error, '')) LIKE '%recovered for retry%'
+                ''', ids)
+                conn.commit()
+        _webhook_state.update({
+            'pending': _webhook_pending_count(),
+            'retry_pending': _webhook_pending_count('retry'),
+            'message': f'reclassified {len(ids)} pending retry event(s) to retry_pending',
+        })
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'reclassified': len(ids),
+            'ids': ids,
+            'params': params,
+            'message': 'pending retry events moved to retry_pending; worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
