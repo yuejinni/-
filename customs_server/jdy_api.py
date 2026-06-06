@@ -336,7 +336,8 @@ class JDYClient:
     # ── 销货单接口（只读）────────────────────────────────────────────────────
 
     def get_sales_orders(self, page=1, page_size=100, search='',
-                         begin_date='', end_date=''):
+                         begin_date='', end_date='',
+                         upd_time_begin='', upd_time_end=''):
         """
         获取销货单列表（只读）。
         目前按精斗云 SCM 销货单常用路径 /jdyscm/delivery/list 调用；
@@ -350,6 +351,10 @@ class JDYClient:
             f['beginDate'] = begin_date
         if end_date:
             f['endDate'] = end_date
+        if upd_time_begin:
+            f['updTimeBegin'] = upd_time_begin
+        if upd_time_end:
+            f['updTimeEnd'] = upd_time_end
         result = self._request('POST', '/jdyscm/delivery/list',
                                body={'filter': f}, query=self._api_query(),
                                timeout=120)

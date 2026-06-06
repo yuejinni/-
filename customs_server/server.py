@@ -5730,6 +5730,98 @@ def _finish_webhook_event(event_id, success=True, error=''):
     })
 
 
+def _extract_visible_sales_number(payload):
+    """从 webhook payload 提取可见销售单编号（非内部 id）。"""
+    payload = payload or {}
+    visible_keys = ['number', 'billNo', 'billNumber', 'orderNo', 'orderNumber', 'sourceBillNo', 'srcBillNo']
+    for item in _flatten_webhook_items(payload):
+        for key in visible_keys:
+            val = item.get(key)
+            if val not in (None, ''):
+                return str(val).strip()
+    return ''
+
+
+def _number_looks_like_internal_id(number, payload):
+    """判断 bill_no 是否可能是 JDY 内部 data.id 而非可见编号。"""
+    payload = payload or {}
+    number = str(number or '').strip()
+    if not number or len(number) < 6:
+        return False
+    for item in _flatten_webhook_items(payload):
+        raw_id = item.get('id')
+        if raw_id is not None and str(raw_id).strip() == number:
+            return True
+    return False
+
+
+def _refresh_sales_for_webhook_window(cli, account_name, event):
+    """Webhook 仅有内部 id 时，用 updTime 小窗口刷新 sales cache。"""
+    number = str(event.get('bill_no') or '').strip()
+    payload = json.loads(event.get('payload_json') or '{}')
+    if not cli or not account_name:
+        return _webhook_process_result(
+            reason='sales_window_no_client',
+            message='sales window refresh skipped: no JDY client; daily compare covers',
+        )
+    try:
+        created_str = str(event.get('created_at') or '').strip()
+        if created_str and len(created_str) >= 16:
+            try:
+                event_dt = datetime.strptime(created_str[:16], '%Y-%m-%d %H:%M')
+            except ValueError:
+                event_dt = datetime.now()
+        else:
+            event_dt = datetime.now()
+        window_start = (event_dt - timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+        window_end = (event_dt + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+
+        _log_event('JDY_WEBHOOK', f'sales window refresh: {account_name} updTime=[{window_start} ~ {window_end}] reason=internal_id_only bill_no={number}')
+        orders = []
+        page = 1
+        page_size = 100
+        while page <= 10:
+            result = cli.get_sales_orders(
+                page=page, page_size=page_size,
+                upd_time_begin=window_start, upd_time_end=window_end,
+            )
+            batch = result.get('list') or []
+            orders.extend(batch)
+            total = result.get('total') or 0
+            if not batch or len(batch) < page_size or (total and len(orders) >= total):
+                break
+            page += 1
+            time.sleep(0.5)
+
+        if orders:
+            normalized = [_normalize_sales_order(row, account_name) for row in orders]
+            with _sales_cache_conn() as conn:
+                for order in normalized:
+                    order['cacheHash'] = _sales_order_signature(order)
+                    order['cacheHashVersion'] = _SALES_ORDER_HASH_VERSION
+                    _cache_upsert_sales_order(conn, order)
+                    _cache_upsert_sales_detail(conn, order)
+                conn.commit()
+            return _webhook_process_result(
+                ok=True,
+                reason='sales_window_refresh',
+                message=f'sales window refresh: {len(orders)} order(s) cached via updTime window; webhook only provided internal id (bill_no={number})',
+            )
+        else:
+            return _webhook_process_result(
+                ok=True,
+                reason='sales_window_no_rows',
+                message=f'sales window refresh found no rows; webhook only provided internal id (bill_no={number}), daily compare covers',
+            )
+    except Exception as e:
+        err = _short_sync_error(e)
+        return _webhook_process_result(
+            failed=True,
+            reason='sales_window_error',
+            message=f'sales window refresh error: {err}; daily compare covers',
+        )
+
+
 def _process_webhook_event(event):
     account = event.get('account') or ''
     resource = (event.get('resource') or '').lower()
@@ -5744,10 +5836,33 @@ def _process_webhook_event(event):
         _log_event('JDY_WEBHOOK', f'event has no bill number, queued only: resource={resource} account={account_name}')
         return _webhook_process_result(
             reason='missing_bill_no',
-            message=f'缺少单号，未处理：resource={resource or "unknown"}',
+            message=f'recorded only: missing bill_no, daily compare covers',
         )
+
     if resource in ('sales', 'sales_order') or 'sal_bill' in resource or 'delivery' in resource:
-        return _cache_one_sales_order_from_jdy(cli, account_name, number)
+        payload = json.loads(event.get('payload_json') or '{}')
+        biz_type = str(event.get('biz_type') or '').lower()
+        action = str(payload.get('operation') or payload.get('action') or event.get('action') or '').lower()
+
+        # delete events: don't try to fetch, daily compare covers
+        if action == 'delete' or 'delete' in biz_type:
+            _log_event('JDY_WEBHOOK', f'sales delete event recorded: resource={resource} bill_no={number} account={account_name}')
+            return _webhook_process_result(
+                ok=True,
+                reason='sales_delete_recorded',
+                message=f'sales delete event recorded: daily compare covers (bill_no={number})',
+            )
+
+        # check if we have a visible sales order number (not just internal data.id)
+        visible_number = _extract_visible_sales_number(payload) or number
+        # if number came from data.id but payload has no visible number, use window refresh
+        has_visible = bool(_extract_visible_sales_number(payload))
+        if not has_visible and _number_looks_like_internal_id(number, payload):
+            return _refresh_sales_for_webhook_window(cli, account_name, event)
+        if not has_visible:
+            return _refresh_sales_for_webhook_window(cli, account_name, event)
+
+        return _cache_one_sales_order_from_jdy(cli, account_name, visible_number)
     if resource == 'transfer' or 'transfer' in resource:
         return _cache_one_transfer_order_from_jdy(cli, account_name, number)
     if resource in ('accessory_purchase', 'purchase_order') or 'pur_bill_order' in resource or 'purchaseorder' in resource:
@@ -10113,182 +10228,6 @@ def jdy_webhook_archive_failed():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _webhook_cleanup_old_params(raw):
-    raw = raw or {}
-    order = str(raw.get('order') or 'oldest').strip().lower()
-    if order not in ('oldest', 'newest'):
-        order = 'oldest'
-    try:
-        limit = int(raw.get('limit') or 200)
-    except Exception:
-        limit = 200
-    limit = max(1, min(limit, 5000))
-    try:
-        older_than_hours = int(raw.get('older_than_hours') or 24)
-    except Exception:
-        older_than_hours = 24
-    older_than_hours = max(0, min(older_than_hours, 24 * 3650))
-    return {
-        'resource': str(raw.get('resource') or '').strip(),
-        'error_keyword': str(raw.get('error_keyword') or '').strip(),
-        'order': order,
-        'limit': limit,
-        'older_than_hours': older_than_hours,
-    }
-
-
-def _webhook_cleanup_old_where(params):
-    params = _webhook_cleanup_old_params(params)
-    clauses = ["status IN ('failed', 'ignored', 'retry_pending', 'cleaned')"]
-    values = []
-    if params['resource']:
-        clauses.append('resource = ?')
-        values.append(params['resource'])
-    if params['error_keyword']:
-        clauses.append('LOWER(COALESCE(error, "")) LIKE ?')
-        values.append(f"%{params['error_keyword'].lower()}%")
-    else:
-        clauses.append('''(
-            status IN ('ignored', 'retry_pending')
-            OR resource = 'test_address'
-            OR LOWER(COALESCE(error, '')) LIKE '%account not configured%'
-            OR LOWER(COALESCE(error, '')) LIKE '%recorded only%'
-            OR LOWER(COALESCE(error, '')) LIKE '%unsupported resource%'
-            OR LOWER(COALESCE(error, '')) LIKE '%no-match%'
-            OR LOWER(COALESCE(error, '')) LIKE '%recovered for retry%'
-            OR LOWER(COALESCE(error, '')) LIKE '%historical account mapping%'
-            OR LOWER(COALESCE(error, '')) LIKE '%daily full compare%'
-        )''')
-    if params['older_than_hours'] > 0:
-        cutoff = (datetime.now() - timedelta(hours=params['older_than_hours'])).strftime('%Y-%m-%d %H:%M:%S')
-        clauses.append("COALESCE(NULLIF(processed_at, ''), NULLIF(created_at, ''), '1970-01-01 00:00:00') < ?")
-        values.append(cutoff)
-    return ' AND '.join(clauses), values, params
-
-
-def _webhook_cleanup_old_snapshot(conn, raw):
-    where, values, params = _webhook_cleanup_old_where(raw)
-    direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
-    rows = conn.execute(f'''
-        SELECT id, account, biz_type, resource, bill_no, action, status, attempts, error, created_at, processed_at
-        FROM webhook_events
-        WHERE {where}
-        ORDER BY id {direction}
-        LIMIT ?
-    ''', values + [params['limit']]).fetchall()
-    items = [dict(row) for row in rows]
-    ids = [int(row['id']) for row in items]
-
-    def summarize(field, max_rows=30):
-        if not ids:
-            return []
-        marks = ','.join('?' for _ in ids)
-        return [dict(row) for row in conn.execute(f'''
-            SELECT COALESCE({field}, '') AS value, COUNT(*) AS count
-            FROM webhook_events
-            WHERE id IN ({marks})
-            GROUP BY {field}
-            ORDER BY count DESC, value
-            LIMIT ?
-        ''', ids + [max_rows]).fetchall()]
-
-    return {
-        'params': params,
-        'count': len(items),
-        'items': items,
-        'ids': ids,
-        'sample_ids': ids[:50],
-        'by_status': summarize('status'),
-        'by_resource': summarize('resource'),
-        'by_error': summarize('error', max_rows=20),
-        'will_backup': True,
-        'will_not_clean': ['pending', 'processing', 'done'],
-        'will_not_call_jdy': True,
-        'will_not_start_worker': True,
-        'cleanup_action': 'rows will be physically deleted after sqlite backup; business cache tables are not touched',
-    }
-
-
-@app.route('/jdy-webhook/cleanup-old-dry-run', methods=['POST'])
-def jdy_webhook_cleanup_old_dry_run():
-    try:
-        data = request.get_json(silent=True) or {}
-        conn = _sales_readonly_conn()
-        if conn is None:
-            return jsonify({
-                'success': True,
-                'dry_run': True,
-                'count': 0,
-                'items': [],
-                'sample_ids': [],
-                'by_status': [],
-                'by_resource': [],
-                'by_error': [],
-                'will_backup': False,
-                'message': 'sales cache database does not exist; no cleanup needed',
-            })
-        try:
-            snapshot = _webhook_cleanup_old_snapshot(conn, data)
-        finally:
-            conn.close()
-        snapshot.update({
-            'success': True,
-            'dry_run': True,
-            'message': 'dry run only; webhook_events was not changed',
-        })
-        return jsonify(snapshot)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/jdy-webhook/cleanup-old', methods=['POST'])
-def jdy_webhook_cleanup_old():
-    try:
-        data = request.get_json(silent=True) or {}
-        if str(data.get('confirm') or '') != 'CLEANUP_OLD_WEBHOOK':
-            return jsonify({'success': False, 'error': 'missing confirm CLEANUP_OLD_WEBHOOK; cleanup was not executed'}), 400
-        backup_path = _backup_sales_cache_db('before_webhook_cleanup')
-        if not backup_path or not os.path.exists(backup_path):
-            return jsonify({'success': False, 'error': 'sqlite backup failed; cleanup aborted to protect data'}), 500
-        with _sales_cache_conn() as conn:
-            snapshot = _webhook_cleanup_old_snapshot(conn, data)
-            matched_ids = [int(x) for x in snapshot.get('ids') or []]
-            matched_before_delete = len(matched_ids)
-            if matched_ids:
-                marks = ','.join('?' for _ in matched_ids)
-                conn.execute(f'''
-                    DELETE FROM webhook_events
-                    WHERE id IN ({marks})
-                      AND status IN ('failed', 'ignored', 'retry_pending', 'cleaned')
-                ''', matched_ids)
-                conn.commit()
-            counts_after = {}
-            for s in ('pending', 'processing', 'failed', 'ignored', 'retry_pending', 'cleaned', 'done'):
-                counts_after[s] = conn.execute(
-                    'SELECT COUNT(*) FROM webhook_events WHERE status = ?', (s,)
-                ).fetchone()[0]
-        _webhook_state.update({
-            'pending': _webhook_pending_count(),
-            'retry_pending': _webhook_pending_count('retry'),
-            'message': f'deleted {matched_before_delete} old webhook event(s); worker was not started',
-        })
-        return jsonify({
-            'success': True,
-            'dry_run': False,
-            'deleted': matched_before_delete,
-            'matched_before_delete': matched_before_delete,
-            'backup_path': backup_path,
-            'by_status': snapshot.get('by_status') or [],
-            'by_resource': snapshot.get('by_resource') or [],
-            'by_error': snapshot.get('by_error') or [],
-            'sample_ids': snapshot.get('sample_ids') or [],
-            'counts_after': counts_after,
-            'message': 'old webhook noise deleted after sqlite backup; JDY was not called and worker was not started',
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 def _webhook_reclassify_retry_rows(conn, params):
     params = _webhook_failure_params(params)
     direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
@@ -11023,16 +10962,18 @@ def accessory_products_sync_status():
 def accessory_products_sync_run():
     try:
         wait = str(request.args.get('wait') or '').lower() in ('1', 'true', 'yes', 'y')
-        account = request.args.get('account') or 'all'
         if wait:
-            result = _run_accessory_product_sync(reason='manual', account=account)
+            result = _run_accessory_product_sync(reason='manual')
             return jsonify({'success': True, 'started': True, 'result': result, 'state': _accessory_product_sync_state})
-        threading.Thread(
+        if _accessory_product_sync_lock.locked() or _accessory_product_sync_state.get('running'):
+            return jsonify({'success': True, 'started': False, 'running': True, 'state': _accessory_product_sync_state})
+        t = threading.Thread(
             target=_run_accessory_product_sync,
-            kwargs={'reason': 'manual', 'account': account},
+            kwargs={'reason': 'manual'},
             daemon=True,
             name='accessory-product-sync-manual',
-        ).start()
+        )
+        t.start()
         return jsonify({'success': True, 'started': True, 'running': True, 'state': _accessory_product_sync_state})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e), 'state': _accessory_product_sync_state}), 500
@@ -11042,10 +10983,12 @@ def accessory_products_sync_run():
 def accessory_orders_sync_status():
     return jsonify({
         'success': True,
+        'config': _sales_sync_config(),
         'state': _accessory_sync_state,
         'stats': _accessory_purchase_cache_stats(),
         'supplier_stats': _supplier_cache_stats(),
     })
+
 
 @app.route('/accessory-orders-sync-run', methods=['POST'])
 def accessory_orders_sync_run():
