@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>报关助手 — 精斗云工作台</title>
+<title>QH</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -28,20 +28,82 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
-.topbar h1 { font-size: 15px; font-weight: 600; margin-right: auto; }
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 86px;
+  margin-right: 8px;
+}
+.brand-title {
+  font-size: 17px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0;
+}
 .topbar-user {
   display: none;
+  position: relative;
   align-items: center;
-  gap: 8px;
-  max-width: 220px;
-  min-width: 0;
-  color: rgba(255,255,255,.88);
+  justify-content: center;
+  min-width: 72px;
+  max-width: 104px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 6px;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.92);
   font-size: 12px;
-  white-space: nowrap;
+  cursor: pointer;
+  flex: 0 0 auto;
 }
 .topbar-user-name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 86px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.topbar-user-role {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 86px;
+  color: rgba(255,255,255,.72);
+  font-size: 11px;
+  line-height: 1.1;
+}
+.user-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 80;
+  min-width: 132px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.topbar-user.open .user-menu { display: block; }
+.user-menu a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: #1a2c5b;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.user-menu a:hover { background: #eef3ff; }
+.user-menu-note {
+  padding: 6px 10px 2px;
+  color: #8b95a1;
+  font-size: 11px;
+  white-space: nowrap;
 }
 .logout-link {
   display: inline-flex;
@@ -83,6 +145,46 @@ body {
   display: none;
 }
 .tab-btn.has-pending .nav-dot { display: block; }
+.primary-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.secondary-nav {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 16px;
+  border-bottom: 1px solid #dce5ef;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  flex-shrink: 0;
+}
+.secondary-nav.active { display: flex; }
+.secondary-label {
+  color: #5f6e7d;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.subtab-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #cfd9e6;
+  border-radius: 999px;
+  background: #fff;
+  color: #1a2c5b;
+  cursor: pointer;
+  font-size: 13px;
+}
+.subtab-btn:hover { background: #f3f7fb; }
+.subtab-btn.active {
+  border-color: #1a2c5b;
+  background: #1a2c5b;
+  color: #fff;
+  font-weight: 700;
+}
 .summary-filter-line {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1146,44 +1248,53 @@ td.code { font-family: monospace; color: #1a2c5b; }
   }
   .topbar {
     height: auto;
-    min-height: 54px;
-    padding: 0;
-    gap: 0;
+    min-height: 48px;
+    padding: 0 8px;
+    gap: 4px;
     overflow-x: auto;
-    align-items: stretch;
-  }
-  .topbar h1 {
-    min-width: 128px;
-    padding: 8px 10px;
-    font-size: 14px;
-    line-height: 1.25;
-    white-space: normal;
-  }
-  .conn-indicator {
-    min-width: 74px;
-    border-radius: 0;
-    align-self: stretch;
-    display: flex;
     align-items: center;
-    justify-content: center;
+  }
+  .brand-block {
+    min-width: 62px;
+    margin-right: 2px;
+  }
+  .brand-title {
+    font-size: 18px;
+  }
+  .brand-block .conn-indicator {
+    min-width: 0;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
   }
   .topbar-user {
-    min-width: 104px;
-    max-width: 150px;
-    padding: 0 8px;
-    align-self: stretch;
-    justify-content: center;
+    min-width: 66px;
+    max-width: 82px;
+    padding: 4px 6px;
     border-left: 1px solid rgba(255,255,255,.12);
   }
-  .topbar-user-name {
+  .topbar-user-name,
+  .topbar-user-role {
+    max-width: 68px;
+  }
+  .primary-nav {
+    margin-left: 0;
+    flex: 1 0 auto;
+    gap: 2px;
+  }
+  .secondary-nav {
+    min-height: 40px;
+    padding: 6px 8px;
+    overflow-x: auto;
+    gap: 6px;
+  }
+  .secondary-label {
     display: none;
   }
-  .logout-link {
-    height: 100%;
-    padding: 0 8px;
-    border-radius: 0;
-    border-top: 0;
-    border-bottom: 0;
+  .subtab-btn {
+    height: 28px;
+    padding: 0 10px;
+    white-space: nowrap;
   }
   .tab-btn {
     min-width: 58px;
@@ -1358,20 +1469,38 @@ td.code { font-family: monospace; color: #1a2c5b; }
 
 <!-- 顶部导航 -->
 <div class="topbar">
-  <h1>📦 报关助手 — 精斗云工作台</h1>
-  <div id="conn-badge" class="conn-indicator conn-none">● 未连接</div>
-  <div id="topbar-user" class="topbar-user" title="">
-    <span id="topbar-user-name" class="topbar-user-name"></span>
-    <a class="logout-link" href="/logout">退出</a>
+  <div class="brand-block">
+    <div class="brand-title">QH</div>
+    <div id="conn-badge" class="conn-indicator conn-none">● 未连接</div>
   </div>
-  <button class="tab-btn active" onclick="showPage('sales-list')">销货单</button>
-  <button class="tab-btn" onclick="showPage('sales-summary')">销售汇总</button>
-  <button class="tab-btn" onclick="showPage('accessory-list')">辅料</button>
-  <button class="tab-btn" onclick="showPage('reorder-list')">返单</button>
-  <button class="tab-btn" onclick="showPage('order-list')">调拨单</button>
-  <button class="tab-btn" onclick="showPage('purchase-list')">购货单</button>
-  <button class="tab-btn" onclick="showPage('fill-page')">补全工具</button>
-  <button class="tab-btn" id="settings-tab-btn" data-admin-only="1" onclick="showPage('settings')">设置<span class="nav-dot"></span></button>
+  <div class="primary-nav">
+    <button class="tab-btn active" data-main-nav="sales" onclick="showMainPage('sales')">销售</button>
+    <button class="tab-btn" data-main-nav="accessory" onclick="showPage('accessory-list')">辅料</button>
+    <button class="tab-btn" data-main-nav="customs" onclick="showMainPage('customs')">报关</button>
+    <button class="tab-btn" id="settings-tab-btn" data-main-nav="settings" data-admin-only="1" onclick="showPage('settings')">设置<span class="nav-dot"></span></button>
+  </div>
+  <div id="topbar-user" class="topbar-user" title="" onclick="toggleUserMenu(event)">
+    <div>
+      <span id="topbar-user-name" class="topbar-user-name"></span>
+      <span id="topbar-user-role" class="topbar-user-role"></span>
+    </div>
+    <div id="topbar-user-menu" class="user-menu">
+      <a href="/logout">退出</a>
+      <a href="/logout">退出后切换用户</a>
+    </div>
+  </div>
+</div>
+<div class="secondary-nav active" data-subnav="sales">
+  <span class="secondary-label">销售</span>
+  <button class="subtab-btn active" data-sub-page="sales-list" onclick="showPage('sales-list')">销售单</button>
+  <button class="subtab-btn" data-sub-page="sales-summary" onclick="showPage('sales-summary')">销售汇总</button>
+  <button class="subtab-btn" data-sub-page="reorder-list" onclick="showPage('reorder-list')">返单</button>
+</div>
+<div class="secondary-nav" data-subnav="customs">
+  <span class="secondary-label">报关</span>
+  <button class="subtab-btn" data-sub-page="order-list" onclick="showPage('order-list')">调拨/报关单</button>
+  <button class="subtab-btn" data-sub-page="purchase-list" onclick="showPage('purchase-list')">购货辅助</button>
+  <button class="subtab-btn" data-sub-page="fill-page" onclick="showPage('fill-page')">资料补全</button>
 </div>
 
 <!-- ══════════════════════════════════════════════════
@@ -2523,21 +2652,68 @@ async function loadCurrentUser() {
 function renderCurrentUser() {
   const wrap = document.getElementById('topbar-user');
   const nameEl = document.getElementById('topbar-user-name');
-  if (!wrap || !nameEl) return;
+  const roleEl = document.getElementById('topbar-user-role');
+  if (!wrap || !nameEl || !roleEl) return;
   if (!currentUser) {
     wrap.style.display = 'none';
     nameEl.textContent = '';
+    roleEl.textContent = '';
     wrap.title = '';
     return;
   }
   const name = currentUser.name || currentUser.username || '';
   const username = currentUser.username || '';
-  const label = name && username && name !== username
-    ? `当前用户：${name} ${username}`
-    : `当前用户：${username || name}`;
-  nameEl.textContent = label;
-  wrap.title = label;
+  const roleLabel = currentUser.is_admin ? '管理员' : (name && name !== username ? name : (currentUser.role || '用户'));
+  nameEl.textContent = username || name || '用户';
+  roleEl.textContent = roleLabel;
+  wrap.title = `${username || name || '用户'} / ${roleLabel}`;
   wrap.style.display = 'inline-flex';
+}
+
+function toggleUserMenu(event) {
+  event.stopPropagation();
+  const wrap = document.getElementById('topbar-user');
+  if (wrap) wrap.classList.toggle('open');
+}
+
+document.addEventListener('click', () => {
+  const wrap = document.getElementById('topbar-user');
+  if (wrap) wrap.classList.remove('open');
+});
+
+const PAGE_MAIN_GROUP = {
+  'sales-list': 'sales',
+  'sales-summary': 'sales',
+  'reorder-list': 'sales',
+  'accessory-list': 'accessory',
+  'accessory-product-search': 'accessory',
+  'order-list': 'customs',
+  'purchase-list': 'customs',
+  'fill-page': 'customs',
+  'settings': 'settings',
+};
+const MAIN_DEFAULT_PAGE = {
+  sales: 'sales-list',
+  accessory: 'accessory-list',
+  customs: 'order-list',
+  settings: 'settings',
+};
+
+function showMainPage(group) {
+  showPage(MAIN_DEFAULT_PAGE[group] || 'sales-list');
+}
+
+function updateNavigationState(name) {
+  const group = PAGE_MAIN_GROUP[name] || 'sales';
+  document.querySelectorAll('[data-main-nav]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mainNav === group);
+  });
+  document.querySelectorAll('[data-subnav]').forEach(nav => {
+    nav.classList.toggle('active', nav.dataset.subnav === group);
+  });
+  document.querySelectorAll('[data-sub-page]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.subPage === name);
+  });
 }
 
 // ── 页面切换 ─────────────────────────────────────────────────────
@@ -2547,10 +2723,12 @@ function showPage(name) {
     name = 'sales-list';
   }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const page = document.getElementById('page-' + name);
+  if (!page) {
+    name = 'sales-list';
+  }
   document.getElementById('page-' + name).classList.add('active');
-  const map = {'sales-list':0,'sales-summary':1,'accessory-list':2,'accessory-product-search':2,'reorder-list':3,'order-list':4,'purchase-list':5,'fill-page':6,'settings':7};
-  document.querySelectorAll('.tab-btn')[map[name]]?.classList.add('active');
+  updateNavigationState(name);
   if (name === 'settings') loadSettings();
   if (name === 'purchase-list' && !window._poRawList.length) setPODateRange(30);
   if (name === 'reorder-list' && !window._reorderSuppliersLoaded) loadReorderSuppliers();
