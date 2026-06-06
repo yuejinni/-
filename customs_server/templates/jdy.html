@@ -6466,200 +6466,88 @@ async function resolveRecordedOnly(dryRun) {
 }
 
 async function loadWebhookStatus() {
-  const endpointEl = document.getElementById('webhook-endpoint-status');
-  const countsEl = document.getElementById('webhook-status-counts');
-  const rateEl = document.getElementById('webhook-rate-status');
-  const notesEl = document.getElementById('webhook-notes');
-  const resourcesEl = document.getElementById('webhook-resource-summary');
-  const duplicateEl = document.getElementById('webhook-duplicate-summary');
   const bodyEl = document.getElementById('webhook-events-body');
   const modeEl = document.getElementById('webhook-processing-mode');
   const modeHelpEl = document.getElementById('webhook-mode-help');
-  const manualPanel = document.getElementById('webhook-manual-panel');
-  const autoPanel = document.getElementById('webhook-auto-panel');
-  if (endpointEl) endpointEl.textContent = '读取中...';
+  const notesEl = document.getElementById('webhook-notes');
+
+  const setCard = (id, text, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (color) el.style.color = color;
+  };
+
+  if (modeEl) modeEl.textContent = '读取中...';
+
   try {
     const res = await fetch(`${API}/jdy-webhook/status?limit=20`);
     const data = await res.json();
-    if (!data.success) throw new Error(data.error || '读取失败');
-    const endpoint = data.endpoint || {};
-    if (endpointEl) {
-      endpointEl.innerHTML = `${endpoint.local_ready ? '✓' : '×'} ${webhookHtml(endpoint.path || '/jdy-webhook')} 可访问；线上地址：${webhookHtml(endpoint.remote_url || 'http://gongdashuai.top:5008/jdy-webhook')}`;
-      endpointEl.style.color = endpoint.local_ready ? '#18a058' : '#d93025';
-    }
+    if (!data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
     const counts = data.counts || {};
-    if (countsEl) {
-      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed', 'ignored', 'cleaned'].map(key => `
-        <div class="webhook-stat">
-          <span class="tip">${webhookHtml(translateWebhookStatus(key))}</span>
-          <b>${Number(counts[key] || 0)}</b>
-        </div>
-      `).join('');
-    }
-    const processingMode = data.processing_mode || data.state?.processing_mode || 'manual';
-    if (modeEl) {
-      modeEl.textContent = `处理模式：${translateWebhookMode(processingMode)}`;
-    }
-    if (modeHelpEl) {
-      if (processingMode === 'auto') {
-        modeHelpEl.textContent = '自动模式会按限速处理 pending，遇到频率限制会自动降速保护。';
-      } else if (processingMode === 'paused') {
-        modeHelpEl.textContent = '暂停模式只接收并排队 webhook，不处理 pending。';
-      } else {
-        modeHelpEl.textContent = '手动模式下不会自动处理 pending，需要管理员手动执行。';
-      }
-    }
-    if (manualPanel) {
-      manualPanel.style.background = processingMode === 'manual' ? '#f5fbff' : '';
-    }
-    if (autoPanel) {
-      autoPanel.style.background = processingMode === 'auto' ? '#fff7e6' : '';
-    }
-    const policy = data.current_rate_policy || {};
-    const estimate = data.backlog_estimate || {};
-    if (rateEl) {
-      const stale = Number(data.stale_processing || 0);
-      const mode = webhookHtml(translateWebhookMode(policy.mode || processingMode || 'normal'));
-      const reason = webhookHtml(translateWebhookReason(policy.reason || ''));
-      const rate = Number(policy.current_rate_per_min || 0);
-      const etaNormal = Number(estimate.eta_minutes_normal || 0);
-      const etaBoost = Number(estimate.eta_minutes_boost || 0);
-      const workerAlive = !!data.worker_alive;
-      const autoShouldRun = !!data.auto_should_be_running;
-      const recoveryAction = data.auto_recovery_action || '';
-      const workerLastLoop = data.worker_last_loop_at || data.worker_last_heartbeat_at || '暂无';
-      const workerException = data.worker_last_exception || data.state?.last_error || '';
-      const consecutiveFailures = Number(data.state?.consecutive_failures || 0);
-      rateEl.innerHTML = `
-        <div class="webhook-stat">
-          <span class="tip">卡住的处理中</span>
-          <b>${stale}</b>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">当前模式</span>
-          <b style="font-size:18px;">${mode}</b>
-          <span class="tip">${reason}</span>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">当前速度</span>
-          <b>${webhookHtml(translateWebhookRate(rate))}</b>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">预计耗时 常规/加速</span>
-          <b style="font-size:18px;">${etaNormal} / ${etaBoost} 分</b>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">Worker 状态</span>
-          <b style="color:${workerAlive ? '#18a058' : '#d93025'};">${workerAlive ? '存活' : '未运行'}</b>
-          <span class="tip">${autoShouldRun ? '自动模式应运行' : '当前无需自动运行'}</span>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">Worker 心跳</span>
-          <b style="font-size:14px;">${webhookHtml(workerLastLoop)}</b>
-          <span class="tip">${recoveryAction ? webhookHtml(recoveryAction) : '无自恢复动作'}</span>
-        </div>
-        <div class="webhook-stat">
-          <span class="tip">连续失败</span>
-          <b>${consecutiveFailures}</b>
-          <span class="tip">${workerException ? webhookHtml(workerException) : '暂无异常'}</span>
-        </div>
-      `;
-    }
-    const notes = data.notes || [];
-    if (notesEl) {
-      notesEl.innerHTML = notes.length
-        ? notes.map(x => `• ${webhookHtml(x)}`).join('<br>')
-        : '暂无提示';
-    }
-    const resources = data.resource_summary || [];
-    if (resourcesEl) {
-      resourcesEl.innerHTML = resources.length
-        ? `类型汇总：${resources.map(r => `${webhookHtml(translateWebhookResource(r.resource || 'unknown'))} 共 ${Number(r.total || 0)}，正常待处理 ${Number(r.pending || 0)}，重试待处理 ${Number(r.retry_pending || 0)}，处理中 ${Number(r.processing || 0)}，已完成 ${Number(r.done || 0)}，失败 ${Number(r.failed || 0)}`).join('；')}`
-        : '类型汇总：暂无事件';
-    }
-    const duplicates = data.duplicate_summary || [];
-    const retryDuplicates = data.retry_duplicate_summary || [];
-    if (duplicateEl) {
-      const normalText = duplicates.length
-        ? `正常重复待处理 Top：${duplicates.map(row => {
-            const idsRaw = row.ids || [];
-            const ids = (Array.isArray(idsRaw) ? idsRaw : String(idsRaw).split(',')).slice(0, 8).join(',');
-            return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
-          }).join('；')}`
-        : '正常重复待处理：暂无';
-      const retryText = retryDuplicates.length
-        ? `重试重复待处理 Top：${retryDuplicates.map(row => {
-            const idsRaw = row.ids || [];
-            const ids = (Array.isArray(idsRaw) ? idsRaw : String(idsRaw).split(',')).slice(0, 8).join(',');
-            return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.retry_pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
-          }).join('；')}`
-        : '重试重复待处理：暂无';
-      duplicateEl.innerHTML = `${normalText}<br>${retryText}`;
-    }
-    const recent = data.recent || [];
-    if (bodyEl) {
-      bodyEl.innerHTML = recent.length ? recent.map(row => {
-        const cls = webhookStatusClass(row.status || '');
-        return `
-          <tr>
-            <td>${Number(row.id || 0)}</td>
-            <td>${webhookHtml(translateWebhookResource(row.resource || 'unknown'))}</td>
-            <td>${webhookHtml(row.bill_no || '')}</td>
-            <td class="${cls}">${webhookHtml(translateWebhookStatus(row.status || ''))}</td>
-            <td>${Number(row.attempts || 0)}</td>
-            <td class="webhook-error">${webhookHtml(translateWebhookError(row.error || ''))}</td>
-            <td>${webhookHtml(row.created_at || '')}</td>
-            <td>${webhookHtml(row.processed_at || '')}</td>
-          </tr>
-        `;
-      }).join('') : '<tr><td colspan="8" class="tip">暂无 Webhook 事件</td></tr>';
-    }
-    const todayPrefix = new Date().toISOString().slice(0, 10);
-    const todayDone = recent.filter(row => String(row.processed_at || row.created_at || '').startsWith(todayPrefix) && row.status === 'done').length;
-    const todayFailed = recent.filter(row => String(row.processed_at || row.created_at || '').startsWith(todayPrefix) && row.status === 'failed').length;
+    const processingMode = data.processing_mode || (data.state || {}).processing_mode || 'manual';
     const pendingTotal = Number(data.pending_count || counts.pending || 0);
     const processingTotal = Number(counts.processing || 0);
-    const workerText = data.worker_alive ? '存活' : '未运行';
-    const heartbeatText = data.worker_last_loop_at || data.worker_last_heartbeat_at || '暂无';
-    const lastErr = data.worker_last_exception || data.state?.last_error || '暂无错误';
-    const modeCard = document.getElementById('webhook-card-mode');
-    const pendingCard = document.getElementById('webhook-card-pending');
-    const doneCard = document.getElementById('webhook-card-done');
-    const failedCard = document.getElementById('webhook-card-failed');
-    const workerCard = document.getElementById('webhook-card-worker');
-    const heartbeatCard = document.getElementById('webhook-card-heartbeat');
-    if (modeCard) modeCard.textContent = translateWebhookMode(processingMode);
-    if (pendingCard) pendingCard.textContent = `${pendingTotal} / ${processingTotal}`;
-    if (doneCard) doneCard.textContent = `${Number(counts.done || 0)}`;
-    if (failedCard) {
-      const fCount = Number(counts.failed || 0);
-      failedCard.textContent = fCount;
-      failedCard.style.color = fCount === 0 ? '#18a058' : '#d93025';
+    const doneTotal = Number(counts.done || 0);
+    const failedTotal = Number(counts.failed || 0);
+    const workerAlive = !!data.worker_alive;
+    const heartbeatText = data.worker_last_loop_at || data.worker_last_heartbeat_at || '—';
+    const lastErr = data.worker_last_exception || (data.state || {}).last_error || '无';
+
+    setCard('webhook-card-mode', translateWebhookMode(processingMode));
+    setCard('webhook-card-worker', workerAlive ? '运行中' : '未运行');
+    setCard('webhook-card-pending', pendingTotal + ' / ' + processingTotal);
+    setCard('webhook-card-done', String(doneTotal));
+    setCard('webhook-card-failed', String(failedTotal), failedTotal === 0 ? '#18a058' : '#d93025');
+    setCard('webhook-card-heartbeat', heartbeatText + ' / ' + lastErr);
+
+    if (modeEl) modeEl.textContent = translateWebhookMode(processingMode);
+    if (modeHelpEl) {
+      if (processingMode === 'auto') modeHelpEl.textContent = '自动处理 pending，遇频率限制自动降速。';
+      else if (processingMode === 'paused') modeHelpEl.textContent = '只接收并排队，不处理 pending。';
+      else modeHelpEl.textContent = '需管理员手动执行处理。';
     }
-    if (workerCard) workerCard.textContent = workerText;
-    if (heartbeatCard) heartbeatCard.textContent = `${heartbeatText} / ${lastErr}`;
-    // update legacy elements if they still exist
-    const endpointCard = document.getElementById('webhook-card-endpoint');
-    const todayCard = document.getElementById('webhook-card-today');
-    const dailyCard = document.getElementById('webhook-card-daily');
-    if (endpointCard) endpointCard.textContent = endpoint.local_ready ? 'ready' : '异常';
-    if (todayCard) todayCard.textContent = `完成 ${todayDone} / 失败 ${todayFailed}`;
-    if (dailyCard) dailyCard.textContent = dailyTime;
-    const endpointEl = document.getElementById('webhook-endpoint-status');
-    if (endpointEl) {
-      endpointEl.innerHTML = `${endpoint.local_ready ? '✓' : '×'} ${webhookHtml(endpoint.path || '/jdy-webhook')}`;
-      endpointEl.style.color = endpoint.local_ready ? '#18a058' : '#d93025';
+
+    if (notesEl) {
+      const parts = [];
+      if (workerAlive) parts.push('Worker 存活');
+      else parts.push('Worker 未运行');
+      if (data.auto_should_be_running) parts.push('应自动运行');
+      if (lastErr && lastErr !== '无') parts.push('最近错误：' + lastErr);
+      const extraNotes = (data.notes || []).slice(0, 3);
+      notesEl.innerHTML = (parts.length ? parts.join(' · ') + (extraNotes.length ? '<br>' : '') : '') +
+        extraNotes.map(x => '• ' + webhookHtml(x)).join('<br>') || '暂无提示';
     }
-    appendSettingsLog(`刷新 Webhook 状态：pending ${pendingTotal}，failed ${Number(counts.failed || 0)}`);
-    await loadWebhookFailures();
+
+    const recent = data.recent || [];
+    if (bodyEl) {
+      if (recent.length) {
+        bodyEl.innerHTML = recent.map(row => {
+          const cls = webhookStatusClass(row.status || '');
+          return '<tr>' +
+            '<td>' + Number(row.id || 0) + '</td>' +
+            '<td>' + webhookHtml(translateWebhookResource(row.resource || 'unknown')) + '</td>' +
+            '<td>' + webhookHtml(row.bill_no || '') + '</td>' +
+            '<td class="' + cls + '">' + webhookHtml(translateWebhookStatus(row.status || '')) + '</td>' +
+            '<td>' + Number(row.attempts || 0) + '</td>' +
+            '<td class="webhook-error">' + webhookHtml(translateWebhookError(row.error || '')) + '</td>' +
+            '<td>' + webhookHtml(row.created_at || '') + '</td>' +
+            '<td>' + webhookHtml(row.processed_at || '') + '</td>' +
+            '</tr>';
+        }).join('');
+      } else {
+        bodyEl.innerHTML = '<tr><td colspan="8" class="tip">暂无 Webhook 事件</td></tr>';
+      }
+    }
+
+    appendSettingsLog('Webhook 状态已刷新：pending ' + pendingTotal + '，failed ' + failedTotal);
+    try { await loadWebhookFailures(); } catch (_) {}
+
   } catch (e) {
-    const modeCard = document.getElementById('webhook-card-mode');
-    if (modeCard) {
-      modeCard.textContent = '加载失败';
-      modeCard.style.color = '#d93025';
-    }
-    if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="8" class="webhook-error">读取失败</td></tr>';
-    appendSettingsLog('刷新 Webhook 状态失败：' + e.message, 'error');
+    setCard('webhook-card-mode', '加载失败', '#d93025');
+    if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="8" class="webhook-error">读取失败：' + webhookHtml(e.message || String(e)) + '</td></tr>';
+    appendSettingsLog('Webhook 状态加载失败：' + (e.message || String(e)), 'error');
   }
 }
 
