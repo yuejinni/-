@@ -896,6 +896,49 @@ td.code { font-family: monospace; color: #1a2c5b; }
   border: 1px dashed #d5dee8;
   border-radius: 8px;
 }
+.attachment-diagnostics,
+.attachment-candidates {
+  border: 1px solid #e5edf5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfdff;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #566476;
+}
+.attachment-diagnostics ul,
+.attachment-candidates ul {
+  margin: 6px 0 0 18px;
+  padding: 0;
+}
+.attachment-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.attachment-status-row {
+  border: 1px solid #e5edf5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+.attachment-status-row span {
+  display: block;
+  color: #778391;
+  font-size: 12px;
+}
+.attachment-status-row b {
+  color: #17315f;
+}
+.attachment-status-row small {
+  display: block;
+  margin-top: 5px;
+  color: #8a96a3;
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-all;
+}
 .sales-product-card h4 {
   margin: 0 0 6px;
   font-size: 15px;
@@ -2522,6 +2565,21 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div class="settings-info-card"><span>旧流程来源</span><b>购货单 / 采购附件</b></div>
       <div class="settings-info-card"><span>新流程来源</span><b>采购订单附件</b></div>
     </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="loadAttachmentStatus()">刷新附件状态</button>
+      <span class="tip" id="attachment-status-tip">普通页面查看附件只读本地缓存，不会自动调用 JDY。</span>
+    </div>
+    <div class="attachment-status-grid" id="attachment-status-grid">
+      <div class="attachment-status-row"><span>统一附件表</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>旧购货附件表</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>购货单缓存</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>采购订单缓存</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>本地文件字段</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>附件下载能力</span><b>待读取</b></div>
+    </div>
+    <div class="settings-v2-note" style="margin-top:12px;">
+      附件补齐和下载将作为管理员手动低频任务另做；未确认官方附件接口前，不在普通页面自动联网或下载。
+    </div>
   </div>
       </section>
     </main>
@@ -4002,6 +4060,20 @@ function reorderAttachmentSourceLabel(source) {
   return '无法判断';
 }
 
+function reorderAttachmentConfidenceLabel(value) {
+  if (value === 'direct') return '直接来源';
+  if (value === 'candidate') return '候选来源';
+  return '无法判断';
+}
+
+function reorderAttachmentDownloadLabel(value) {
+  if (value === 'cached') return '已缓存本地文件';
+  if (value === 'not_cached') return '未缓存文件';
+  if (value === 'failed') return '下载失败';
+  if (value === 'pending') return '等待下载';
+  return value || '未缓存文件';
+}
+
 function closeReorderAttachmentModal() {
   document.getElementById('reorder-attachment-modal')?.classList.add('hidden');
 }
@@ -4011,6 +4083,8 @@ function renderReorderAttachmentModal(data) {
   if (!body) return;
   const item = data.item || {};
   const attachments = data.attachments || [];
+  const diagnostics = data.diagnostics || [];
+  const candidates = data.candidate_sources || [];
   const configBegin = data.config_factory_purchase_begin_date || '未设置';
   const configNew = data.config_factory_new_logic_begin_date || '未设置';
   const message = data.message || (attachments.length ? '已读取本地附件' : '主来源无附件或本地未缓存');
@@ -4021,20 +4095,43 @@ function renderReorderAttachmentModal(data) {
       <div class="attachment-item">
         <strong>${idx + 1}. ${salesAttr(att.name || '附件')}</strong>
         <span>来源：${salesAttr(reorderAttachmentSourceLabel(att.sourceType || att.source_type))} ${salesAttr(att.sourceNumber || att.source_number || '')} ${salesAttr(att.sourceDate || att.source_date || '')}</span>
-        <span>缓存：${att.cached ? '已缓存' : '未缓存'}${att.downloadError || att.download_error ? `；错误：${salesAttr(att.downloadError || att.download_error)}` : ''}</span>
-        <span>链接：${preview ? '有' : '无'}</span>
+        <span>URL：${att.url ? salesAttr(att.url) : '无'}</span>
+        <span>本地文件：${att.localPath || att.local_path ? salesAttr(att.localPath || att.local_path) : '无'}</span>
+        <span>下载状态：${salesAttr(reorderAttachmentDownloadLabel(att.downloadStatus || att.download_status))}${att.downloadError || att.download_error ? `；错误：${salesAttr(att.downloadError || att.download_error)}` : ''}</span>
         ${canPreview ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openSalesImageViewer('${salesJs(preview)}')">查看大图</button>` : ''}
       </div>
     `;
   }).join('') : `<div class="attachment-empty">${salesAttr(message)}</div>`;
+  const candidateHtml = candidates.length ? `
+    <div class="attachment-candidates">
+      <b>候选附件来源</b>
+      <ul>
+        ${candidates.map(row => `
+          <li>${salesAttr(reorderAttachmentSourceLabel(row.source_type))} ${salesAttr(row.source_number || '—')} ${salesAttr(row.source_date || '')}
+            <span style="color:#8a96a3;">(${salesAttr(row.reason || '')})</span>
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+  ` : '';
+  const diagnosticsHtml = diagnostics.length ? `
+    <div class="attachment-diagnostics">
+      <b>诊断说明</b>
+      <ul>${diagnostics.map(text => `<li>${salesAttr(text)}</li>`).join('')}</ul>
+    </div>
+  ` : '';
   body.innerHTML = `
     <div class="attachment-meta-grid">
       <div>商品编号：<b>${salesAttr(item.code || '—')}</b></div>
       <div>商品名称：<b>${salesAttr(item.name || '—')}</b></div>
+      <div>供应商：<b>${salesAttr(item.supplier_name || item.supplierName || item.supplier_number || item.supplierNumber || '—')}</b></div>
+      <div>来源类型：<b>${salesAttr(item.source_type || item.sourceType || '—')}</b></div>
       <div>返单来源单号：<b>${salesAttr(item.source_number || '—')}</b></div>
       <div>返单来源日期：<b>${salesAttr(item.source_date || '—')}</b></div>
       <div>附件切换日期：<b>${salesAttr(data.attachment_switch_date || '2026-05-28')}</b></div>
       <div>优先附件来源：<b>${salesAttr(reorderAttachmentSourceLabel(data.preferred_source))}</b></div>
+      <div>来源可信度：<b>${salesAttr(reorderAttachmentConfidenceLabel(data.source_confidence))}</b></div>
+      <div>联网查询：<b>${data.live_lookup ? '是' : '否，本地只读'}</b></div>
       <div>当前配置日期1：<b>${salesAttr(configBegin)}</b></div>
       <div>当前配置日期2：<b>${salesAttr(configNew)}</b></div>
     </div>
@@ -4043,8 +4140,44 @@ function renderReorderAttachmentModal(data) {
       配置是否与本次附件规则一致：${data.config_matches_attachment_rule ? '一致' : '不一致'}<br>
       提示：${salesAttr(message)}
     </div>
+    ${candidateHtml}
+    ${diagnosticsHtml}
     <div class="attachment-list">${listHtml}</div>
   `;
+}
+
+async function loadAttachmentStatus() {
+  const grid = document.getElementById('attachment-status-grid');
+  const tip = document.getElementById('attachment-status-tip');
+  if (grid) {
+    grid.innerHTML = '<div class="attachment-status-row"><span>附件缓存状态</span><b>正在读取...</b></div>';
+  }
+  try {
+    const res = await fetch(`${API}/attachments/status`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '附件状态读取失败');
+    const tables = data.tables || {};
+    const row = (title, tableKey) => {
+      const info = tables[tableKey] || {};
+      return `<div class="attachment-status-row"><span>${salesAttr(title)}</span><b>${info.exists ? `${Number(info.count || 0)} 条` : '表不存在'}</b><small>${salesAttr((info.columns || []).join(', ') || '无字段')}</small></div>`;
+    };
+    if (grid) {
+      grid.innerHTML = `
+        ${row('统一附件表 bill_attachments', 'bill_attachments')}
+        ${row('旧购货附件表 purchase_inbound_attachments', 'purchase_inbound_attachments')}
+        ${row('购货单缓存 purchase_inbounds', 'purchase_inbounds')}
+        ${row('采购订单缓存 accessory_purchase_orders', 'accessory_purchase_orders')}
+        <div class="attachment-status-row"><span>本地文件字段</span><b>${data.download?.has_local_path_fields ? '已预留 local_path' : '未发现'}</b></div>
+        <div class="attachment-status-row"><span>附件下载能力</span><b>${data.download?.download_function_ready ? '已就绪' : '未启用'}</b></div>
+      `;
+    }
+    if (tip) tip.textContent = data.download?.message || '普通页面查看附件只读本地缓存，不会自动调用 JDY。';
+    appendSettingsLog('附件缓存状态已刷新');
+  } catch(e) {
+    if (grid) grid.innerHTML = `<div class="attachment-empty">附件状态读取失败：${salesAttr(e.message)}</div>`;
+    if (tip) tip.textContent = '附件状态读取失败';
+    appendSettingsLog(`附件状态读取失败：${e.message}`, 'error');
+  }
 }
 
 async function loadReorderItemAttachments(id, btn) {
@@ -6002,6 +6135,8 @@ function showSettingsPane(name) {
     loadWebhookStatus();
   } else if (target === 'suppliers') {
     loadSupplierCacheStatus();
+  } else if (target === 'attachments') {
+    loadAttachmentStatus();
   } else if (target === 'logs') {
     loadSystemLogs().catch(() => {});
   }

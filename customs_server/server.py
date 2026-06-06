@@ -4617,6 +4617,8 @@ def _reorder_supplier_from_live_purchase(cli, code):
 def _extract_purchase_attachments(obj):
     found = []
     seen = set()
+    attachment_key_markers = ('attach', 'attachment', 'annex', 'file')
+    image_only_key_markers = ('image', 'imageurl', 'pic', 'picture', 'photo', 'img')
 
     def add(item, hint=''):
         if not isinstance(item, dict):
@@ -4630,6 +4632,18 @@ def _extract_purchase_attachments(obj):
         fid = str(_first_value(item, [
             'id', 'fileId', 'attachmentId', 'uid', 'key'
         ], '') or '').strip()
+        hint_text = str(hint or '').lower()
+        raw_keys = ' '.join(str(k).lower() for k in item.keys())
+        looks_like_attachment = any(x in hint_text for x in attachment_key_markers) or any(
+            x in raw_keys for x in attachment_key_markers
+        )
+        looks_like_product_image = any(x in hint_text for x in image_only_key_markers) or any(
+            x in raw_keys for x in image_only_key_markers
+        )
+        if looks_like_product_image and not looks_like_attachment:
+            return
+        if not looks_like_attachment:
+            return
         if not (url or name or fid):
             return
         key = fid or url or name
@@ -4646,13 +4660,13 @@ def _extract_purchase_attachments(obj):
     def walk(value, key_hint=''):
         if isinstance(value, dict):
             lowered_keys = ' '.join(str(k).lower() for k in value.keys())
-            if any(x in lowered_keys for x in ('attach', 'file', 'image', 'pic', 'annex')):
+            if any(x in lowered_keys for x in attachment_key_markers):
                 add(value, key_hint)
             for k, v in value.items():
                 walk(v, str(k))
         elif isinstance(value, list):
             for item in value:
-                if any(x in str(key_hint).lower() for x in ('attach', 'file', 'image', 'pic', 'annex')):
+                if any(x in str(key_hint).lower() for x in attachment_key_markers):
                     add(item if isinstance(item, dict) else {}, key_hint)
                 walk(item, key_hint)
 
@@ -4665,6 +4679,34 @@ ATTACHMENT_SOURCE_RULE = (
     'source_date <= 2026-05-28 使用购货单附件；'
     'source_date > 2026-05-28 使用采购订单附件'
 )
+
+
+def _attachment_table_info(conn, table_name, include_count=True):
+    table_name = str(table_name or '').strip()
+    if not table_name:
+        return {'exists': False, 'count': 0, 'columns': []}
+    exists = bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone())
+    info = {'exists': exists, 'count': 0, 'columns': []}
+    if not exists:
+        return info
+    cols = conn.execute(f'PRAGMA table_info({table_name})').fetchall()
+    info['columns'] = [row['name'] if isinstance(row, sqlite3.Row) else row[1] for row in cols]
+    if include_count:
+        try:
+            info['count'] = int(conn.execute(f'SELECT COUNT(*) AS c FROM {table_name}').fetchone()['c'] or 0)
+        except Exception:
+            info['count'] = 0
+    return info
+
+
+def _attachment_has_table(conn, table_name):
+    return bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (str(table_name or '').strip(),),
+    ).fetchone())
 
 
 def _attachment_config_dates():
@@ -4854,6 +4896,128 @@ def _read_local_purchase_order_attachments(conn, account, source_number):
                 'purchase_order',
             ))
     return items
+
+
+def _attachment_source_confidence(item, preferred_source):
+    source_type = str(item.get('source_type') or item.get('sourceType') or '').strip().lower()
+    source_number = str(item.get('source_number') or item.get('sourceNumber') or '').strip()
+    if not source_number:
+        return 'unknown'
+    purchase_order_types = {'purchase_order', 'pur_bill_order', 'accessory_purchase', 'purchase_order_request'}
+    purchase_inbound_types = {'purchase_inbound', 'purchase', 'purchase_bill', 'old_purchase'}
+    if preferred_source == 'purchase_order' and source_type in purchase_order_types:
+        return 'direct'
+    if preferred_source == 'purchase_inbound' and source_type in purchase_inbound_types:
+        return 'direct'
+    return 'candidate'
+
+
+def _attachment_candidate_sources(conn, item, preferred_source):
+    account = str(item.get('account') or '').strip()
+    source_number = str(item.get('source_number') or item.get('sourceNumber') or '').strip()
+    source_date = str(item.get('source_date') or item.get('sourceDate') or '').strip()[:10]
+    source_type = str(item.get('source_type') or item.get('sourceType') or '').strip()
+    code = str(item.get('code') or '').strip()
+    supplier_number = str(item.get('supplier_number') or item.get('supplierNumber') or '').strip()
+    supplier_name = str(item.get('supplier_name') or item.get('supplierName') or '').strip()
+    candidates = []
+    seen = set()
+
+    def add_candidate(stype, number, date='', reason='', confidence='candidate', account_name=''):
+        number = str(number or '').strip()
+        if not number:
+            return
+        key = (stype, number, account_name or account or '')
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append({
+            'source_type': stype,
+            'source_number': number,
+            'source_date': str(date or '')[:10],
+            'account': account_name or account or '',
+            'reason': reason,
+            'confidence': confidence,
+        })
+
+    confidence = _attachment_source_confidence(item, preferred_source)
+    if source_number:
+        add_candidate(
+            preferred_source or source_type or 'unknown',
+            source_number,
+            source_date,
+            'direct source_number' if confidence == 'direct' else 'source_number may come from sales or summary; not guaranteed to be an attachment bill number',
+            confidence,
+            account,
+        )
+
+    try:
+        if preferred_source == 'purchase_order' and _attachment_has_table(conn, 'accessory_purchase_orders') and code:
+            clauses = ['data_json LIKE ?']
+            params = [f'%{code}%']
+            if account:
+                clauses.append('account = ?')
+                params.append(account)
+            if supplier_number:
+                clauses.append('(supplier_number = ? OR data_json LIKE ?)')
+                params.extend([supplier_number, f'%{supplier_number}%'])
+            elif supplier_name:
+                clauses.append('(supplier_name LIKE ? OR data_json LIKE ?)')
+                params.extend([f'%{supplier_name}%', f'%{supplier_name}%'])
+            rows = conn.execute(f'''
+                SELECT account, number, date, supplier_name, supplier_number
+                FROM accessory_purchase_orders
+                WHERE {' AND '.join(clauses)}
+                ORDER BY date DESC, updated_at DESC
+                LIMIT 5
+            ''', params).fetchall()
+            for row in rows:
+                add_candidate(
+                    'purchase_order',
+                    row['number'],
+                    row['date'],
+                    'matched by product code and supplier in local accessory purchase cache',
+                    'candidate',
+                    row['account'],
+                )
+        elif preferred_source == 'purchase_inbound' and _attachment_has_table(conn, 'purchase_inbounds') and code:
+            clauses = ['data_json LIKE ?']
+            params = [f'%{code}%']
+            if account:
+                clauses.append('account = ?')
+                params.append(account)
+            if supplier_number:
+                clauses.append('(supplier_number = ? OR data_json LIKE ?)')
+                params.extend([supplier_number, f'%{supplier_number}%'])
+            elif supplier_name:
+                clauses.append('(supplier_name LIKE ? OR data_json LIKE ?)')
+                params.extend([f'%{supplier_name}%', f'%{supplier_name}%'])
+            rows = conn.execute(f'''
+                SELECT account, number, date, supplier_name, supplier_number
+                FROM purchase_inbounds
+                WHERE {' AND '.join(clauses)}
+                ORDER BY date DESC, updated_at DESC
+                LIMIT 5
+            ''', params).fetchall()
+            for row in rows:
+                add_candidate(
+                    'purchase_inbound',
+                    row['number'],
+                    row['date'],
+                    'matched by product code and supplier in local purchase inbound cache',
+                    'candidate',
+                    row['account'],
+                )
+    except Exception as e:
+        candidates.append({
+            'source_type': preferred_source or '',
+            'source_number': '',
+            'source_date': '',
+            'account': account,
+            'reason': f'candidate lookup failed: {_short_sync_error(e)}',
+            'confidence': 'unknown',
+        })
+    return candidates
 
 
 def _cache_upsert_purchase_inbound(conn, account, order):
@@ -10716,7 +10880,32 @@ def reorder_item_update(item_id):
 def reorder_item_attachments(item_id):
     try:
         config_begin, config_new_logic = _attachment_config_dates()
-        with _sales_cache_conn() as conn:
+        conn = _sales_readonly_conn()
+        if not conn:
+            return jsonify({
+                'success': False,
+                'error': '本地销售缓存不存在',
+                'local_only': True,
+                'live_lookup': False,
+                'attachment_switch_date': ATTACHMENT_SWITCH_DATE,
+                'source_rule': ATTACHMENT_SOURCE_RULE,
+                'config_factory_purchase_begin_date': config_begin,
+                'config_factory_new_logic_begin_date': config_new_logic,
+                'config_matches_attachment_rule': _attachment_config_matches_rule(config_begin, config_new_logic),
+            }), 404
+        try:
+            if not _attachment_has_table(conn, 'reorder_items'):
+                return jsonify({
+                    'success': False,
+                    'error': '本地返单表不存在',
+                    'local_only': True,
+                    'live_lookup': False,
+                    'attachment_switch_date': ATTACHMENT_SWITCH_DATE,
+                    'source_rule': ATTACHMENT_SOURCE_RULE,
+                    'config_factory_purchase_begin_date': config_begin,
+                    'config_factory_new_logic_begin_date': config_new_logic,
+                    'config_matches_attachment_rule': _attachment_config_matches_rule(config_begin, config_new_logic),
+                }), 404
             row = conn.execute('SELECT * FROM reorder_items WHERE id = ?', (item_id,)).fetchone()
             if not row:
                 return jsonify({
@@ -10735,27 +10924,61 @@ def reorder_item_attachments(item_id):
             preferred_source = _attachment_preferred_source(source_date)
             attachments = []
             message = ''
+            diagnostics = []
+            candidate_sources = _attachment_candidate_sources(conn, item, preferred_source)
+            source_confidence = _attachment_source_confidence(item, preferred_source)
 
             if not source_date:
                 message = '返单来源日期为空，无法判断附件来源'
+                diagnostics.append(message)
+            elif not source_number:
+                message = '返单来源单号为空，无法直接匹配附件来源'
+                diagnostics.append(message)
             else:
-                attachments = _read_local_bill_attachments(conn, account, preferred_source, source_number)
+                if source_confidence != 'direct':
+                    diagnostics.append('source_number 可能来自销售单或销售汇总，不一定是采购单号或购货单号')
+                if _attachment_has_table(conn, 'bill_attachments'):
+                    attachments = _read_local_bill_attachments(conn, account, preferred_source, source_number)
+                else:
+                    diagnostics.append('bill_attachments 表不存在')
+                if attachments:
+                    diagnostics.append('已从 bill_attachments 命中本地统一附件缓存')
                 if not attachments and preferred_source == 'purchase_inbound':
-                    attachments = _read_local_purchase_inbound_attachments(conn, account, source_number)
+                    diagnostics.append('bill_attachments 无匹配记录，尝试旧购货/采购附件 fallback')
+                    if _attachment_has_table(conn, 'purchase_inbound_attachments'):
+                        attachments = _read_local_purchase_inbound_attachments(conn, account, source_number)
+                    else:
+                        diagnostics.append('purchase_inbound_attachments 表不存在')
                     if not attachments:
                         message = '主来源无附件或本地未缓存'
+                        diagnostics.append('purchase_inbound_attachments 无匹配记录')
                 elif not attachments and preferred_source == 'purchase_order':
-                    attachments = _read_local_purchase_order_attachments(conn, account, source_number)
+                    diagnostics.append('bill_attachments 无匹配记录，尝试采购订单 data_json fallback')
+                    if _attachment_has_table(conn, 'accessory_purchase_orders'):
+                        attachments = _read_local_purchase_order_attachments(conn, account, source_number)
+                    else:
+                        diagnostics.append('accessory_purchase_orders 表不存在')
                     if not attachments:
                         message = '采购订单附件本地未缓存'
+                        diagnostics.append('accessory_purchase_orders.data_json 未发现明确附件字段')
+                if not attachments and candidate_sources:
+                    diagnostics.append('已返回本地候选来源，候选仅供人工判断，不会自动联网补齐')
+                if not attachments and not candidate_sources:
+                    diagnostics.append('本地未找到可用候选来源')
+        finally:
+            conn.close()
 
         return jsonify({
             'success': True,
+            'local_only': True,
+            'live_lookup': False,
             'item': {
                 'id': item.get('id'),
                 'account': item.get('account') or '',
                 'code': item.get('code') or '',
                 'name': item.get('name') or '',
+                'supplier_number': item.get('supplier_number') or item.get('supplierNumber') or '',
+                'supplier_name': item.get('supplier_name') or item.get('supplierName') or '',
                 'source_type': item.get('source_type') or item.get('sourceType') or '',
                 'source_number': source_number,
                 'source_date': source_date,
@@ -10766,14 +10989,62 @@ def reorder_item_attachments(item_id):
             'config_matches_attachment_rule': _attachment_config_matches_rule(config_begin, config_new_logic),
             'preferred_source': preferred_source,
             'source_rule': ATTACHMENT_SOURCE_RULE,
+            'source_confidence': source_confidence,
+            'candidate_sources': candidate_sources,
             'attachments': attachments,
-            'message': message or ('已读取本地附件' if attachments else '主来源无附件或本地未缓存'),
-            'local_only': True,
-            'live_lookup': False,
+            'diagnostics': diagnostics,
+            'message': message or ('已读取本地附件' if attachments else '本地未缓存附件'),
         })
     except Exception as e:
         tb = traceback.format_exc()
         print(f'[ERROR] reorder_item_attachments: {tb}')
+        return jsonify({'success': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/attachments/status', methods=['GET'])
+def attachments_status():
+    try:
+        tables = {
+            'bill_attachments': {'exists': False, 'count': 0, 'columns': []},
+            'purchase_inbound_attachments': {'exists': False, 'count': 0, 'columns': []},
+            'purchase_inbounds': {'exists': False, 'count': 0, 'columns': []},
+            'accessory_purchase_orders': {'exists': False, 'count': 0, 'columns': []},
+        }
+        conn = _sales_readonly_conn()
+        db_exists = bool(conn)
+        if conn:
+            try:
+                for name in list(tables.keys()):
+                    tables[name] = _attachment_table_info(conn, name)
+            finally:
+                conn.close()
+        has_local_path_fields = any(
+            'local_path' in (info.get('columns') or [])
+            for info in tables.values()
+        )
+        return jsonify({
+            'success': True,
+            'local_only': True,
+            'live_lookup': False,
+            'db_exists': db_exists,
+            'db_path': _SALES_CACHE_DB,
+            'switch_date': ATTACHMENT_SWITCH_DATE,
+            'source_rule': ATTACHMENT_SOURCE_RULE,
+            'tables': tables,
+            'download': {
+                'has_local_path_fields': has_local_path_fields,
+                'download_function_ready': False,
+                'message': '当前仅支持本地元数据查看，附件下载需后续确认官方接口',
+            },
+            'notes': [
+                '普通页面查看附件只读本地缓存，不会自动调用 JDY',
+                '采购订单附件仅从本地 accessory_purchase_orders.data_json 中提取明确附件字段',
+                '商品 imageUrl 不会被当作采购订单附件',
+            ],
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] attachments_status: {tb}')
         return jsonify({'success': False, 'error': str(e), 'traceback': tb}), 500
 
 
