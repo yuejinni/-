@@ -2267,138 +2267,145 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div style="height:8px;background:#edf3f7;border-radius:999px;overflow:hidden;margin-top:10px;">
       <div id="sales-sync-progress-bar" style="height:100%;width:0%;background:#0cbfbd;transition:width .25s;"></div>
     </div>
+      <!-- ═══ Webhook 推送状态 ═══ -->
       <div style="margin-top:16px;border-top:1px solid #edf0f5;padding-top:14px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+
+      <!-- 1. 推送总览 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
         <div>
-          <b>推送状态</b>
-          <div id="webhook-endpoint-status" class="tip" style="margin-top:4px;">待读取</div>
+          <b>推送总览</b>
+          <div class="tip" style="margin-top:2px;">Webhook 用于接收 JDY 推送并触发本地缓存更新；每日整体比对用于兜底校准。</div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookStatus()">刷新状态</button>
       </div>
-      <div class="settings-info-grid" id="webhook-compact-cards">
-        <div class="settings-info-card"><span>推送状态</span><b id="webhook-card-endpoint">待读取</b></div>
-        <div class="settings-info-card"><span>今日正常处理</span><b id="webhook-card-today">待读取</b></div>
-        <div class="settings-info-card"><span>当前待处理</span><b id="webhook-card-pending">0</b></div>
+      <div class="settings-info-grid" id="webhook-compact-cards" style="margin-bottom:6px;">
+        <div class="settings-info-card"><span>处理模式</span><b id="webhook-card-mode">待读取</b></div>
         <div class="settings-info-card"><span>Worker 状态</span><b id="webhook-card-worker">待读取</b></div>
-        <div class="settings-info-card"><span>每日比对时间</span><b id="webhook-card-daily">待读取</b></div>
-        <div class="settings-info-card"><span>最近心跳 / 错误</span><b id="webhook-card-heartbeat">待读取</b></div>
+        <div class="settings-info-card"><span>待处理 / 处理中</span><b id="webhook-card-pending">0 / 0</b></div>
+        <div class="settings-info-card"><span>已完成</span><b id="webhook-card-done">0</b></div>
+        <div class="settings-info-card"><span>失败</span><b id="webhook-card-failed" style="color:#18a058;">0</b></div>
+        <div class="settings-info-card"><span>最近心跳 / 今日处理</span><b id="webhook-card-heartbeat">待读取</b></div>
       </div>
-      <div class="webhook-control-row">
-        <span class="webhook-mode-pill" id="webhook-processing-mode">处理模式：待读取</span>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('manual')">切换为手动</button>
-        <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
-        <span id="webhook-mode-help" class="tip">手动模式下不会自动处理 pending，需要管理员手动执行。</span>
-      </div>
-      <div class="webhook-control-row" id="webhook-manual-panel">
-        <b>正常队列</b>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'normal')">处理正常队列 1 条</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'normal')">处理正常队列 5 条</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'normal')">处理正常队列 10 条</button>
-        <input id="webhook-manual-count" type="number" min="1" max="500" value="10" style="width:90px;">
-        <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual(null, 'normal')">处理指定数量</button>
-        <button class="btn btn-warn btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">暂停处理</button>
-        <span class="tip">正常队列只处理新 webhook 的 pending，不处理失败重试队列。</span>
-      </div>
-      <div class="webhook-control-row" id="webhook-auto-panel">
-        <b>自动处理区</b>
-        <button class="btn btn-warning btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">切换为自动</button>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">切换为暂停</button>
-        <span class="tip">自动模式只处理正常 pending，不处理 retry_pending；按 300 条/分钟处理，积压较多最高 450 条/分钟，频率限制时降速保护。</span>
-      </div>
-      <div class="webhook-control-row">
-        <b>卡住事件</b>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="recoverStaleWebhook('dry_run')">查看卡住事件</button>
-        <button class="btn btn-warn btn-sm" type="button" onclick="recoverStaleWebhook('recover_to_pending')">恢复卡住事件为待处理</button>
-      </div>
-      <div id="webhook-stale-recover-status" class="tip" style="margin-top:4px;"></div>
-      <div class="webhook-status-grid" id="webhook-status-counts">
-        <div class="webhook-stat"><span class="tip">待处理</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">处理中</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">已完成</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">失败</span><b>0</b></div>
-      </div>
-      <div class="webhook-status-grid" id="webhook-rate-status" style="margin-top:10px;">
-        <div class="webhook-stat"><span class="tip">卡住的处理中</span><b>0</b></div>
-        <div class="webhook-stat"><span class="tip">当前模式</span><b style="font-size:18px;">已暂停</b></div>
-        <div class="webhook-stat"><span class="tip">当前速度</span><b>0 条/分钟</b></div>
-        <div class="webhook-stat"><span class="tip">预计耗时</span><b style="font-size:18px;">0 / 0 分</b></div>
-      </div>
-      <div id="webhook-notes" class="tip" style="margin-top:10px;line-height:1.7;"></div>
-      <div id="webhook-resource-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
-      <div id="webhook-duplicate-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
-      <div style="margin-top:12px;border-top:1px solid #edf0f5;padding-top:12px;">
-        <b>旧错误清理 / 重置</b>
-        <div class="tip" style="margin-top:4px;line-height:1.7;">
-          此操作只删除旧 Webhook 推送运行记录，不删除销售、报关、返单、辅料、供应商、附件等业务缓存数据。执行前会自动备份数据库，每日 3 点整体比对会继续兜底校准。
+
+      <!-- 2. 正常队列 -->
+      <div style="margin-top:10px;border-top:1px solid #f0f3f7;padding-top:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+          <b>正常队列</b>
+          <span class="tip" style="font-size:11px;">正常队列只处理新收到的 JDY 推送事件。历史旧错误不在这里重放。</span>
         </div>
-        <div class="webhook-control-row">
-          <input id="webhook-failure-resource" placeholder="类型筛选，如 product" style="max-width:180px;">
-          <input id="webhook-failure-keyword" placeholder="错误关键词" style="max-width:220px;">
-          <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:90px;">
-          <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="cleanupOldWebhook(true)">旧错误 dry-run 预览</button>
-          <button class="btn btn-warn btn-sm" type="button" onclick="cleanupOldWebhook(false)">备份并清理旧 Webhook 错误</button>
+        <div class="webhook-control-row" style="margin:4px 0;">
+          <span class="webhook-mode-pill" id="webhook-processing-mode">待读取</span>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('auto')">自动</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('manual')">手动</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="setWebhookProcessingMode('paused')">暂停</button>
+          <span id="webhook-mode-help" class="tip" style="font-size:11px;"></span>
         </div>
-        <div id="webhook-archive-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
-        <div id="webhook-cleanup-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
-        <details style="margin-top:8px;">
-          <summary class="tip" style="cursor:pointer;font-weight:700;">高级：失败重试队列（排查时使用）</summary>
-        <div class="webhook-control-row">
-          <b>重试队列</b>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
-          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'retry')">处理重试队列 1 条</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'retry')">处理重试队列 5 条</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'retry')">处理重试队列 10 条</button>
-          <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual(null, 'retry')">处理指定数量重试</button>
-          <span class="tip">重试队列必须手动处理，自动模式不会处理。</span>
+        <div class="webhook-control-row" id="webhook-manual-panel" style="margin:4px 0;">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'normal')">处理 1 条</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'normal')">处理 5 条</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'normal')">处理 10 条</button>
+          <input id="webhook-manual-count" type="number" min="1" max="500" value="10" style="width:80px;">
+          <button class="btn btn-primary btn-sm" type="button" onclick="startWebhookManual(null, 'normal')">处理指定数量</button>
         </div>
-        <div class="webhook-control-row">
-          <b>误混入检查</b>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="reclassifyRetryPending(true)">检查误混入普通队列的重试事件</button>
-          <button class="btn btn-warn btn-sm" type="button" onclick="reclassifyRetryPending(false)">确认移动到重试队列</button>
+        <div id="webhook-notes" class="tip" style="margin-top:4px;line-height:1.5;font-size:11px;"></div>
+      </div>
+
+      <!-- 3. 最近事件 -->
+      <div style="margin-top:12px;border-top:1px solid #f0f3f7;padding-top:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+          <b>最近事件</b>
+          <span class="tip" style="font-size:11px;">最多展示 50 条，完整统计请查看维护工具。</span>
         </div>
+        <div class="webhook-events-wrap settings-scroll-window">
+          <table class="webhook-events-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>类型</th>
+                <th>单号</th>
+                <th>状态</th>
+                <th>次数</th>
+                <th>错误</th>
+                <th>创建时间</th>
+                <th>处理时间</th>
+              </tr>
+            </thead>
+            <tbody id="webhook-events-body">
+              <tr><td colspan="8" class="tip">待读取</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="display:none;margin-top:4px;font-size:11px;color:#888;" id="webhook-event-count-footer"></div>
+      </div>
+
+      <!-- 4. 维护工具 -->
+      <details style="margin-top:12px;border-top:1px solid #f0f3f7;padding-top:10px;">
+        <summary class="tip" style="cursor:pointer;font-weight:700;font-size:13px;color:#555;">🛠 维护工具</summary>
+        <div class="tip" style="margin-top:4px;margin-bottom:8px;line-height:1.5;">
+          这里仅用于维护 Webhook 运行记录，不影响销售、报关、返单、辅料等业务缓存数据。
+        </div>
+
+        <!-- 旧错误清理 -->
+        <div style="margin-bottom:10px;">
+          <b>旧错误清理</b>
+          <div class="tip" style="margin-top:2px;line-height:1.5;font-size:11px;">
+            此操作只删除旧 Webhook 推送运行记录，不删除业务缓存数据。执行前会自动备份数据库。
+          </div>
+          <div class="webhook-control-row" style="margin:6px 0;">
+            <input id="webhook-failure-resource" placeholder="类型筛选" style="max-width:140px;">
+            <input id="webhook-failure-keyword" placeholder="错误关键词" style="max-width:180px;">
+            <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:70px;">
+            <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="cleanupOldWebhook(true)">dry-run 预览</button>
+            <button class="btn btn-warn btn-sm" type="button" onclick="cleanupOldWebhook(false)">备份并清理</button>
+          </div>
+          <div id="webhook-archive-result" class="tip settings-result-box" style="display:none;margin-top:4px;"></div>
+          <div id="webhook-cleanup-result" class="tip settings-result-box" style="display:none;margin-top:4px;"></div>
+        </div>
+
+        <!-- 卡住事件恢复 -->
+        <div style="margin-bottom:10px;">
+          <b>卡住事件恢复</b>
+          <div class="webhook-control-row" style="margin:4px 0;">
+            <button class="btn btn-ghost btn-sm" type="button" onclick="recoverStaleWebhook('dry_run')">预览卡住事件</button>
+            <button class="btn btn-warn btn-sm" type="button" onclick="recoverStaleWebhook('recover_to_pending')">恢复为待处理</button>
+          </div>
+          <div id="webhook-stale-recover-status" class="tip" style="margin-top:2px;font-size:11px;"></div>
+        </div>
+
+        <!-- 失败列表 -->
+        <div style="margin-bottom:10px;">
+          <b>失败统计与列表</b>
+          <div id="webhook-failure-summary" class="tip" style="margin-top:2px;line-height:1.5;font-size:11px;">待读取</div>
+          <div id="webhook-failure-list" class="tip settings-result-box" style="margin-top:4px;display:none;"></div>
+        </div>
+
+        <!-- 高级：旧治理工具 -->
+        <details style="margin-top:6px;">
+          <summary class="tip" style="cursor:pointer;font-weight:700;font-size:12px;">高级：旧失败治理工具（生产库已清理，仅排查时使用）</summary>
+          <div class="webhook-control-row" style="margin:6px 0;">
+            <b>重试队列</b>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
+            <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'retry')">处理重试 1 条</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'retry')">处理重试 5 条</button>
+            <span class="tip" style="font-size:11px;">重试队列必须手动处理，自动模式不会处理。</span>
+          </div>
+          <div class="webhook-control-row" style="margin:4px 0;">
+            <b>误混入检查</b>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="reclassifyRetryPending(true)">检查误混入</button>
+            <button class="btn btn-warn btn-sm" type="button" onclick="reclassifyRetryPending(false)">移动到重试队列</button>
+          </div>
+          <div class="webhook-control-row" style="margin:4px 0;">
+            <b>recorded only 归档</b>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">dry-run</button>
+            <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档</button>
+          </div>
+          <div style="display:none;" id="webhook-status-counts-legacy"></div>
+          <div style="display:none;" id="webhook-rate-status-legacy"></div>
         </details>
-        <div id="webhook-failure-summary" class="tip" style="margin-top:6px;line-height:1.7;">待读取失败统计</div>
-        <div id="webhook-failure-list" class="tip settings-result-box" style="margin-top:6px;display:none;"></div>
+      </details>
       </div>
-      <div class="webhook-events-wrap settings-scroll-window" style="margin-top:10px;">
-        <table class="webhook-events-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>类型</th>
-              <th>单号</th>
-              <th>状态</th>
-              <th>次数</th>
-              <th>错误</th>
-              <th>创建时间</th>
-              <th>处理时间</th>
-            </tr>
-          </thead>
-          <tbody id="webhook-events-body">
-            <tr><td colspan="8" class="tip">待读取</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div style="margin-top:16px;border-top:1px solid #edf0f5;padding-top:14px;">
-      <div class="form-grid">
-        <div class="form-item">
-          <label>手动清理开始日期</label>
-          <input id="s-clean-begin" type="date">
-        </div>
-        <div class="form-item">
-          <label>手动清理结束日期</label>
-          <input id="s-clean-end" type="date">
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-warn" onclick="cleanupSalesCache()">清理所选日期</button>
-        <span id="sales-cleanup-status" class="tip"></span>
-      </div>
-    </div>
   </div>
 
       </section>
@@ -6615,25 +6622,41 @@ async function loadWebhookStatus() {
     const workerText = data.worker_alive ? '存活' : '未运行';
     const heartbeatText = data.worker_last_loop_at || data.worker_last_heartbeat_at || '暂无';
     const lastErr = data.worker_last_exception || data.state?.last_error || '暂无错误';
-    const dailyTime = document.getElementById('s-daily-compare-time')?.value || '未设置';
+    const modeCard = document.getElementById('webhook-card-mode');
+    const pendingCard = document.getElementById('webhook-card-pending');
+    const doneCard = document.getElementById('webhook-card-done');
+    const failedCard = document.getElementById('webhook-card-failed');
+    const workerCard = document.getElementById('webhook-card-worker');
+    const heartbeatCard = document.getElementById('webhook-card-heartbeat');
+    if (modeCard) modeCard.textContent = translateWebhookMode(processingMode);
+    if (pendingCard) pendingCard.textContent = `${pendingTotal} / ${processingTotal}`;
+    if (doneCard) doneCard.textContent = `${Number(counts.done || 0)}`;
+    if (failedCard) {
+      const fCount = Number(counts.failed || 0);
+      failedCard.textContent = fCount;
+      failedCard.style.color = fCount === 0 ? '#18a058' : '#d93025';
+    }
+    if (workerCard) workerCard.textContent = workerText;
+    if (heartbeatCard) heartbeatCard.textContent = `${heartbeatText} / ${lastErr}`;
+    // update legacy elements if they still exist
     const endpointCard = document.getElementById('webhook-card-endpoint');
     const todayCard = document.getElementById('webhook-card-today');
-    const pendingCard = document.getElementById('webhook-card-pending');
-    const workerCard = document.getElementById('webhook-card-worker');
     const dailyCard = document.getElementById('webhook-card-daily');
-    const heartbeatCard = document.getElementById('webhook-card-heartbeat');
     if (endpointCard) endpointCard.textContent = endpoint.local_ready ? 'ready' : '异常';
     if (todayCard) todayCard.textContent = `完成 ${todayDone} / 失败 ${todayFailed}`;
-    if (pendingCard) pendingCard.textContent = `待处理 ${pendingTotal} / 处理中 ${processingTotal}`;
-    if (workerCard) workerCard.textContent = `${workerText} / ${translateWebhookMode(processingMode)}`;
     if (dailyCard) dailyCard.textContent = dailyTime;
-    if (heartbeatCard) heartbeatCard.textContent = `${heartbeatText} / ${lastErr}`;
-    appendSettingsLog(`刷新 Webhook 状态：pending ${pendingTotal}，failed ${Number(counts.failed || 0)}，cleaned ${Number(counts.cleaned || 0)}`);
+    const endpointEl = document.getElementById('webhook-endpoint-status');
+    if (endpointEl) {
+      endpointEl.innerHTML = `${endpoint.local_ready ? '✓' : '×'} ${webhookHtml(endpoint.path || '/jdy-webhook')}`;
+      endpointEl.style.color = endpoint.local_ready ? '#18a058' : '#d93025';
+    }
+    appendSettingsLog(`刷新 Webhook 状态：pending ${pendingTotal}，failed ${Number(counts.failed || 0)}`);
     await loadWebhookFailures();
   } catch (e) {
-    if (endpointEl) {
-      endpointEl.textContent = '读取 Webhook 状态失败：' + e.message;
-      endpointEl.style.color = '#d93025';
+    const modeCard = document.getElementById('webhook-card-mode');
+    if (modeCard) {
+      modeCard.textContent = '加载失败';
+      modeCard.style.color = '#d93025';
     }
     if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="8" class="webhook-error">读取失败</td></tr>';
     appendSettingsLog('刷新 Webhook 状态失败：' + e.message, 'error');
