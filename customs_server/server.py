@@ -181,6 +181,7 @@ def _admin_path_required():
         '/jdy-webhook/failures', '/jdy-webhook/retry-failed-dry-run', '/jdy-webhook/retry-failed',
         '/jdy-webhook/resolve-recorded-only-dry-run', '/jdy-webhook/resolve-recorded-only',
         '/jdy-webhook/reclassify-retry-pending-dry-run', '/jdy-webhook/reclassify-retry-pending',
+        '/jdy-webhook/archive-failed-dry-run', '/jdy-webhook/archive-failed',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
@@ -4052,7 +4053,7 @@ def _webhook_status_snapshot(limit=20):
     except Exception:
         limit = 20
     limit = max(1, min(limit, 100))
-    counts = {'pending': 0, 'retry_pending': 0, 'processing': 0, 'done': 0, 'failed': 0}
+    counts = {'pending': 0, 'retry_pending': 0, 'processing': 0, 'done': 0, 'failed': 0, 'ignored': 0}
     recent = []
     resource_map = {}
     duplicate_summary = []
@@ -4107,6 +4108,7 @@ def _webhook_status_snapshot(limit=20):
                 'processing': 0,
                 'done': 0,
                 'failed': 0,
+                'ignored': 0,
             })
             count = int(row['c'] or 0)
             item['total'] += count
@@ -10021,6 +10023,90 @@ def jdy_webhook_retry_failed():
             'ids': ids,
             'params': params,
             'message': 'failed events recovered to retry_pending; worker was not started',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _webhook_archive_reason(data):
+    raw = str((data or {}).get('reason') or '').strip()
+    aliases = {
+        'historical_account_mapping_failure_daily_compare_covers': 'historical account mapping failure; covered by daily full compare',
+        'unresolved_account_missing_daily_compare_covers': 'unresolved account missing; covered by daily full compare or manual review',
+        'unsupported_resource_daily_compare_covers': 'unsupported historical resource; covered by daily full compare where applicable',
+        'recorded_only_historical_cleanup': 'historical recorded only failure archived; no replay needed',
+    }
+    if raw in aliases:
+        return aliases[raw]
+    if raw:
+        return raw[:500]
+    return aliases['historical_account_mapping_failure_daily_compare_covers']
+
+
+@app.route('/jdy-webhook/archive-failed-dry-run', methods=['POST'])
+def jdy_webhook_archive_failed_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        conn = _sales_readonly_conn()
+        if conn is None:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'count': 0,
+                'items': [],
+                'archive_reason': _webhook_archive_reason(data),
+            })
+        try:
+            rows, params = _webhook_failed_rows(conn, data)
+        finally:
+            conn.close()
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'count': len(rows),
+            'items': rows,
+            'params': params,
+            'archive_reason': _webhook_archive_reason(data),
+            'message': 'dry run only; no failed events were archived',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/archive-failed', methods=['POST'])
+def jdy_webhook_archive_failed():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '') != 'ARCHIVE_FAILED_WEBHOOK':
+            return jsonify({'success': False, 'error': 'missing confirm ARCHIVE_FAILED_WEBHOOK; failed events were not archived'}), 400
+        archive_reason = _webhook_archive_reason(data)
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with _sales_cache_conn() as conn:
+            rows, params = _webhook_failed_rows(conn, data)
+            ids = [int(row['id']) for row in rows]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'ignored',
+                        error = ?,
+                        processed_at = ?
+                    WHERE id IN ({marks}) AND status = 'failed'
+                ''', [archive_reason, now] + ids)
+                conn.commit()
+        _webhook_state.update({
+            'pending': _webhook_pending_count(),
+            'retry_pending': _webhook_pending_count('retry'),
+            'message': f'archived {len(ids)} failed webhook event(s) to ignored',
+        })
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'archived': len(ids),
+            'ids': ids,
+            'params': params,
+            'archive_reason': archive_reason,
+            'message': 'failed events archived to ignored; worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

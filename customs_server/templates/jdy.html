@@ -2182,8 +2182,13 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
           <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="archiveFailedWebhook(true)">历史失败归档 dry-run</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="archiveFailedWebhook(false)">确认归档为 ignored</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">recorded only 归档 dry-run</button>
           <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档 recorded only</button>
+        </div>
+        <div class="tip" style="margin-top:4px;line-height:1.7;">
+          历史失败归档为 ignored 不代表业务已成功处理，只代表这条历史失败不再重放，后续由每日整体比对或人工低频同步兜底。
         </div>
         <div class="webhook-control-row">
           <b>重试队列</b>
@@ -5668,6 +5673,7 @@ const WEBHOOK_STATUS_LABELS = {
   processing: '处理中',
   done: '已完成',
   failed: '失败',
+  ignored: '已归档忽略',
   skipped: '已跳过',
   superseded: '已被更新事件替代',
 };
@@ -5747,6 +5753,8 @@ function translateWebhookError(error) {
   const lower = raw.toLowerCase();
   if (!raw) return '';
   if (lower.includes('recorded only')) return `仅记录，未处理（${raw}）`;
+  if (lower.includes('covered by daily full compare')) return `已归档，由每日整体比对兜底（${raw}）`;
+  if (lower.includes('historical account mapping failure')) return `历史账套识别失败（${raw}）`;
   if (lower.includes('account not configured')) return `账套未配置（${raw}）`;
   if (lower.includes('no-match')) return `账套不匹配（${raw}）`;
   if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('频率')) return `频率限制（${raw}）`;
@@ -5759,6 +5767,7 @@ function translateWebhookError(error) {
 function webhookStatusClass(status) {
   if (status === 'done') return 'webhook-ok';
   if (status === 'failed') return 'webhook-error';
+  if (status === 'ignored') return 'webhook-warn';
   if (status === 'pending' || status === 'retry_pending' || status === 'processing') return 'webhook-warn';
   return '';
 }
@@ -5923,6 +5932,38 @@ async function retryFailedWebhook(dryRun) {
   }
 }
 
+async function archiveFailedWebhook(dryRun) {
+  const params = webhookFailureParams();
+  const endpoint = dryRun ? 'archive-failed-dry-run' : 'archive-failed';
+  params.reason = 'historical_account_mapping_failure_daily_compare_covers';
+  if (!dryRun) {
+    const ok = window.confirm(`确认把最多 ${params.limit} 条匹配的历史 failed 归档为 ignored 吗？归档不会调用 JDY，也不会进入 pending/retry_pending；后续由每日整体比对兜底。`);
+    if (!ok) return;
+    params.confirm = 'ARCHIVE_FAILED_WEBHOOK';
+  }
+  try {
+    const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '操作失败');
+    const listEl = document.getElementById('webhook-failure-list');
+    if (listEl) {
+      if (dryRun) {
+        listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条历史 failed 为 ignored：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}<br>${webhookHtml(translateWebhookError(data.archive_reason || ''))}`;
+      } else {
+        listEl.innerHTML = `已归档 ${Number(data.archived || 0)} 条历史 failed 为 ignored；不会自动重放，后续由每日整体比对兜底。`;
+      }
+    }
+    await loadWebhookStatus();
+    await loadWebhookFailures();
+  } catch (e) {
+    alert('历史失败归档失败：' + e.message);
+  }
+}
+
 async function reclassifyRetryPending(dryRun) {
   const params = webhookFailureParams();
   const endpoint = dryRun ? 'reclassify-retry-pending-dry-run' : 'reclassify-retry-pending';
@@ -6009,7 +6050,7 @@ async function loadWebhookStatus() {
     }
     const counts = data.counts || {};
     if (countsEl) {
-      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed'].map(key => `
+      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed', 'ignored'].map(key => `
         <div class="webhook-stat">
           <span class="tip">${webhookHtml(translateWebhookStatus(key))}</span>
           <b>${Number(counts[key] || 0)}</b>
