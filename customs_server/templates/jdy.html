@@ -2330,22 +2330,15 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div style="margin-top:12px;border-top:1px solid #edf0f5;padding-top:12px;">
         <b>旧错误清理 / 重置</b>
         <div class="tip" style="margin-top:4px;line-height:1.7;">
-          旧错误多为开发阶段或旧账套识别逻辑残留。清理不会删除业务缓存数据，不调用 JDY；每日整体比对会继续兜底校准。清理不是业务处理成功，只是移除旧运行噪音。
+          此操作只删除旧 Webhook 推送运行记录，不删除销售、报关、返单、辅料、供应商、附件等业务缓存数据。执行前会自动备份数据库，每日 3 点整体比对会继续兜底校准。
         </div>
         <div class="webhook-control-row">
           <input id="webhook-failure-resource" placeholder="类型筛选，如 product" style="max-width:180px;">
           <input id="webhook-failure-keyword" placeholder="错误关键词" style="max-width:220px;">
           <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:90px;">
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="archiveFailedWebhook(true)">历史失败归档 dry-run</button>
-          <button class="btn btn-warn btn-sm" type="button" onclick="archiveFailedWebhook(false)">确认归档为 ignored</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="cleanupOldWebhook(true)">旧错误清理 dry-run</button>
-          <button class="btn btn-warn btn-sm" type="button" onclick="cleanupOldWebhook(false)">确认清理旧错误</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">recorded only 归档 dry-run</button>
-          <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档 recorded only</button>
-        </div>
-        <div class="tip" style="margin-top:4px;line-height:1.7;">
-          历史失败归档为 ignored 不代表业务已成功处理，只代表这条历史失败不再重放，后续由每日整体比对或人工低频同步兜底。
+          <button class="btn btn-ghost btn-sm" type="button" onclick="cleanupOldWebhook(true)">旧错误 dry-run 预览</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="cleanupOldWebhook(false)">备份并清理旧 Webhook 错误</button>
         </div>
         <div id="webhook-archive-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
         <div id="webhook-cleanup-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
@@ -6156,18 +6149,6 @@ function renderWebhookArchiveResult(data, params, dryRun) {
   }
 }
 
-let lastCleanupDryRunKey = '';
-
-function webhookCleanupParamKey(params) {
-  return JSON.stringify({
-    resource: params?.resource || '',
-    error_keyword: params?.error_keyword || '',
-    order: params?.order || 'oldest',
-    limit: Number(params?.limit || 0),
-    older_than_hours: Number(params?.older_than_hours || 24),
-  });
-}
-
 function formatWebhookSummaryRows(rows, labelFn) {
   const list = Array.isArray(rows) ? rows : [];
   return list.length
@@ -6178,26 +6159,31 @@ function formatWebhookSummaryRows(rows, labelFn) {
 function renderWebhookCleanupResult(data, params, dryRun) {
   const el = document.getElementById('webhook-cleanup-result');
   if (!el) return;
-  const count = Number(data?.count ?? data?.cleaned ?? 0);
-  const sampleIds = (data?.sample_ids || data?.ids || []).slice(0, 50).map(id => `#${Number(id || 0)}`).join('，') || '无';
+  const count = Number(data?.deleted ?? data?.count ?? 0);
+  const sampleIds = (data?.sample_ids || []).slice(0, 50).map(id => `#${Number(id || 0)}`).join('，') || '无';
   const keyword = params?.error_keyword || '未填写';
   const resource = params?.resource ? translateWebhookResource(params.resource) : '全部类型';
   const byStatus = formatWebhookSummaryRows(data?.by_status, translateWebhookStatus);
   const byResource = formatWebhookSummaryRows(data?.by_resource, translateWebhookResource);
   const byError = formatWebhookSummaryRows(data?.by_error, translateWebhookError);
+  const backupPath = data?.backup_path || '未返回';
+  const countsAfter = data?.counts_after || {};
+  const afterSummary = Object.keys(countsAfter).length
+    ? Object.entries(countsAfter).map(([k, v]) => `${translateWebhookStatus(k)}：${v}`).join(' · ')
+    : '未返回';
   el.style.display = 'block';
   if (dryRun) {
     el.innerHTML = `
       <b>旧错误清理 dry-run 结果</b><br>
       dry-run：是<br>
-      将清理总数：<b>${count}</b><br>
+      匹配总数：<b>${count}</b><br>
       错误关键词：${webhookHtml(keyword)}<br>
       类型筛选：${webhookHtml(resource)}<br>
       按状态汇总：${byStatus}<br>
       按类型汇总：${byResource}<br>
       按错误汇总：${byError}<br>
       样本 ID：${webhookHtml(sampleIds)}<br>
-      将执行动作：旧 webhook 噪音标记为 cleaned；不清理 pending / processing / done。<br>
+      将执行动作：备份 SQLite 后物理删除旧 webhook_events 记录；不删除 pending / processing / done。<br>
       安全说明：真实执行前会备份数据库；本次 dry-run 不写库、不调用 JDY、不启动 worker、不处理 pending。
     `;
     if (!count) {
@@ -6206,10 +6192,13 @@ function renderWebhookCleanupResult(data, params, dryRun) {
   } else {
     el.innerHTML = `
       <b>旧错误清理执行结果</b><br>
-      已清理数量：<b>${Number(data?.cleaned || 0)}</b><br>
-      状态变化：failed / ignored / retry_pending -&gt; cleaned<br>
-      备份文件：${webhookHtml(data?.backup_path || '未返回')}<br>
-      安全说明：没有调用 JDY，没有启动 worker，没有处理 pending/processing，没有删除业务缓存表。
+      已删除旧记录：<b>${count}</b> 条<br>
+      数据库备份：${webhookHtml(backupPath)}<br>
+      按状态汇总：${byStatus}<br>
+      按类型汇总：${byResource}<br>
+      按错误汇总：${byError}<br>
+      清理后状态：${afterSummary}<br>
+      安全说明：没有调用 JDY，没有启动 worker，没有删除 pending/processing/done，没有删除业务缓存表。
     `;
   }
 }
@@ -6219,21 +6208,16 @@ async function cleanupOldWebhook(dryRun) {
   params.older_than_hours = 24;
   const endpoint = dryRun ? 'cleanup-old-dry-run' : 'cleanup-old';
   if (!dryRun) {
-    const key = webhookCleanupParamKey(params);
-    if (!lastCleanupDryRunKey || lastCleanupDryRunKey !== key) {
-      alert('请先执行一次相同筛选条件的“旧错误清理 dry-run”，确认命中范围后再清理。');
-      return;
-    }
-    const ok = window.confirm('确认清理旧 Webhook 错误噪音吗？执行前会备份数据库；不会调用 JDY，不会处理 pending/processing，也不会删除业务缓存表。');
+    const ok = window.confirm('将备份数据库并删除旧 Webhook 错误运行记录。此操作不会删除销售、报关、返单、辅料等业务缓存数据。是否继续？');
     if (!ok) return;
     params.confirm = 'CLEANUP_OLD_WEBHOOK';
   }
   const resultEl = document.getElementById('webhook-cleanup-result');
   if (resultEl) {
     resultEl.style.display = 'block';
-    resultEl.innerHTML = dryRun ? '正在执行旧错误清理 dry-run...' : '正在清理旧 Webhook 错误...';
+    resultEl.innerHTML = dryRun ? '正在执行旧错误清理 dry-run...' : '正在备份数据库并删除旧 Webhook 记录...';
   }
-  appendSettingsLog(dryRun ? '开始旧错误清理 dry-run' : '开始清理旧 Webhook 错误');
+  appendSettingsLog(dryRun ? '开始旧错误清理 dry-run' : '开始备份并清理旧 Webhook 记录');
   try {
     const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
       method: 'POST',
@@ -6247,13 +6231,8 @@ async function cleanupOldWebhook(dryRun) {
       data = { success: false, error: `HTTP ${res.status}` };
     }
     if (!data.success) throw new Error(data.error || '操作失败');
-    if (dryRun) {
-      lastCleanupDryRunKey = webhookCleanupParamKey(params);
-    } else {
-      lastCleanupDryRunKey = '';
-    }
     renderWebhookCleanupResult(data, params, dryRun);
-    appendSettingsLog(dryRun ? `旧错误清理 dry-run 命中 ${Number(data.count || 0)} 条` : `旧错误清理完成 ${Number(data.cleaned || 0)} 条`);
+    appendSettingsLog(dryRun ? `旧错误清理 dry-run 命中 ${Number(data.count || 0)} 条` : `备份并删除旧 Webhook 记录完成 ${Number(data.deleted || 0)} 条`);
     await loadWebhookStatus();
   } catch (e) {
     if (resultEl) {

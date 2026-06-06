@@ -10139,7 +10139,7 @@ def _webhook_cleanup_old_params(raw):
 
 def _webhook_cleanup_old_where(params):
     params = _webhook_cleanup_old_params(params)
-    clauses = ["status IN ('failed', 'ignored', 'retry_pending')"]
+    clauses = ["status IN ('failed', 'ignored', 'retry_pending', 'cleaned')"]
     values = []
     if params['resource']:
         clauses.append('resource = ?')
@@ -10205,7 +10205,7 @@ def _webhook_cleanup_old_snapshot(conn, raw):
         'will_not_clean': ['pending', 'processing', 'done'],
         'will_not_call_jdy': True,
         'will_not_start_worker': True,
-        'cleanup_action': 'status will be changed to cleaned; business cache tables are not touched',
+        'cleanup_action': 'rows will be physically deleted after sqlite backup; business cache tables are not touched',
     }
 
 
@@ -10248,34 +10248,42 @@ def jdy_webhook_cleanup_old():
         if str(data.get('confirm') or '') != 'CLEANUP_OLD_WEBHOOK':
             return jsonify({'success': False, 'error': 'missing confirm CLEANUP_OLD_WEBHOOK; cleanup was not executed'}), 400
         backup_path = _backup_sales_cache_db('before_webhook_cleanup')
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cleanup_message = 'cleaned old webhook noise; covered by daily full compare'
+        if not backup_path or not os.path.exists(backup_path):
+            return jsonify({'success': False, 'error': 'sqlite backup failed; cleanup aborted to protect data'}), 500
         with _sales_cache_conn() as conn:
             snapshot = _webhook_cleanup_old_snapshot(conn, data)
-            ids = [int(x) for x in snapshot.get('ids') or []]
-            if ids:
-                marks = ','.join('?' for _ in ids)
+            matched_ids = [int(x) for x in snapshot.get('ids') or []]
+            matched_before_delete = len(matched_ids)
+            if matched_ids:
+                marks = ','.join('?' for _ in matched_ids)
                 conn.execute(f'''
-                    UPDATE webhook_events
-                    SET status = 'cleaned',
-                        error = ?,
-                        processed_at = ?
+                    DELETE FROM webhook_events
                     WHERE id IN ({marks})
-                      AND status IN ('failed', 'ignored', 'retry_pending')
-                ''', [cleanup_message, now] + ids)
+                      AND status IN ('failed', 'ignored', 'retry_pending', 'cleaned')
+                ''', matched_ids)
                 conn.commit()
+            counts_after = {}
+            for s in ('pending', 'processing', 'failed', 'ignored', 'retry_pending', 'cleaned', 'done'):
+                counts_after[s] = conn.execute(
+                    'SELECT COUNT(*) FROM webhook_events WHERE status = ?', (s,)
+                ).fetchone()[0]
         _webhook_state.update({
             'pending': _webhook_pending_count(),
             'retry_pending': _webhook_pending_count('retry'),
-            'message': f'cleaned {len(ids)} old webhook event(s); worker was not started',
+            'message': f'deleted {matched_before_delete} old webhook event(s); worker was not started',
         })
         return jsonify({
             'success': True,
             'dry_run': False,
-            'cleaned': len(ids),
-            'ids': ids,
+            'deleted': matched_before_delete,
+            'matched_before_delete': matched_before_delete,
             'backup_path': backup_path,
-            'message': 'old webhook noise marked as cleaned; JDY was not called and worker was not started',
+            'by_status': snapshot.get('by_status') or [],
+            'by_resource': snapshot.get('by_resource') or [],
+            'by_error': snapshot.get('by_error') or [],
+            'sample_ids': snapshot.get('sample_ids') or [],
+            'counts_after': counts_after,
+            'message': 'old webhook noise deleted after sqlite backup; JDY was not called and worker was not started',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
