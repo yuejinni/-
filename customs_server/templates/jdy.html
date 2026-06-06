@@ -1230,13 +1230,145 @@ td.code { font-family: monospace; color: #1a2c5b; }
   color: #17315f;
   font-weight: 700;
 }
+.settings-v2-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.settings-v2-menu {
+  position: sticky;
+  top: 10px;
+  border: 1px solid #e5ebf2;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, .05);
+}
+.settings-v2-menu button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #34445a;
+  border-radius: 7px;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 700;
+  cursor: pointer;
+}
+.settings-v2-menu button:hover,
+.settings-v2-menu button.active {
+  background: #17315f;
+  color: #fff;
+}
+.settings-v2-main {
+  min-width: 0;
+}
+.settings-v2-pane {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-v2-pane.active {
+  display: flex;
+}
+.settings-v2-note {
+  border: 1px solid #d9e7f8;
+  background: #f7fbff;
+  color: #34445a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.settings-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.settings-info-card {
+  border: 1px solid #e8eef5;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 66px;
+}
+.settings-info-card span {
+  display: block;
+  color: #778391;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.settings-info-card b {
+  display: block;
+  color: #17315f;
+  font-size: 16px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+.settings-scroll-window {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #eef2f6;
+  border-radius: 8px;
+  background: #fff;
+}
+.settings-result-box {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #d8e7ff;
+  background: #f7fbff;
+  border-radius: 8px;
+  padding: 10px;
+  line-height: 1.8;
+}
+.settings-oplog {
+  height: 260px;
+  overflow: auto;
+  border: 1px solid #dfe7f0;
+  background: #0f172a;
+  color: #dbeafe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.settings-oplog-line {
+  border-bottom: 1px solid rgba(219, 234, 254, .12);
+  padding: 3px 0;
+}
+.settings-oplog-line:last-child {
+  border-bottom: 0;
+}
 @media (max-width: 980px) {
   .sales-shell { grid-template-columns: 1fr; }
   .sales-phone { height: 620px; }
+  .settings-v2-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-v2-menu {
+    position: static;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 6px;
+  }
+  .settings-v2-menu button {
+    width: auto;
+    white-space: nowrap;
+  }
+  .settings-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 720px) {
   .webhook-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .settings-info-grid {
+    grid-template-columns: 1fr;
   }
   .webhook-events-table {
     min-width: 760px;
@@ -1930,6 +2062,18 @@ td.code { font-family: monospace; color: #1a2c5b; }
      页面 3：设置
 ════════════════════════════════════════════════════ -->
 <div class="page" id="page-settings">
+  <div class="settings-v2-layout">
+    <aside class="settings-v2-menu" aria-label="设置中心分区">
+      <button type="button" class="active" data-settings-pane="account" onclick="showSettingsPane('account')">账套配置</button>
+      <button type="button" data-settings-pane="cache" onclick="showSettingsPane('cache')">本地缓存 / 推送同步</button>
+      <button type="button" data-settings-pane="suppliers" onclick="showSettingsPane('suppliers')">供应商缓存</button>
+      <button type="button" data-settings-pane="customs" onclick="showSettingsPane('customs')">报关设置</button>
+      <button type="button" data-settings-pane="attachments" onclick="showSettingsPane('attachments')">附件设置</button>
+      <button type="button" data-settings-pane="risk" onclick="showSettingsPane('risk')">高风险工具</button>
+      <button type="button" data-settings-pane="logs" onclick="showSettingsPane('logs')">操作日志</button>
+    </aside>
+    <main class="settings-v2-main">
+      <section class="settings-v2-pane active" id="settings-pane-account">
   <div class="card">
     <div class="card-title">待审核注册申请</div>
     <div id="admin-users-status" class="tip" style="margin-bottom:10px;">读取中...</div>
@@ -2054,10 +2198,12 @@ td.code { font-family: monospace; color: #1a2c5b; }
     </div>
   </div>
 
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-cache">
   <div class="card">
     <div class="card-title">本地缓存 / 推送同步</div>
-    <div class="tip" style="line-height:1.7;margin-bottom:12px;">
-      平时不再按分钟自动轮询精斗云；官方消息订阅推送到 /jdy-webhook 后，系统只按推送里的单号补拉对应单据。这里保留“每日整体比对”和“立即增量同步”，用于兜底检查本地缓存和精斗云是否一致。
+    <div class="settings-v2-note" style="margin-bottom:12px;">
+      平时由 Webhook 接收 JDY 推送并触发本地缓存更新；每日 3 点整体比对用于兜底校准。Webhook 只负责新事件触发，不作为历史失败无限重试中心。
     </div>
     <input id="s-sales-sync-enabled" type="hidden" value="0">
     <input id="s-sales-sync-interval" type="hidden" value="5">
@@ -2121,13 +2267,21 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div style="height:8px;background:#edf3f7;border-radius:999px;overflow:hidden;margin-top:10px;">
       <div id="sales-sync-progress-bar" style="height:100%;width:0%;background:#0cbfbd;transition:width .25s;"></div>
     </div>
-    <div style="margin-top:16px;border-top:1px solid #edf0f5;padding-top:14px;">
+      <div style="margin-top:16px;border-top:1px solid #edf0f5;padding-top:14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <div>
-          <b>Webhook 状态</b>
+          <b>推送状态</b>
           <div id="webhook-endpoint-status" class="tip" style="margin-top:4px;">待读取</div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookStatus()">刷新状态</button>
+      </div>
+      <div class="settings-info-grid" id="webhook-compact-cards">
+        <div class="settings-info-card"><span>推送状态</span><b id="webhook-card-endpoint">待读取</b></div>
+        <div class="settings-info-card"><span>今日正常处理</span><b id="webhook-card-today">待读取</b></div>
+        <div class="settings-info-card"><span>当前待处理</span><b id="webhook-card-pending">0</b></div>
+        <div class="settings-info-card"><span>Worker 状态</span><b id="webhook-card-worker">待读取</b></div>
+        <div class="settings-info-card"><span>每日比对时间</span><b id="webhook-card-daily">待读取</b></div>
+        <div class="settings-info-card"><span>最近心跳 / 错误</span><b id="webhook-card-heartbeat">待读取</b></div>
       </div>
       <div class="webhook-control-row">
         <span class="webhook-mode-pill" id="webhook-processing-mode">处理模式：待读取</span>
@@ -2174,25 +2328,33 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div id="webhook-resource-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
       <div id="webhook-duplicate-summary" class="tip" style="margin-top:8px;line-height:1.7;"></div>
       <div style="margin-top:12px;border-top:1px solid #edf0f5;padding-top:12px;">
-        <b>失败治理</b>
+        <b>旧错误清理 / 重置</b>
+        <div class="tip" style="margin-top:4px;line-height:1.7;">
+          旧错误多为开发阶段或旧账套识别逻辑残留。清理不会删除业务缓存数据，不调用 JDY；每日整体比对会继续兜底校准。清理不是业务处理成功，只是移除旧运行噪音。
+        </div>
         <div class="webhook-control-row">
           <input id="webhook-failure-resource" placeholder="类型筛选，如 product" style="max-width:180px;">
           <input id="webhook-failure-keyword" placeholder="错误关键词" style="max-width:220px;">
           <input id="webhook-failure-limit" type="number" min="1" max="500" value="10" style="width:90px;">
           <button class="btn btn-ghost btn-sm" type="button" onclick="loadWebhookFailures()">查看失败列表</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
-          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="archiveFailedWebhook(true)">历史失败归档 dry-run</button>
           <button class="btn btn-warn btn-sm" type="button" onclick="archiveFailedWebhook(false)">确认归档为 ignored</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="cleanupOldWebhook(true)">旧错误清理 dry-run</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="cleanupOldWebhook(false)">确认清理旧错误</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">recorded only 归档 dry-run</button>
           <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档 recorded only</button>
         </div>
         <div class="tip" style="margin-top:4px;line-height:1.7;">
           历史失败归档为 ignored 不代表业务已成功处理，只代表这条历史失败不再重放，后续由每日整体比对或人工低频同步兜底。
         </div>
-        <div id="webhook-archive-result" class="tip" style="display:none;margin-top:8px;padding:10px;border:1px solid #d8e7ff;background:#f7fbff;border-radius:8px;line-height:1.8;"></div>
+        <div id="webhook-archive-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
+        <div id="webhook-cleanup-result" class="tip settings-result-box" style="display:none;margin-top:8px;"></div>
+        <details style="margin-top:8px;">
+          <summary class="tip" style="cursor:pointer;font-weight:700;">高级：失败重试队列（排查时使用）</summary>
         <div class="webhook-control-row">
           <b>重试队列</b>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="retryFailedWebhook(true)">重试 dry-run</button>
+          <button class="btn btn-warning btn-sm" type="button" onclick="retryFailedWebhook(false)">恢复失败到重试队列</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'retry')">处理重试队列 1 条</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(5, 'retry')">处理重试队列 5 条</button>
           <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(10, 'retry')">处理重试队列 10 条</button>
@@ -2204,10 +2366,11 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <button class="btn btn-ghost btn-sm" type="button" onclick="reclassifyRetryPending(true)">检查误混入普通队列的重试事件</button>
           <button class="btn btn-warn btn-sm" type="button" onclick="reclassifyRetryPending(false)">确认移动到重试队列</button>
         </div>
+        </details>
         <div id="webhook-failure-summary" class="tip" style="margin-top:6px;line-height:1.7;">待读取失败统计</div>
-        <div id="webhook-failure-list" class="tip" style="margin-top:6px;line-height:1.7;"></div>
+        <div id="webhook-failure-list" class="tip settings-result-box" style="margin-top:6px;display:none;"></div>
       </div>
-      <div class="webhook-events-wrap" style="margin-top:10px;">
+      <div class="webhook-events-wrap settings-scroll-window" style="margin-top:10px;">
         <table class="webhook-events-table">
           <thead>
             <tr>
@@ -2245,6 +2408,23 @@ td.code { font-family: monospace; color: #1a2c5b; }
     </div>
   </div>
 
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-suppliers">
+  <div class="card">
+    <div class="card-title">供应商缓存</div>
+    <div class="settings-v2-note">
+      供应商缓存用于判断“辅料供应商”和建档下拉。刷新只写本地缓存，不会在 JDY 创建供应商；禁用供应商会保留记录但默认不参与业务判断。
+    </div>
+    <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-ghost" type="button" onclick="loadSupplierCacheStatus()">刷新状态</button>
+      <button class="btn btn-ghost" type="button" onclick="refreshSupplierCacheDryRun()">刷新 dry-run</button>
+      <button class="btn btn-warn" type="button" onclick="refreshSupplierCacheConfirm()">确认刷新供应商缓存</button>
+      <span id="supplier-cache-status-text" class="tip">待读取</span>
+    </div>
+    <div id="supplier-cache-status-box" class="settings-result-box" style="margin-top:12px;">待读取供应商缓存状态</div>
+  </div>
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-risk">
   <div class="card">
     <div class="card-title">系统在线更新</div>
     <div class="form-grid">
@@ -2276,6 +2456,15 @@ td.code { font-family: monospace; color: #1a2c5b; }
   </div>
 
   <div class="card">
+    <div class="card-title">高风险操作说明</div>
+    <div class="settings-v2-note">
+      资料补全、许可证写入、系统在线更新、回滚等操作可能写入 Excel、服务器文件或触发服务重启。执行前需要二次确认；本页仅整理入口，不改变原有业务逻辑。
+    </div>
+  </div>
+
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-logs">
+  <div class="card">
     <div class="card-title">服务器日志</div>
     <div class="form-grid">
       <div class="form-item">
@@ -2300,7 +2489,17 @@ td.code { font-family: monospace; color: #1a2c5b; }
   </div>
 
   <div class="card">
-    <div class="card-title">调拨单 API 路径（高级，有问题时调整）</div>
+    <div class="card-title">操作日志</div>
+    <div id="settings-operation-log" class="settings-oplog">等待操作...</div>
+  </div>
+
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-customs">
+  <div class="card">
+    <div class="card-title">报关设置</div>
+    <div class="settings-v2-note" style="margin-bottom:12px;">
+      报关主链路仍使用“调拨/报关单”列表选择数据并调用原有生成逻辑。本阶段只整理设置入口，不改 /transfer-* 或 /generate 业务接口。
+    </div>
     <div class="form-grid">
       <div class="form-item full">
         <label>调拨单列表端点（默认 /jdyconnector/jdyscm/allot/list）</label>
@@ -2310,6 +2509,22 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <p class="tip" style="margin-top:8px;">
       如果调拨单列表加载失败，请登录 open.jdy.com 查看实际接口路径后在此修改。
     </p>
+  </div>
+      </section>
+      <section class="settings-v2-pane" id="settings-pane-attachments">
+  <div class="card">
+    <div class="card-title">附件设置</div>
+    <div class="settings-v2-note">
+      附件来源规则先按业务固定日期展示：2026-05-28 当天及之前优先读取旧购货/采购附件；2026-05-29 及之后优先读取采购订单附件。本阶段不下载附件，不调用 JDY。
+    </div>
+    <div class="settings-info-grid" style="margin-top:12px;">
+      <div class="settings-info-card"><span>切换日期</span><b>2026-05-28</b></div>
+      <div class="settings-info-card"><span>旧流程来源</span><b>购货单 / 采购附件</b></div>
+      <div class="settings-info-card"><span>新流程来源</span><b>采购订单附件</b></div>
+    </div>
+  </div>
+      </section>
+    </main>
   </div>
 </div>
 
@@ -5675,6 +5890,7 @@ const WEBHOOK_STATUS_LABELS = {
   done: '已完成',
   failed: '失败',
   ignored: '已归档忽略',
+  cleaned: '已清理',
   skipped: '已跳过',
   superseded: '已被更新事件替代',
 };
@@ -5768,9 +5984,41 @@ function translateWebhookError(error) {
 function webhookStatusClass(status) {
   if (status === 'done') return 'webhook-ok';
   if (status === 'failed') return 'webhook-error';
-  if (status === 'ignored') return 'webhook-warn';
+  if (status === 'ignored' || status === 'cleaned') return 'webhook-warn';
   if (status === 'pending' || status === 'retry_pending' || status === 'processing') return 'webhook-warn';
   return '';
+}
+
+function showSettingsPane(name) {
+  const target = name || 'account';
+  document.querySelectorAll('.settings-v2-pane').forEach(pane => {
+    pane.classList.toggle('active', pane.id === `settings-pane-${target}`);
+  });
+  document.querySelectorAll('.settings-v2-menu [data-settings-pane]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.settingsPane === target);
+  });
+  appendSettingsLog(`切换设置分区：${target}`);
+  if (target === 'cache') {
+    loadWebhookStatus();
+  } else if (target === 'suppliers') {
+    loadSupplierCacheStatus();
+  } else if (target === 'logs') {
+    loadSystemLogs().catch(() => {});
+  }
+}
+
+function appendSettingsLog(message, level = 'info') {
+  const box = document.getElementById('settings-operation-log');
+  if (!box) return;
+  if (box.textContent.trim() === '等待操作...') box.textContent = '';
+  const line = document.createElement('div');
+  line.className = 'settings-oplog-line';
+  const color = level === 'error' ? '#fecaca' : level === 'warn' ? '#fde68a' : '#dbeafe';
+  line.style.color = color;
+  const ts = new Date().toLocaleString('zh-CN', { hour12: false });
+  line.textContent = `[${ts}] ${message}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
 }
 
 async function setWebhookProcessingMode(mode) {
@@ -5790,8 +6038,10 @@ async function setWebhookProcessingMode(mode) {
     if (!data.success) throw new Error(data.error || '切换失败');
     const help = document.getElementById('webhook-mode-help');
     if (help) help.textContent = `已切换为${labels[mode] || mode}`;
+    appendSettingsLog(`Webhook 处理模式已切换为：${labels[mode] || mode}`);
     await loadWebhookStatus();
   } catch (e) {
+    appendSettingsLog('切换 Webhook 处理模式失败：' + e.message, 'error');
     alert('切换 Webhook 处理模式失败：' + e.message);
   }
 }
@@ -5827,10 +6077,12 @@ async function recoverStaleWebhook(action) {
         statusEl.textContent = `发现 ${Number(data.count || 0)} 条卡住事件${preview ? '：' + preview : ''}`;
       }
     }
+    appendSettingsLog(isRecover ? '已恢复卡住 Webhook 事件' : '已查看卡住 Webhook 事件');
     await loadWebhookStatus();
   } catch (e) {
     if (statusEl) statusEl.textContent = '卡住事件操作失败：' + e.message;
     else alert('卡住事件操作失败：' + e.message);
+    appendSettingsLog('卡住事件操作失败：' + e.message, 'error');
   }
 }
 
@@ -5904,6 +6156,114 @@ function renderWebhookArchiveResult(data, params, dryRun) {
   }
 }
 
+let lastCleanupDryRunKey = '';
+
+function webhookCleanupParamKey(params) {
+  return JSON.stringify({
+    resource: params?.resource || '',
+    error_keyword: params?.error_keyword || '',
+    order: params?.order || 'oldest',
+    limit: Number(params?.limit || 0),
+    older_than_hours: Number(params?.older_than_hours || 24),
+  });
+}
+
+function formatWebhookSummaryRows(rows, labelFn) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.length
+    ? list.slice(0, 12).map(row => `${webhookHtml(labelFn(row.value || ''))} × ${Number(row.count || 0)}`).join('；')
+    : '暂无';
+}
+
+function renderWebhookCleanupResult(data, params, dryRun) {
+  const el = document.getElementById('webhook-cleanup-result');
+  if (!el) return;
+  const count = Number(data?.count ?? data?.cleaned ?? 0);
+  const sampleIds = (data?.sample_ids || data?.ids || []).slice(0, 50).map(id => `#${Number(id || 0)}`).join('，') || '无';
+  const keyword = params?.error_keyword || '未填写';
+  const resource = params?.resource ? translateWebhookResource(params.resource) : '全部类型';
+  const byStatus = formatWebhookSummaryRows(data?.by_status, translateWebhookStatus);
+  const byResource = formatWebhookSummaryRows(data?.by_resource, translateWebhookResource);
+  const byError = formatWebhookSummaryRows(data?.by_error, translateWebhookError);
+  el.style.display = 'block';
+  if (dryRun) {
+    el.innerHTML = `
+      <b>旧错误清理 dry-run 结果</b><br>
+      dry-run：是<br>
+      将清理总数：<b>${count}</b><br>
+      错误关键词：${webhookHtml(keyword)}<br>
+      类型筛选：${webhookHtml(resource)}<br>
+      按状态汇总：${byStatus}<br>
+      按类型汇总：${byResource}<br>
+      按错误汇总：${byError}<br>
+      样本 ID：${webhookHtml(sampleIds)}<br>
+      将执行动作：旧 webhook 噪音标记为 cleaned；不清理 pending / processing / done。<br>
+      安全说明：真实执行前会备份数据库；本次 dry-run 不写库、不调用 JDY、不启动 worker、不处理 pending。
+    `;
+    if (!count) {
+      el.innerHTML += '<br><b>dry-run 完成，未命中可清理旧错误。</b>';
+    }
+  } else {
+    el.innerHTML = `
+      <b>旧错误清理执行结果</b><br>
+      已清理数量：<b>${Number(data?.cleaned || 0)}</b><br>
+      状态变化：failed / ignored / retry_pending -&gt; cleaned<br>
+      备份文件：${webhookHtml(data?.backup_path || '未返回')}<br>
+      安全说明：没有调用 JDY，没有启动 worker，没有处理 pending/processing，没有删除业务缓存表。
+    `;
+  }
+}
+
+async function cleanupOldWebhook(dryRun) {
+  const params = webhookFailureParams();
+  params.older_than_hours = 24;
+  const endpoint = dryRun ? 'cleanup-old-dry-run' : 'cleanup-old';
+  if (!dryRun) {
+    const key = webhookCleanupParamKey(params);
+    if (!lastCleanupDryRunKey || lastCleanupDryRunKey !== key) {
+      alert('请先执行一次相同筛选条件的“旧错误清理 dry-run”，确认命中范围后再清理。');
+      return;
+    }
+    const ok = window.confirm('确认清理旧 Webhook 错误噪音吗？执行前会备份数据库；不会调用 JDY，不会处理 pending/processing，也不会删除业务缓存表。');
+    if (!ok) return;
+    params.confirm = 'CLEANUP_OLD_WEBHOOK';
+  }
+  const resultEl = document.getElementById('webhook-cleanup-result');
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = dryRun ? '正在执行旧错误清理 dry-run...' : '正在清理旧 Webhook 错误...';
+  }
+  appendSettingsLog(dryRun ? '开始旧错误清理 dry-run' : '开始清理旧 Webhook 错误');
+  try {
+    const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (jsonError) {
+      data = { success: false, error: `HTTP ${res.status}` };
+    }
+    if (!data.success) throw new Error(data.error || '操作失败');
+    if (dryRun) {
+      lastCleanupDryRunKey = webhookCleanupParamKey(params);
+    } else {
+      lastCleanupDryRunKey = '';
+    }
+    renderWebhookCleanupResult(data, params, dryRun);
+    appendSettingsLog(dryRun ? `旧错误清理 dry-run 命中 ${Number(data.count || 0)} 条` : `旧错误清理完成 ${Number(data.cleaned || 0)} 条`);
+    await loadWebhookStatus();
+  } catch (e) {
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<b>旧错误清理请求失败</b>：${webhookHtml(e.message || String(e))}`;
+    }
+    appendSettingsLog('旧错误清理失败：' + e.message, 'error');
+  }
+}
+
 async function startWebhookManual(count, queue = 'normal') {
   const inputCount = Number(document.getElementById('webhook-manual-count')?.value || 10);
   const maxItems = Math.max(1, Math.min(Number(count || inputCount || 1), 500));
@@ -5921,8 +6281,10 @@ async function startWebhookManual(count, queue = 'normal') {
     if (!data.success) throw new Error(data.error || '启动失败');
     const help = document.getElementById('webhook-mode-help');
     if (help) help.textContent = `已启动手动处理 ${maxItems} 条${qLabel}；可随时暂停。`;
+    appendSettingsLog(`启动手动处理：${qLabel} ${maxItems} 条`);
     await loadWebhookStatus();
   } catch (e) {
+    appendSettingsLog('启动手动处理失败：' + e.message, 'error');
     alert('启动手动处理失败：' + e.message);
   }
 }
@@ -5950,13 +6312,16 @@ async function loadWebhookFailures() {
       summaryEl.innerHTML = `失败总数：${Number(data.total || 0)}<br>错误 Top：${errorText}<br>类型 Top：${resourceText}`;
     }
     if (listEl) {
+      listEl.style.display = 'block';
       const items = data.items || [];
       listEl.innerHTML = items.length ? items.map(row =>
         `#${Number(row.id || 0)} ${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} ${webhookHtml(row.bill_no || '')}：${webhookHtml(translateWebhookError(row.error || ''))}`
       ).join('<br>') : '暂无失败记录';
     }
+    appendSettingsLog(`读取失败队列：${Number(data.total || 0)} 条`);
   } catch (e) {
     if (summaryEl) summaryEl.textContent = '读取失败队列失败：' + e.message;
+    appendSettingsLog('读取失败队列失败：' + e.message, 'error');
   }
 }
 
@@ -5978,15 +6343,18 @@ async function retryFailedWebhook(dryRun) {
     if (!data.success) throw new Error(data.error || '操作失败');
     const listEl = document.getElementById('webhook-failure-list');
     if (listEl) {
+      listEl.style.display = 'block';
       if (dryRun) {
         listEl.innerHTML = `将恢复 ${Number(data.count || 0)} 条 failed 到重试队列：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
       } else {
         listEl.innerHTML = `已恢复 ${Number(data.recovered || 0)} 条 failed 到 retry_pending；请在重试队列区手动处理 N 条。`;
       }
     }
+    appendSettingsLog(dryRun ? `失败重试 dry-run：${Number(data.count || 0)} 条` : `失败恢复到重试队列：${Number(data.recovered || 0)} 条`);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
+    appendSettingsLog('失败队列重试操作失败：' + e.message, 'error');
     alert('失败队列重试操作失败：' + e.message);
   }
 }
@@ -6029,6 +6397,7 @@ async function archiveFailedWebhook(dryRun) {
       lastArchiveDryRunKey = '';
     }
     renderWebhookArchiveResult(data, params, dryRun);
+    appendSettingsLog(dryRun ? `历史失败归档 dry-run 命中 ${Number(data.count || 0)} 条` : `历史失败归档完成 ${Number(data.archived || 0)} 条`);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
@@ -6038,6 +6407,7 @@ async function archiveFailedWebhook(dryRun) {
     } else {
       alert('历史失败归档失败：' + e.message);
     }
+    appendSettingsLog('历史失败归档失败：' + e.message, 'error');
   }
 }
 
@@ -6059,15 +6429,18 @@ async function reclassifyRetryPending(dryRun) {
     if (!data.success) throw new Error(data.error || '操作失败');
     const listEl = document.getElementById('webhook-failure-list');
     if (listEl) {
+      listEl.style.display = 'block';
       if (dryRun) {
         listEl.innerHTML = `发现 ${Number(data.count || 0)} 条误混入普通队列的重试事件：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
       } else {
         listEl.innerHTML = `已移动 ${Number(data.reclassified || 0)} 条事件到 retry_pending。`;
       }
     }
+    appendSettingsLog(dryRun ? `误混入重试事件 dry-run：${Number(data.count || 0)} 条` : `误混入重试事件已移动：${Number(data.reclassified || 0)} 条`);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
+    appendSettingsLog('重试队列重新归类失败：' + e.message, 'error');
     alert('重试队列重新归类失败：' + e.message);
   }
 }
@@ -6090,15 +6463,18 @@ async function resolveRecordedOnly(dryRun) {
     if (!data.success) throw new Error(data.error || '操作失败');
     const listEl = document.getElementById('webhook-failure-list');
     if (listEl) {
+      listEl.style.display = 'block';
       if (dryRun) {
         listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条 recorded only：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
       } else {
         listEl.innerHTML = `已归档 ${Number(data.resolved || 0)} 条 recorded only failed 为 done。`;
       }
     }
+    appendSettingsLog(dryRun ? `recorded only 归档 dry-run：${Number(data.count || 0)} 条` : `recorded only 已归档：${Number(data.resolved || 0)} 条`);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
+    appendSettingsLog('recorded only 归档失败：' + e.message, 'error');
     alert('recorded only 归档失败：' + e.message);
   }
 }
@@ -6127,7 +6503,7 @@ async function loadWebhookStatus() {
     }
     const counts = data.counts || {};
     if (countsEl) {
-      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed', 'ignored'].map(key => `
+      countsEl.innerHTML = ['pending', 'retry_pending', 'processing', 'done', 'failed', 'ignored', 'cleaned'].map(key => `
         <div class="webhook-stat">
           <span class="tip">${webhookHtml(translateWebhookStatus(key))}</span>
           <b>${Number(counts[key] || 0)}</b>
@@ -6220,13 +6596,15 @@ async function loadWebhookStatus() {
     if (duplicateEl) {
       const normalText = duplicates.length
         ? `正常重复待处理 Top：${duplicates.map(row => {
-            const ids = (row.ids || []).slice(0, 8).join(',');
+            const idsRaw = row.ids || [];
+            const ids = (Array.isArray(idsRaw) ? idsRaw : String(idsRaw).split(',')).slice(0, 8).join(',');
             return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
           }).join('；')}`
         : '正常重复待处理：暂无';
       const retryText = retryDuplicates.length
         ? `重试重复待处理 Top：${retryDuplicates.map(row => {
-            const ids = (row.ids || []).slice(0, 8).join(',');
+            const idsRaw = row.ids || [];
+            const ids = (Array.isArray(idsRaw) ? idsRaw : String(idsRaw).split(',')).slice(0, 8).join(',');
             return `${webhookHtml(translateWebhookResource(row.resource || 'unknown'))} / 单号 ${webhookHtml(row.bill_no || '')} × ${Number(row.count || row.retry_pending_count || 0)}${ids ? ' / IDs: ' + webhookHtml(ids) : ''}`;
           }).join('；')}`
         : '重试重复待处理：暂无';
@@ -6250,6 +6628,28 @@ async function loadWebhookStatus() {
         `;
       }).join('') : '<tr><td colspan="8" class="tip">暂无 Webhook 事件</td></tr>';
     }
+    const todayPrefix = new Date().toISOString().slice(0, 10);
+    const todayDone = recent.filter(row => String(row.processed_at || row.created_at || '').startsWith(todayPrefix) && row.status === 'done').length;
+    const todayFailed = recent.filter(row => String(row.processed_at || row.created_at || '').startsWith(todayPrefix) && row.status === 'failed').length;
+    const pendingTotal = Number(data.pending_count || counts.pending || 0);
+    const processingTotal = Number(counts.processing || 0);
+    const workerText = data.worker_alive ? '存活' : '未运行';
+    const heartbeatText = data.worker_last_loop_at || data.worker_last_heartbeat_at || '暂无';
+    const lastErr = data.worker_last_exception || data.state?.last_error || '暂无错误';
+    const dailyTime = document.getElementById('s-daily-compare-time')?.value || '未设置';
+    const endpointCard = document.getElementById('webhook-card-endpoint');
+    const todayCard = document.getElementById('webhook-card-today');
+    const pendingCard = document.getElementById('webhook-card-pending');
+    const workerCard = document.getElementById('webhook-card-worker');
+    const dailyCard = document.getElementById('webhook-card-daily');
+    const heartbeatCard = document.getElementById('webhook-card-heartbeat');
+    if (endpointCard) endpointCard.textContent = endpoint.local_ready ? 'ready' : '异常';
+    if (todayCard) todayCard.textContent = `完成 ${todayDone} / 失败 ${todayFailed}`;
+    if (pendingCard) pendingCard.textContent = `待处理 ${pendingTotal} / 处理中 ${processingTotal}`;
+    if (workerCard) workerCard.textContent = `${workerText} / ${translateWebhookMode(processingMode)}`;
+    if (dailyCard) dailyCard.textContent = dailyTime;
+    if (heartbeatCard) heartbeatCard.textContent = `${heartbeatText} / ${lastErr}`;
+    appendSettingsLog(`刷新 Webhook 状态：pending ${pendingTotal}，failed ${Number(counts.failed || 0)}，cleaned ${Number(counts.cleaned || 0)}`);
     await loadWebhookFailures();
   } catch (e) {
     if (endpointEl) {
@@ -6257,6 +6657,7 @@ async function loadWebhookStatus() {
       endpointEl.style.color = '#d93025';
     }
     if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="8" class="webhook-error">读取失败</td></tr>';
+    appendSettingsLog('刷新 Webhook 状态失败：' + e.message, 'error');
   }
 }
 
@@ -6293,12 +6694,14 @@ async function saveSalesSyncConfig() {
       status.textContent = '同步设置已保存';
       status.style.color = '#19a453';
     }
+    appendSettingsLog('缓存 / 推送同步设置已保存');
     await loadSalesSyncConfig();
   } catch (e) {
     if (status) {
       status.textContent = '保存失败：' + e.message;
       status.style.color = '#d93025';
     }
+    appendSettingsLog('保存缓存设置失败：' + e.message, 'error');
   }
 }
 
@@ -6317,14 +6720,135 @@ async function runSalesSyncNow() {
     if (data.started === false && data.running) {
       if (status) status.textContent = '已有同步任务正在运行，请稍后查看状态';
     }
+    appendSettingsLog('已提交立即低频比对任务');
     await pollSalesSyncStatus();
   } catch (e) {
     if (status) {
       status.textContent = '同步失败：' + e.message;
       status.style.color = '#d93025';
     }
+    appendSettingsLog('立即低频比对失败：' + e.message, 'error');
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+function renderSupplierCacheStatus(data, title = '供应商缓存状态') {
+  const box = document.getElementById('supplier-cache-status-box');
+  const text = document.getElementById('supplier-cache-status-text');
+  if (!box) return;
+  const accounts = data?.per_account || {};
+  const accountHtml = Object.entries(accounts).map(([account, row]) => {
+    const enabled = Number(row.enabled || 0);
+    const disabled = Number(row.disabled || 0);
+    const total = Number(row.total || 0);
+    const accessory = Number(row.accessory_matched || 0);
+    const updated = row.last_updated_at || row.updated_at || '';
+    return `<div><b>${webhookHtml(account)}</b>：总数 ${total}，启用 ${enabled}，禁用 ${disabled}，辅料匹配 ${accessory}${updated ? '，最近更新 ' + webhookHtml(updated) : ''}</div>`;
+  }).join('') || '<div>暂无供应商统计</div>';
+  const jsonCache = data?.json_cache || {};
+  const jsonHtml = Object.entries(jsonCache).map(([name, row]) => {
+    const exists = row && row.exists ? '存在' : '不存在';
+    const total = Number(row?.total || row?.items_count || 0);
+    const syncTime = row?.sync_time || '';
+    return `<div>${webhookHtml(name)}：${exists}，items ${total}${syncTime ? '，sync_time ' + webhookHtml(syncTime) : ''}</div>`;
+  }).join('') || '<div>暂无 JSON 缓存信息</div>';
+  const missing = (data?.missing_columns || []).join('，') || '无';
+  box.innerHTML = `
+    <b>${webhookHtml(title)}</b><br>
+    <div style="margin-top:6px;">${accountHtml}</div>
+    <div style="margin-top:8px;"><b>JSON 缓存</b><br>${jsonHtml}</div>
+    <div style="margin-top:8px;">缺失字段：${webhookHtml(missing)}</div>
+  `;
+  if (text) text.textContent = '已读取';
+}
+
+function renderSupplierRefreshResult(data, title) {
+  const box = document.getElementById('supplier-cache-status-box');
+  const text = document.getElementById('supplier-cache-status-text');
+  if (!box) return;
+  const results = data?.results || [];
+  const html = results.map(row => {
+    const account = row.account || '';
+    const modes = Array.isArray(row.modes) ? row.modes : [row.summary || row];
+    const modeHtml = modes.map(totals => {
+      const mode = totals.mode || row.mode || '';
+      const parts = [
+        `看到 ${Number(totals.seen || 0)}`,
+        `新增 ${Number(totals.would_insert || totals.inserted || 0)}`,
+        `更新 ${Number(totals.would_update || totals.updated || 0)}`,
+        `标禁用 ${Number(totals.would_mark_disabled || totals.marked_disabled || 0)}`,
+        `忽略禁用 ${Number(totals.new_disabled_ignored || totals.disabled_ignored || 0)}`,
+      ];
+      return `${webhookHtml(mode)}：${parts.join('，')}`;
+    }).join('<br>');
+    return `<div style="margin-bottom:8px;"><b>${webhookHtml(account)}</b><br>${modeHtml}</div>`;
+  }).join('') || '<div>暂无结果</div>';
+  box.innerHTML = `
+    <b>${webhookHtml(title)}</b><br>
+    ${html}
+    ${data?.backup_path ? `<div style="margin-top:8px;">备份：${webhookHtml(data.backup_path)}</div>` : ''}
+    <div class="tip" style="margin-top:8px;">${webhookHtml(data?.message || '')}</div>
+  `;
+  if (text) text.textContent = title;
+}
+
+async function loadSupplierCacheStatus() {
+  const text = document.getElementById('supplier-cache-status-text');
+  const box = document.getElementById('supplier-cache-status-box');
+  if (text) text.textContent = '读取中...';
+  try {
+    const res = await fetch(`${API}/supplier-cache/status`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    renderSupplierCacheStatus(data);
+    appendSettingsLog('刷新供应商缓存状态完成');
+  } catch (e) {
+    if (text) text.textContent = '读取失败';
+    if (box) box.innerHTML = `<b>供应商缓存状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('供应商缓存状态读取失败：' + e.message, 'error');
+  }
+}
+
+async function refreshSupplierCacheDryRun() {
+  const box = document.getElementById('supplier-cache-status-box');
+  if (box) box.innerHTML = '正在执行供应商刷新 dry-run...';
+  appendSettingsLog('开始供应商刷新 dry-run');
+  try {
+    const res = await fetch(`${API}/supplier-cache/refresh-dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ account: 'all', mode: 'full', page_size: 500, max_pages: 5 }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'dry-run 失败');
+    renderSupplierRefreshResult(data, '供应商刷新 dry-run 结果');
+    appendSettingsLog('供应商刷新 dry-run 完成');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>供应商刷新 dry-run 失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('供应商刷新 dry-run 失败：' + e.message, 'error');
+  }
+}
+
+async function refreshSupplierCacheConfirm() {
+  const ok = window.confirm('确认刷新供应商缓存吗？这会调用 JDY 只读 supplier/list，写入本地 SQLite 和运行时 JSON 缓存；不会在 JDY 创建供应商。');
+  if (!ok) return;
+  const box = document.getElementById('supplier-cache-status-box');
+  if (box) box.innerHTML = '正在刷新供应商缓存...';
+  appendSettingsLog('开始确认刷新供应商缓存', 'warn');
+  try {
+    const res = await fetch(`${API}/supplier-cache/refresh`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ account: 'all', mode: 'full', page_size: 500, max_pages: 20, confirm: 'REFRESH_SUPPLIERS' }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '刷新失败');
+    renderSupplierRefreshResult(data, '供应商缓存刷新完成');
+    appendSettingsLog('供应商缓存刷新完成');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>供应商缓存刷新失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('供应商缓存刷新失败：' + e.message, 'error');
   }
 }
 

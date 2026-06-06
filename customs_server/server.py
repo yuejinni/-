@@ -182,6 +182,7 @@ def _admin_path_required():
         '/jdy-webhook/resolve-recorded-only-dry-run', '/jdy-webhook/resolve-recorded-only',
         '/jdy-webhook/reclassify-retry-pending-dry-run', '/jdy-webhook/reclassify-retry-pending',
         '/jdy-webhook/archive-failed-dry-run', '/jdy-webhook/archive-failed',
+        '/jdy-webhook/cleanup-old-dry-run', '/jdy-webhook/cleanup-old',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
@@ -10112,6 +10113,174 @@ def jdy_webhook_archive_failed():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _webhook_cleanup_old_params(raw):
+    raw = raw or {}
+    order = str(raw.get('order') or 'oldest').strip().lower()
+    if order not in ('oldest', 'newest'):
+        order = 'oldest'
+    try:
+        limit = int(raw.get('limit') or 200)
+    except Exception:
+        limit = 200
+    limit = max(1, min(limit, 5000))
+    try:
+        older_than_hours = int(raw.get('older_than_hours') or 24)
+    except Exception:
+        older_than_hours = 24
+    older_than_hours = max(0, min(older_than_hours, 24 * 3650))
+    return {
+        'resource': str(raw.get('resource') or '').strip(),
+        'error_keyword': str(raw.get('error_keyword') or '').strip(),
+        'order': order,
+        'limit': limit,
+        'older_than_hours': older_than_hours,
+    }
+
+
+def _webhook_cleanup_old_where(params):
+    params = _webhook_cleanup_old_params(params)
+    clauses = ["status IN ('failed', 'ignored', 'retry_pending')"]
+    values = []
+    if params['resource']:
+        clauses.append('resource = ?')
+        values.append(params['resource'])
+    if params['error_keyword']:
+        clauses.append('LOWER(COALESCE(error, "")) LIKE ?')
+        values.append(f"%{params['error_keyword'].lower()}%")
+    else:
+        clauses.append('''(
+            status IN ('ignored', 'retry_pending')
+            OR resource = 'test_address'
+            OR LOWER(COALESCE(error, '')) LIKE '%account not configured%'
+            OR LOWER(COALESCE(error, '')) LIKE '%recorded only%'
+            OR LOWER(COALESCE(error, '')) LIKE '%unsupported resource%'
+            OR LOWER(COALESCE(error, '')) LIKE '%no-match%'
+            OR LOWER(COALESCE(error, '')) LIKE '%recovered for retry%'
+            OR LOWER(COALESCE(error, '')) LIKE '%historical account mapping%'
+            OR LOWER(COALESCE(error, '')) LIKE '%daily full compare%'
+        )''')
+    if params['older_than_hours'] > 0:
+        cutoff = (datetime.now() - timedelta(hours=params['older_than_hours'])).strftime('%Y-%m-%d %H:%M:%S')
+        clauses.append("COALESCE(NULLIF(processed_at, ''), NULLIF(created_at, ''), '1970-01-01 00:00:00') < ?")
+        values.append(cutoff)
+    return ' AND '.join(clauses), values, params
+
+
+def _webhook_cleanup_old_snapshot(conn, raw):
+    where, values, params = _webhook_cleanup_old_where(raw)
+    direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
+    rows = conn.execute(f'''
+        SELECT id, account, biz_type, resource, bill_no, action, status, attempts, error, created_at, processed_at
+        FROM webhook_events
+        WHERE {where}
+        ORDER BY id {direction}
+        LIMIT ?
+    ''', values + [params['limit']]).fetchall()
+    items = [dict(row) for row in rows]
+    ids = [int(row['id']) for row in items]
+
+    def summarize(field, max_rows=30):
+        if not ids:
+            return []
+        marks = ','.join('?' for _ in ids)
+        return [dict(row) for row in conn.execute(f'''
+            SELECT COALESCE({field}, '') AS value, COUNT(*) AS count
+            FROM webhook_events
+            WHERE id IN ({marks})
+            GROUP BY {field}
+            ORDER BY count DESC, value
+            LIMIT ?
+        ''', ids + [max_rows]).fetchall()]
+
+    return {
+        'params': params,
+        'count': len(items),
+        'items': items,
+        'ids': ids,
+        'sample_ids': ids[:50],
+        'by_status': summarize('status'),
+        'by_resource': summarize('resource'),
+        'by_error': summarize('error', max_rows=20),
+        'will_backup': True,
+        'will_not_clean': ['pending', 'processing', 'done'],
+        'will_not_call_jdy': True,
+        'will_not_start_worker': True,
+        'cleanup_action': 'status will be changed to cleaned; business cache tables are not touched',
+    }
+
+
+@app.route('/jdy-webhook/cleanup-old-dry-run', methods=['POST'])
+def jdy_webhook_cleanup_old_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        conn = _sales_readonly_conn()
+        if conn is None:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'count': 0,
+                'items': [],
+                'sample_ids': [],
+                'by_status': [],
+                'by_resource': [],
+                'by_error': [],
+                'will_backup': False,
+                'message': 'sales cache database does not exist; no cleanup needed',
+            })
+        try:
+            snapshot = _webhook_cleanup_old_snapshot(conn, data)
+        finally:
+            conn.close()
+        snapshot.update({
+            'success': True,
+            'dry_run': True,
+            'message': 'dry run only; webhook_events was not changed',
+        })
+        return jsonify(snapshot)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/jdy-webhook/cleanup-old', methods=['POST'])
+def jdy_webhook_cleanup_old():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '') != 'CLEANUP_OLD_WEBHOOK':
+            return jsonify({'success': False, 'error': 'missing confirm CLEANUP_OLD_WEBHOOK; cleanup was not executed'}), 400
+        backup_path = _backup_sales_cache_db('before_webhook_cleanup')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cleanup_message = 'cleaned old webhook noise; covered by daily full compare'
+        with _sales_cache_conn() as conn:
+            snapshot = _webhook_cleanup_old_snapshot(conn, data)
+            ids = [int(x) for x in snapshot.get('ids') or []]
+            if ids:
+                marks = ','.join('?' for _ in ids)
+                conn.execute(f'''
+                    UPDATE webhook_events
+                    SET status = 'cleaned',
+                        error = ?,
+                        processed_at = ?
+                    WHERE id IN ({marks})
+                      AND status IN ('failed', 'ignored', 'retry_pending')
+                ''', [cleanup_message, now] + ids)
+                conn.commit()
+        _webhook_state.update({
+            'pending': _webhook_pending_count(),
+            'retry_pending': _webhook_pending_count('retry'),
+            'message': f'cleaned {len(ids)} old webhook event(s); worker was not started',
+        })
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'cleaned': len(ids),
+            'ids': ids,
+            'backup_path': backup_path,
+            'message': 'old webhook noise marked as cleaned; JDY was not called and worker was not started',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 def _webhook_reclassify_retry_rows(conn, params):
     params = _webhook_failure_params(params)
     direction = 'ASC' if params['order'] == 'oldest' else 'DESC'
@@ -10846,18 +11015,16 @@ def accessory_products_sync_status():
 def accessory_products_sync_run():
     try:
         wait = str(request.args.get('wait') or '').lower() in ('1', 'true', 'yes', 'y')
+        account = request.args.get('account') or 'all'
         if wait:
-            result = _run_accessory_product_sync(reason='manual')
+            result = _run_accessory_product_sync(reason='manual', account=account)
             return jsonify({'success': True, 'started': True, 'result': result, 'state': _accessory_product_sync_state})
-        if _accessory_product_sync_lock.locked() or _accessory_product_sync_state.get('running'):
-            return jsonify({'success': True, 'started': False, 'running': True, 'state': _accessory_product_sync_state})
-        t = threading.Thread(
+        threading.Thread(
             target=_run_accessory_product_sync,
-            kwargs={'reason': 'manual'},
+            kwargs={'reason': 'manual', 'account': account},
             daemon=True,
             name='accessory-product-sync-manual',
-        )
-        t.start()
+        ).start()
         return jsonify({'success': True, 'started': True, 'running': True, 'state': _accessory_product_sync_state})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e), 'state': _accessory_product_sync_state}), 500
@@ -10867,12 +11034,10 @@ def accessory_products_sync_run():
 def accessory_orders_sync_status():
     return jsonify({
         'success': True,
-        'config': _sales_sync_config(),
         'state': _accessory_sync_state,
         'stats': _accessory_purchase_cache_stats(),
         'supplier_stats': _supplier_cache_stats(),
     })
-
 
 @app.route('/accessory-orders-sync-run', methods=['POST'])
 def accessory_orders_sync_run():
