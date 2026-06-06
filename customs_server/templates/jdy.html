@@ -2190,6 +2190,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="tip" style="margin-top:4px;line-height:1.7;">
           历史失败归档为 ignored 不代表业务已成功处理，只代表这条历史失败不再重放，后续由每日整体比对或人工低频同步兜底。
         </div>
+        <div id="webhook-archive-result" class="tip" style="display:none;margin-top:8px;padding:10px;border:1px solid #d8e7ff;background:#f7fbff;border-radius:8px;line-height:1.8;"></div>
         <div class="webhook-control-row">
           <b>重试队列</b>
           <button class="btn btn-ghost btn-sm" type="button" onclick="startWebhookManual(1, 'retry')">处理重试队列 1 条</button>
@@ -5845,6 +5846,64 @@ function webhookFailureParams() {
   };
 }
 
+let lastArchiveDryRunKey = '';
+
+function webhookArchiveParamKey(params) {
+  return JSON.stringify({
+    resource: params?.resource || '',
+    error_keyword: params?.error_keyword || '',
+    order: params?.order || 'oldest',
+    limit: Number(params?.limit || 0),
+    reason: params?.reason || '',
+  });
+}
+
+function renderWebhookArchiveResult(data, params, dryRun) {
+  const el = document.getElementById('webhook-archive-result');
+  if (!el) return;
+  const items = data?.items || [];
+  const resourceCounts = {};
+  items.forEach(row => {
+    const resource = row?.resource || 'unknown';
+    resourceCounts[resource] = (resourceCounts[resource] || 0) + 1;
+  });
+  const resourceText = Object.entries(resourceCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([resource, count]) => `${webhookHtml(translateWebhookResource(resource))} ${count}`)
+    .join(' / ') || '暂无';
+  const sampleIds = items.slice(0, 20).map(row => `#${Number(row.id || 0)}`).join('，') || '无';
+  const keyword = params?.error_keyword || '未填写';
+  const resource = params?.resource ? translateWebhookResource(params.resource) : '全部类型';
+  const count = Number(data?.count ?? data?.archived ?? 0);
+  const reason = translateWebhookError(data?.archive_reason || params?.reason || '');
+  el.style.display = 'block';
+  if (dryRun) {
+    el.innerHTML = `
+      <b>归档 dry-run 结果</b><br>
+      dry-run：是<br>
+      命中数量：<b>${count}</b><br>
+      错误关键词：${webhookHtml(keyword)}<br>
+      类型筛选：${webhookHtml(resource)}<br>
+      resource 分布：${resourceText}<br>
+      将归档状态：failed -&gt; ignored<br>
+      安全说明：本次不会写库 / 不会调用 JDY / 不会启动 worker / 不会处理 pending。<br>
+      样本 ID：${webhookHtml(sampleIds)}<br>
+      归档原因：${webhookHtml(reason || '历史失败归档，由每日整体比对兜底')}
+    `;
+    if (!count) {
+      el.innerHTML += '<br><b>dry-run 完成，未命中可归档 failed。</b>';
+    }
+  } else {
+    el.innerHTML = `
+      <b>归档执行结果</b><br>
+      已归档数量：<b>${Number(data?.archived || 0)}</b><br>
+      状态变化：failed -&gt; ignored<br>
+      安全说明：没有调用 JDY，没有启动 worker，没有处理 pending/retry_pending。<br>
+      归档原因：${webhookHtml(reason || '历史失败归档，由每日整体比对兜底')}
+    `;
+  }
+}
+
 async function startWebhookManual(count, queue = 'normal') {
   const inputCount = Number(document.getElementById('webhook-manual-count')?.value || 10);
   const maxItems = Math.max(1, Math.min(Number(count || inputCount || 1), 500));
@@ -5937,9 +5996,19 @@ async function archiveFailedWebhook(dryRun) {
   const endpoint = dryRun ? 'archive-failed-dry-run' : 'archive-failed';
   params.reason = 'historical_account_mapping_failure_daily_compare_covers';
   if (!dryRun) {
+    const key = webhookArchiveParamKey(params);
+    if (!lastArchiveDryRunKey || lastArchiveDryRunKey !== key) {
+      alert('请先执行一次相同筛选条件的“历史失败归档 dry-run”，确认命中范围后再归档。');
+      return;
+    }
     const ok = window.confirm(`确认把最多 ${params.limit} 条匹配的历史 failed 归档为 ignored 吗？归档不会调用 JDY，也不会进入 pending/retry_pending；后续由每日整体比对兜底。`);
     if (!ok) return;
     params.confirm = 'ARCHIVE_FAILED_WEBHOOK';
+  }
+  const resultEl = document.getElementById('webhook-archive-result');
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `${dryRun ? '正在执行归档 dry-run...' : '正在归档历史失败...'}`;
   }
   try {
     const res = await fetch(`${API}/jdy-webhook/${endpoint}`, {
@@ -5947,20 +6016,28 @@ async function archiveFailedWebhook(dryRun) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(params),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || '操作失败');
-    const listEl = document.getElementById('webhook-failure-list');
-    if (listEl) {
-      if (dryRun) {
-        listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条历史 failed 为 ignored：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}<br>${webhookHtml(translateWebhookError(data.archive_reason || ''))}`;
-      } else {
-        listEl.innerHTML = `已归档 ${Number(data.archived || 0)} 条历史 failed 为 ignored；不会自动重放，后续由每日整体比对兜底。`;
-      }
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (jsonError) {
+      data = { success: false, error: `HTTP ${res.status}` };
     }
+    if (!data.success) throw new Error(data.error || '操作失败');
+    if (dryRun) {
+      lastArchiveDryRunKey = webhookArchiveParamKey(params);
+    } else {
+      lastArchiveDryRunKey = '';
+    }
+    renderWebhookArchiveResult(data, params, dryRun);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
-    alert('历史失败归档失败：' + e.message);
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<b>dry-run 请求失败</b>：${webhookHtml(e.message || String(e))}`;
+    } else {
+      alert('历史失败归档失败：' + e.message);
+    }
   }
 }
 
