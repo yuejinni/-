@@ -906,6 +906,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
   font-size: 13px;
   color: #566476;
 }
+.attachment-candidates {
+  max-height: 190px;
+  overflow: auto;
+}
 .attachment-diagnostics ul,
 .attachment-candidates ul {
   margin: 6px 0 0 18px;
@@ -941,6 +945,40 @@ td.code { font-family: monospace; color: #1a2c5b; }
   font-size: 11px;
   line-height: 1.35;
   word-break: break-all;
+}
+.attachment-dryrun-tool {
+  border-top: 1px solid #e5edf5;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.attachment-dryrun-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.attachment-dryrun-results {
+  border: 1px solid #e5edf5;
+  border-radius: 8px;
+  background: #fbfdff;
+  margin-top: 12px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 10px;
+}
+.attachment-dryrun-item {
+  border-bottom: 1px solid #e8eef5;
+  padding: 9px 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: #566476;
+}
+.attachment-dryrun-item:last-child {
+  border-bottom: 0;
+}
+.attachment-dryrun-item b {
+  color: #17315f;
 }
 .sales-product-card h4 {
   margin: 0 0 6px;
@@ -1417,6 +1455,9 @@ td.code { font-family: monospace; color: #1a2c5b; }
     grid-template-columns: 1fr;
   }
   .attachment-status-grid {
+    grid-template-columns: 1fr;
+  }
+  .attachment-dryrun-grid {
     grid-template-columns: 1fr;
   }
   .webhook-events-table {
@@ -2582,6 +2623,43 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div class="attachment-status-row"><span>采购订单缓存</span><b>待读取</b></div>
       <div class="attachment-status-row"><span>本地文件字段</span><b>待读取</b></div>
       <div class="attachment-status-row"><span>附件下载能力</span><b>待读取</b></div>
+    </div>
+    <div class="attachment-dryrun-tool">
+      <div class="settings-v2-note">
+        附件元数据补齐预览当前只做本地候选来源预览，不调用 JDY，不下载附件，不写入 bill_attachments。
+      </div>
+      <div class="attachment-dryrun-grid">
+        <div class="form-item">
+          <label>账套</label>
+          <input id="attachment-dryrun-account" type="text" placeholder="留空为全部">
+        </div>
+        <div class="form-item">
+          <label>来源类型</label>
+          <select id="attachment-dryrun-source-type">
+            <option value="">全部本地候选</option>
+            <option value="purchase_order">采购订单附件候选</option>
+            <option value="purchase_inbound">旧购货附件候选</option>
+          </select>
+        </div>
+        <div class="form-item">
+          <label>日期范围</label>
+          <input id="attachment-dryrun-date-from" type="date">
+        </div>
+        <div class="form-item">
+          <label>结束日期 / limit</label>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 82px;gap:8px;">
+            <input id="attachment-dryrun-date-to" type="date">
+            <input id="attachment-dryrun-limit" type="number" min="1" max="200" value="50">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="runAttachmentDryRun()">dry-run 预览本地候选（不联网/不下载/不写库）</button>
+        <button type="button" class="btn btn-ghost btn-sm" disabled title="需确认官方附件接口后启用">确认补齐需确认官方接口后启用</button>
+      </div>
+      <div class="attachment-dryrun-results" id="attachment-dryrun-results">
+        <div class="attachment-empty">等待 dry-run 预览本地候选来源</div>
+      </div>
     </div>
     <div class="settings-v2-note" style="margin-top:12px;">
       附件补齐和下载将作为管理员手动低频任务另做；未确认官方附件接口前，不在普通页面自动联网或下载。
@@ -4094,6 +4172,25 @@ function reorderAttachmentEmptyMessage(message) {
   return text;
 }
 
+async function attachmentFetchJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const contentType = res.headers.get('content-type') || '';
+  const text = await res.text();
+  if (!contentType.includes('application/json')) {
+    throw new Error(`HTTP ${res.status} ${contentType || '无 Content-Type'}：${text.slice(0, 200)}`);
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`HTTP ${res.status} ${contentType}：JSON 解析失败；${text.slice(0, 200)}`);
+  }
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || `HTTP ${res.status} ${contentType}：${text.slice(0, 200)}`);
+  }
+  return data;
+}
+
 function renderReorderAttachmentModal(data) {
   const body = document.getElementById('reorder-attachment-body');
   if (!body) return;
@@ -4124,7 +4221,12 @@ function renderReorderAttachmentModal(data) {
       <ul>
         ${candidates.map(row => `
           <li>${salesAttr(reorderAttachmentSourceLabel(row.source_type))} ${salesAttr(row.source_number || '—')} ${salesAttr(row.source_date || '')}
-            <span style="color:#8a96a3;">(${salesAttr(row.reason || '')})</span>
+            <span style="color:#8a96a3;">
+              ${salesAttr(row.product_code || '')}
+              ${salesAttr(row.supplier_name || row.supplier_number || '')}
+              ${row.attachment_count != null ? `；本地附件字段 ${Number(row.attachment_count || 0)} 个` : ''}
+              （${salesAttr(row.reason || '')}）
+            </span>
           </li>
         `).join('')}
       </ul>
@@ -4147,6 +4249,8 @@ function renderReorderAttachmentModal(data) {
       <div>附件切换日期：<b>${salesAttr(data.attachment_switch_date || '2026-05-28')}</b></div>
       <div>优先附件来源：<b>${salesAttr(reorderAttachmentSourceLabel(data.preferred_source))}</b></div>
       <div>来源可信度：<b>${salesAttr(reorderAttachmentConfidenceLabel(data.source_confidence))}</b></div>
+      <div>本地附件命中：<b>${attachments.length ? `是（${attachments.length} 个）` : '否'}</b></div>
+      <div>候选状态：<b>${attachments.length ? '已命中附件' : (candidates.length ? '仅候选，需人工判断' : '无候选来源')}</b></div>
       <div>联网查询：<b>${data.live_lookup ? '是' : '否，本地只读'}</b></div>
       <div>当前配置日期1：<b>${salesAttr(configBegin)}</b></div>
       <div>当前配置日期2：<b>${salesAttr(configNew)}</b></div>
@@ -4169,9 +4273,7 @@ async function loadAttachmentStatus() {
     grid.innerHTML = '<div class="attachment-status-row"><span>附件缓存状态</span><b>正在读取...</b></div>';
   }
   try {
-    const res = await fetch(`${API}/attachments/status`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || '附件状态读取失败');
+    const data = await attachmentFetchJson(`${API}/attachments/status`);
     const tables = data.tables || {};
     const row = (title, tableKey) => {
       const info = tables[tableKey] || {};
@@ -4205,6 +4307,64 @@ async function loadAttachmentStatus() {
   }
 }
 
+function renderAttachmentDryRunResults(data) {
+  const box = document.getElementById('attachment-dryrun-results');
+  if (!box) return;
+  const candidates = data.candidates || [];
+  const summary = data.summary || {};
+  const warnings = data.warnings || [];
+  if (!candidates.length) {
+    box.innerHTML = `
+      <div class="attachment-empty">
+        未发现本地候选来源<br>
+        ${warnings.map(w => salesAttr(w)).join('<br>')}
+      </div>
+    `;
+    return;
+  }
+  box.innerHTML = `
+    <div class="settings-v2-note" style="margin-bottom:8px;">
+      候选 ${Number(summary.total_candidates || candidates.length)} 条；采购订单 ${Number(summary.purchase_order || 0)} 条；旧购货 ${Number(summary.purchase_inbound || 0)} 条；本地附件字段命中 ${Number(summary.with_local_attachment_fields || 0)} 条。
+    </div>
+    ${warnings.length ? `<div class="settings-v2-note" style="margin-bottom:8px;">${warnings.map(w => salesAttr(w)).join('<br>')}</div>` : ''}
+    ${candidates.map(row => `
+      <div class="attachment-dryrun-item">
+        <b>${salesAttr(reorderAttachmentSourceLabel(row.source_type))} ${salesAttr(row.source_number || '—')}</b>
+        <span>商品编号：${salesAttr(row.product_code || (row.product_codes || []).join(', ') || '—')}</span>
+        <span>供应商：${salesAttr(row.supplier_name || row.supplier_number || '—')}</span>
+        <span>来源日期：${salesAttr(row.source_date || '—')}；首选来源：${salesAttr(reorderAttachmentSourceLabel(row.preferred_source || row.source_type))}</span>
+        <span>诊断说明：${salesAttr((row.diagnostics || []).join('；') || '本地候选来源，仅供人工判断')}</span>
+      </div>
+    `).join('')}
+  `;
+}
+
+async function runAttachmentDryRun() {
+  const box = document.getElementById('attachment-dryrun-results');
+  const payload = {
+    account: document.getElementById('attachment-dryrun-account')?.value || '',
+    source_type: document.getElementById('attachment-dryrun-source-type')?.value || '',
+    date_from: document.getElementById('attachment-dryrun-date-from')?.value || '',
+    date_to: document.getElementById('attachment-dryrun-date-to')?.value || '',
+    limit: Number(document.getElementById('attachment-dryrun-limit')?.value || 50),
+    mode: 'local_candidates_only',
+  };
+  if (box) box.innerHTML = '<div class="attachment-empty">正在 dry-run 扫描本地候选来源...</div>';
+  appendSettingsLog('开始附件 dry-run：本地候选，不联网/不下载/不写库');
+  try {
+    const data = await attachmentFetchJson(`${API}/attachments/refresh-dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    renderAttachmentDryRunResults(data);
+    appendSettingsLog(`附件 dry-run 完成：${Number(data.summary?.total_candidates || 0)} 条候选`);
+  } catch(e) {
+    if (box) box.innerHTML = `<div class="attachment-empty">附件 dry-run 失败：${salesAttr(e.message)}</div>`;
+    appendSettingsLog(`附件 dry-run 失败：${e.message}`, 'error');
+  }
+}
+
 async function loadReorderItemAttachments(id, btn) {
   if (!id) return;
   const modal = document.getElementById('reorder-attachment-modal');
@@ -4213,9 +4373,7 @@ async function loadReorderItemAttachments(id, btn) {
   if (body) body.innerHTML = '<div class="attachment-empty">正在读取本地附件缓存...</div>';
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch(`${API}/reorder-item-attachments/${id}`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || '附件查询失败');
+    const data = await attachmentFetchJson(`${API}/reorder-item-attachments/${id}`);
     renderReorderAttachmentModal(data);
   } catch(e) {
     if (body) body.innerHTML = `<div class="attachment-empty">附件查询失败：${salesAttr(e.message)}</div>`;
