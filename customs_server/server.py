@@ -33,6 +33,9 @@ import subprocess
 import time
 import shutil
 import zipfile
+import re
+import urllib.request
+from urllib.parse import urlparse
 
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -188,6 +191,7 @@ def _admin_path_required():
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
         '/attachments/status', '/attachments/refresh-dry-run', '/attachments/refresh',
+        '/attachments/history-backfill-dry-run', '/attachments/history-backfill',
     }
     if request.path in admin_exact:
         return True
@@ -4633,6 +4637,12 @@ def _extract_purchase_attachments(obj):
         fid = str(_first_value(item, [
             'id', 'fileId', 'attachmentId', 'uid', 'key'
         ], '') or '').strip()
+        mime = str(_first_value(item, [
+            'file_mime', 'mime', 'mimeType', 'contentType'
+        ], '') or '').strip()
+        size = _num(_first_value(item, [
+            'file_size', 'size', 'fileSize', 'contentLength'
+        ], 0))
         hint_text = str(hint or '').lower()
         raw_keys = ' '.join(str(k).lower() for k in item.keys())
         looks_like_attachment = any(x in hint_text for x in attachment_key_markers) or any(
@@ -4655,6 +4665,8 @@ def _extract_purchase_attachments(obj):
             'id': fid,
             'name': name or hint or fid or '附件',
             'url': url,
+            'file_mime': mime,
+            'file_size': size,
             'raw': item,
         })
 
@@ -4736,6 +4748,7 @@ def _attachment_is_image(att):
 def _attachment_payload(att, source_type, source_number, source_date, source_account, bill_type=''):
     raw = att.get('raw') if isinstance(att.get('raw'), dict) else att
     local_path = str(att.get('local_path') or att.get('localPath') or '').strip()
+    local_url = _attachment_public_url(local_path)
     url = str(att.get('url') or '').strip()
     name = str(att.get('name') or att.get('fileName') or att.get('attachmentName') or '附件').strip()
     file_mime = str(att.get('file_mime') or att.get('mime') or att.get('mimeType') or '').strip()
@@ -4746,6 +4759,8 @@ def _attachment_payload(att, source_type, source_number, source_date, source_acc
         'url': url,
         'local_path': local_path,
         'localPath': local_path,
+        'local_url': local_url,
+        'localUrl': local_url,
         'source_type': source_type,
         'sourceType': source_type,
         'source_number': source_number or '',
@@ -5333,6 +5348,65 @@ def _attachment_limit(value, default=20, maximum=50):
     return max(1, min(limit, maximum))
 
 
+def _ensure_purchase_attachment_items_table(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS purchase_attachment_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT,
+            source_type TEXT,
+            source_number TEXT,
+            source_date TEXT,
+            supplier_number TEXT,
+            supplier_name TEXT,
+            product_code TEXT,
+            product_name TEXT,
+            spec TEXT,
+            qty REAL,
+            unit TEXT,
+            price REAL,
+            amount REAL,
+            attachment_key TEXT,
+            attachment_id INTEGER,
+            data_json TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_purchase_attachment_items_product
+        ON purchase_attachment_items(account, product_code)
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_purchase_attachment_items_supplier
+        ON purchase_attachment_items(account, supplier_number)
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_purchase_attachment_items_source
+        ON purchase_attachment_items(account, source_type, source_number)
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_purchase_attachment_items_date
+        ON purchase_attachment_items(source_date)
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_attachment_items_unique
+        ON purchase_attachment_items(account, source_type, source_number, product_code, attachment_key)
+    ''')
+
+
+def _history_backfill_write_conn():
+    if not os.path.exists(_SALES_CACHE_DB):
+        return None, '本地销售缓存不存在'
+    conn = sqlite3.connect(_SALES_CACHE_DB, timeout=30)
+    conn.row_factory = sqlite3.Row
+    if not _attachment_has_table(conn, 'bill_attachments'):
+        conn.close()
+        return None, 'bill_attachments 表不存在，已停止写入'
+    _ensure_purchase_attachment_items_table(conn)
+    conn.commit()
+    return conn, ''
+
+
 def _attachment_stable_key(source_number, name='', url=''):
     raw = '|'.join(str(x or '').strip() for x in (source_number, name, url))
     return hashlib.sha1(raw.encode('utf-8', errors='ignore')).hexdigest()[:24]
@@ -5367,6 +5441,130 @@ def _normalize_attachment_meta(att, source):
     }
 
 
+def _safe_attachment_filename(text, default='attachment'):
+    text = str(text or '').strip() or default
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', text)
+    text = re.sub(r'\s+', ' ', text).strip(' .')
+    return (text or default)[:120]
+
+
+def _attachment_download_root():
+    return os.path.join(_DATA_BASE, '_attachments', 'purchase_documents')
+
+
+def _attachment_public_url(local_path):
+    local_path = str(local_path or '').strip()
+    if not local_path:
+        return ''
+    root = os.path.abspath(_attachment_download_root())
+    full = os.path.abspath(local_path)
+    try:
+        rel = os.path.relpath(full, root)
+    except Exception:
+        return ''
+    if rel.startswith('..') or os.path.isabs(rel):
+        return ''
+    return '/attachments/local-file/' + rel.replace('\\', '/')
+
+
+def _attachment_local_rel_path(source, meta):
+    source_date = str(source.get('source_date') or '')[:10]
+    year = source_date[:4] if len(source_date) >= 4 else datetime.now().strftime('%Y')
+    month = source_date[5:7] if len(source_date) >= 7 else datetime.now().strftime('%m')
+    label = '采购订单' if source.get('source_type') == 'purchase_order' else '购货单'
+    name = _safe_attachment_filename(meta.get('name') or meta.get('attachment_key') or 'attachment')
+    base, ext = os.path.splitext(name)
+    if not ext:
+        parsed_ext = os.path.splitext(urlparse(meta.get('url') or '').path)[1]
+        ext = parsed_ext[:12] if parsed_ext else ''
+    filename = _safe_attachment_filename(f"{label}_{source.get('source_number') or ''}_{base}")[:150]
+    suffix = hashlib.sha1('|'.join([
+        source.get('account') or '', source.get('source_type') or '',
+        source.get('source_number') or '', meta.get('attachment_key') or '',
+    ]).encode('utf-8', errors='ignore')).hexdigest()[:8]
+    return os.path.join(year, month, f'{filename}_{suffix}{ext}')
+
+
+def _download_attachment_file(meta, source, timeout=30, max_bytes=20 * 1024 * 1024):
+    url = str(meta.get('url') or '').strip()
+    if not url:
+        return '', 'skipped_no_url', '附件没有明确 URL，未下载'
+    rel_path = _attachment_local_rel_path(source, meta)
+    abs_path = os.path.join(_attachment_download_root(), rel_path)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'QihangJDY-AttachmentBackfill/1.0'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            total = 0
+            with open(abs_path, 'wb') as f:
+                while True:
+                    chunk = resp.read(1024 * 64)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError('附件超过 20MB，已停止下载')
+                    f.write(chunk)
+        return abs_path, 'downloaded', ''
+    except Exception as e:
+        try:
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
+        except Exception:
+            pass
+        return '', 'failed', _short_sync_error(e)
+
+
+def _order_entry_product_code(entry):
+    return str(_first_value(entry, [
+        'productNumber', 'code', 'number', 'materialNumber', 'productNo', 'skuNumber'
+    ], '') or '').strip()
+
+
+def _order_entry_projection(entry):
+    return {
+        'product_code': _order_entry_product_code(entry),
+        'product_name': str(_first_value(entry, ['name', 'productName', 'materialName'], '') or '').strip(),
+        'spec': str(_first_value(entry, ['spec', 'specification', 'model'], '') or '').strip(),
+        'qty': _num(_first_value(entry, ['qty', 'quantity', 'baseQty', 'actualQty'], 0)),
+        'unit': str(_first_value(entry, ['unit', 'unitName'], '') or '').strip(),
+        'price': _num(_first_value(entry, ['price', 'taxPrice', 'unitPrice'], 0)),
+        'amount': _num(_first_value(entry, ['amount', 'taxAmount', 'totalAmount'], 0)),
+    }
+
+
+def _upsert_purchase_attachment_item(conn, source, entry, attachment_key, attachment_id=None):
+    data = _order_entry_projection(entry)
+    if not data['product_code']:
+        return False
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute('''
+        INSERT OR REPLACE INTO purchase_attachment_items
+        (id, account, source_type, source_number, source_date, supplier_number, supplier_name,
+         product_code, product_name, spec, qty, unit, price, amount, attachment_key, attachment_id,
+         data_json, created_at, updated_at)
+        VALUES (
+          COALESCE((SELECT id FROM purchase_attachment_items
+                    WHERE account=? AND source_type=? AND source_number=? AND product_code=? AND attachment_key=?), NULL),
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?,
+          COALESCE((SELECT created_at FROM purchase_attachment_items
+                    WHERE account=? AND source_type=? AND source_number=? AND product_code=? AND attachment_key=?), ?),
+          ?
+        )
+    ''', (
+        source.get('account') or '', source.get('source_type') or '', source.get('source_number') or '',
+        data['product_code'], attachment_key,
+        source.get('account') or '', source.get('source_type') or '', source.get('source_number') or '',
+        source.get('source_date') or '', source.get('supplier_number') or '', source.get('supplier_name') or '',
+        data['product_code'], data['product_name'], data['spec'], data['qty'], data['unit'], data['price'], data['amount'],
+        attachment_key, attachment_id, json.dumps(entry or {}, ensure_ascii=False),
+        source.get('account') or '', source.get('source_type') or '', source.get('source_number') or '',
+        data['product_code'], attachment_key, now, now,
+    ))
+    return True
+
+
 def _bill_attachments_existing_write_conn():
     if not os.path.exists(_SALES_CACHE_DB):
         return None, '本地销售缓存不存在'
@@ -5394,14 +5592,16 @@ def _upsert_bill_attachment_metadata(conn, meta):
          data_json, created_at, updated_at)
         VALUES (
           COALESCE((SELECT id FROM bill_attachments WHERE account=? AND source_type=? AND source_number=? AND attachment_key=?), NULL),
-          ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 'metadata_only', '', ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           COALESCE((SELECT created_at FROM bill_attachments WHERE account=? AND source_type=? AND source_number=? AND attachment_key=?), ?),
           ?
         )
     ''', (
         meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key'],
         meta['account'], meta['source_type'], meta['source_number'], meta['source_date'], meta['bill_type'],
-        meta['attachment_key'], meta['name'], meta['url'], meta['file_mime'], meta['file_size'], meta['data_json'],
+        meta['attachment_key'], meta['name'], meta['url'], meta.get('local_path') or '',
+        meta['file_mime'], meta['file_size'], meta.get('download_status') or 'metadata_only',
+        meta.get('download_error') or '', meta['data_json'],
         meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key'], now,
         now,
     ))
@@ -5562,6 +5762,310 @@ def _refresh_attachment_metadata_for_candidates(filters):
         'warnings': warnings,
         'results': results,
     }
+
+
+def _history_backfill_plan(data, sample_jdy=False):
+    today = datetime.now().strftime('%Y-%m-%d')
+    mode = str(data.get('mode') or 'all').strip() or 'all'
+    if mode not in ('old_only', 'new_only', 'all'):
+        mode = 'all'
+    limit = _attachment_limit(data.get('limit'), default=50 if not sample_jdy else 5, maximum=5 if sample_jdy else 200)
+    page_size = _attachment_limit(data.get('page_size'), default=20, maximum=50)
+    sleep_ms = max(300, int(_num(data.get('sleep_ms') or 500) or 500))
+    old_from = str(data.get('old_date_from') or '2025-01-01').strip()[:10]
+    old_to = str(data.get('old_date_to') or ATTACHMENT_SWITCH_DATE).strip()[:10]
+    new_from = str(data.get('new_date_from') or '2026-05-29').strip()[:10]
+    new_to = str(data.get('new_date_to') or today).strip()[:10]
+    flows = []
+    if mode in ('old_only', 'all'):
+        flows.append({
+            'source_type': 'purchase_inbound',
+            'label': '旧流程购货/采购单',
+            'date_from': old_from,
+            'date_to': old_to,
+            'endpoint': 'purchase/list',
+        })
+    if mode in ('new_only', 'all'):
+        flows.append({
+            'source_type': 'purchase_order',
+            'label': '新流程采购订单',
+            'date_from': new_from,
+            'date_to': new_to,
+            'endpoint': 'purchaseOrder/list',
+        })
+    return {
+        'account': str(data.get('account') or '').strip(),
+        'mode': mode,
+        'limit': limit,
+        'page_size': page_size,
+        'sleep_ms': sleep_ms,
+        'download_files': bool(data.get('download_files', True)),
+        'flows': flows,
+    }
+
+
+def _history_fetch_flow(cli, flow, page, page_size):
+    if flow['source_type'] == 'purchase_order':
+        if not hasattr(cli, 'get_purchase_order_requests'):
+            raise RuntimeError('当前项目未确认 purchaseOrder/list 查询能力')
+        return cli.get_purchase_order_requests(
+            page=page,
+            page_size=page_size,
+            begin_date=flow['date_from'],
+            end_date=flow['date_to'],
+            check_status=2,
+        )
+    if not hasattr(cli, 'get_purchase_orders'):
+        raise RuntimeError('当前项目未确认 purchase/list 查询能力')
+    return cli.get_purchase_orders(
+        page=page,
+        page_size=page_size,
+        begin_date=flow['date_from'],
+        end_date=flow['date_to'],
+    )
+
+
+def _history_order_source(account, source_type, order):
+    supplier = _attachment_order_supplier(order)
+    return {
+        'account': account or '',
+        'source_type': source_type,
+        'source_number': str(_first_value(order, ['number', 'billNo', 'billNumber', 'id'], '') or '').strip(),
+        'source_date': str(_first_value(order, ['date', 'billDate', 'orderDate', 'createTime'], '') or '')[:10],
+        'supplier_number': supplier['supplier_number'],
+        'supplier_name': supplier['supplier_name'],
+    }
+
+
+def _history_process_order(conn, account, source_type, order, download_files=True):
+    source = _history_order_source(account, source_type, order)
+    if not source['source_number']:
+        return {'status': 'skipped', 'warning': '单据缺少单号', 'attachments_found': 0, 'items_indexed': 0}
+    attachments = _extract_purchase_attachments(order)
+    if not attachments:
+        return {'status': 'no_attachments', 'attachments_found': 0, 'items_indexed': 0, **source}
+    entries = [e for e in _reorder_entries_from_order(order) if isinstance(e, dict) and _order_entry_product_code(e)]
+    inserted = updated = files_downloaded = items_indexed = skipped = 0
+    warnings = []
+    for att in attachments:
+        meta = _normalize_attachment_meta(att, source)
+        if download_files:
+            local_path, status, err = _download_attachment_file(meta, source)
+            meta['local_path'] = local_path
+            meta['download_status'] = status
+            meta['download_error'] = err
+            if status == 'downloaded':
+                files_downloaded += 1
+            elif status in ('failed', 'skipped_no_url'):
+                warnings.append(f"{meta['name']}: {err or status}")
+        else:
+            meta['download_status'] = 'metadata_only'
+        action = _upsert_bill_attachment_metadata(conn, meta)
+        if action == 'inserted':
+            inserted += 1
+        else:
+            updated += 1
+        attach_row = conn.execute('''
+            SELECT id FROM bill_attachments
+            WHERE account=? AND source_type=? AND source_number=? AND attachment_key=?
+            LIMIT 1
+        ''', (meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key'])).fetchone()
+        attachment_id = attach_row['id'] if attach_row else None
+        for entry in entries:
+            if _upsert_purchase_attachment_item(conn, source, entry, meta['attachment_key'], attachment_id):
+                items_indexed += 1
+    return {
+        'status': 'indexed',
+        **source,
+        'attachments_found': len(attachments),
+        'entries_count': len(entries),
+        'inserted': inserted,
+        'updated': updated,
+        'files_downloaded': files_downloaded,
+        'items_indexed': items_indexed,
+        'skipped': skipped,
+        'warnings': warnings,
+    }
+
+
+def _run_history_backfill(data):
+    plan = _history_backfill_plan(data)
+    try:
+        backup_path = _backup_sales_cache_db('before_purchase_attachment_backfill')
+    except Exception as e:
+        return {
+            'success': False,
+            'called_jdy': False,
+            'download_files': plan['download_files'],
+            'metadata_written': False,
+            'sources_checked': 0,
+            'sources_with_attachments': 0,
+            'attachments_found': 0,
+            'files_downloaded': 0,
+            'items_indexed': 0,
+            'inserted': 0,
+            'updated': 0,
+            'skipped': 0,
+            'warnings': [f'备份 sales_cache.sqlite3 失败，已禁止继续写库：{_short_sync_error(e)}'],
+            'results': [],
+        }
+    conn, err = _history_backfill_write_conn()
+    if not conn:
+        return {
+            'success': False,
+            'called_jdy': False,
+            'download_files': plan['download_files'],
+            'metadata_written': False,
+            'sources_checked': 0,
+            'sources_with_attachments': 0,
+            'attachments_found': 0,
+            'files_downloaded': 0,
+            'items_indexed': 0,
+            'inserted': 0,
+            'updated': 0,
+            'skipped': 0,
+            'warnings': [err],
+            'results': [],
+            'backup_path': backup_path,
+        }
+    warnings = []
+    results = []
+    called_jdy = False
+    counters = {
+        'sources_checked': 0,
+        'sources_with_attachments': 0,
+        'attachments_found': 0,
+        'files_downloaded': 0,
+        'items_indexed': 0,
+        'inserted': 0,
+        'updated': 0,
+        'skipped': 0,
+    }
+    try:
+        for account_name, cli in _attachment_account_clients(plan['account'] or 'all'):
+            for flow in plan['flows']:
+                page = 1
+                while counters['sources_checked'] < plan['limit']:
+                    try:
+                        called_jdy = True
+                        res = _history_fetch_flow(cli, flow, page, plan['page_size'])
+                    except Exception as e:
+                        warnings.append(f"{account_name} {flow['label']} 查询失败：{_short_sync_error(e)}")
+                        break
+                    rows = res.get('list') or []
+                    if not rows:
+                        break
+                    for order in rows:
+                        if counters['sources_checked'] >= plan['limit']:
+                            break
+                        counters['sources_checked'] += 1
+                        summary = _history_process_order(conn, account_name, flow['source_type'], order, plan['download_files'])
+                        conn.commit()
+                        if summary.get('attachments_found'):
+                            counters['sources_with_attachments'] += 1
+                        counters['attachments_found'] += int(summary.get('attachments_found') or 0)
+                        counters['files_downloaded'] += int(summary.get('files_downloaded') or 0)
+                        counters['items_indexed'] += int(summary.get('items_indexed') or 0)
+                        counters['inserted'] += int(summary.get('inserted') or 0)
+                        counters['updated'] += int(summary.get('updated') or 0)
+                        counters['skipped'] += int(summary.get('skipped') or (1 if summary.get('status') in ('skipped', 'no_attachments') else 0))
+                        warnings.extend(summary.get('warnings') or [])
+                        results.append(summary)
+                    if len(rows) < plan['page_size']:
+                        break
+                    page += 1
+                    time.sleep(plan['sleep_ms'] / 1000.0)
+    finally:
+        conn.close()
+    return {
+        'success': True,
+        'called_jdy': called_jdy,
+        'download_files': plan['download_files'],
+        'metadata_written': True,
+        **counters,
+        'warnings': warnings,
+        'results': results,
+        'backup_path': backup_path,
+        'plan': plan,
+    }
+
+
+def _read_historical_purchase_attachments(conn, item, limit=50):
+    code = str(item.get('code') or item.get('product_code') or '').strip()
+    account = str(item.get('account') or '').strip()
+    supplier_number = str(item.get('supplier_number') or item.get('supplierNumber') or '').strip()
+    supplier_name = str(item.get('supplier_name') or item.get('supplierName') or '').strip()
+    diagnostics = [
+        '返单附件主逻辑按商品编号查询本地历史采购附件库，不再把返单 source_number 当采购/购货单号主匹配',
+    ]
+    if not code:
+        diagnostics.append('返单商品缺少商品编号，无法查询历史采购附件库')
+        return [], diagnostics
+    if not _attachment_has_table(conn, 'purchase_attachment_items'):
+        diagnostics.append('purchase_attachment_items 表不存在，请先执行历史采购附件补齐')
+        return [], diagnostics
+    clauses = ['i.product_code = ?']
+    params = [code]
+    if account:
+        clauses.append('i.account = ?')
+        params.append(account)
+    rows = conn.execute(f'''
+        SELECT i.*, b.name AS attachment_name, b.url, b.local_path, b.file_mime, b.file_size,
+               b.download_status, b.download_error, b.data_json AS attachment_data_json
+        FROM purchase_attachment_items i
+        LEFT JOIN bill_attachments b
+          ON b.account = i.account
+         AND b.source_type = i.source_type
+         AND b.source_number = i.source_number
+         AND b.attachment_key = i.attachment_key
+        WHERE {' AND '.join(clauses)}
+        ORDER BY
+          CASE
+            WHEN i.supplier_number = ? AND ? != '' THEN 0
+            WHEN i.supplier_name = ? AND ? != '' THEN 0
+            ELSE 1
+          END,
+          CASE WHEN COALESCE(b.local_path, '') != '' THEN 0 ELSE 1 END,
+          CASE WHEN COALESCE(b.url, '') != '' THEN 0 ELSE 1 END,
+          i.source_date DESC,
+          i.source_number DESC
+        LIMIT ?
+    ''', [*params, supplier_number, supplier_number, supplier_name, supplier_name, int(limit or 50)]).fetchall()
+    attachments = []
+    for row in rows:
+        same_supplier = bool(
+            (supplier_number and row['supplier_number'] == supplier_number) or
+            (supplier_name and row['supplier_name'] == supplier_name)
+        )
+        match_reason = '同商品同供应商历史采购附件' if same_supplier else '同商品其他供应商历史参考'
+        payload = _attachment_payload({
+            'id': row['attachment_key'],
+            'attachment_key': row['attachment_key'],
+            'name': row['attachment_name'] or row['attachment_key'] or '历史采购附件',
+            'url': row['url'] or '',
+            'local_path': row['local_path'] or '',
+            'file_mime': row['file_mime'] or '',
+            'file_size': row['file_size'] or 0,
+            'download_status': row['download_status'] or '',
+            'download_error': row['download_error'] or '',
+        }, row['source_type'], row['source_number'], row['source_date'], row['account'], row['source_type'])
+        payload.update({
+            'supplier_number': row['supplier_number'] or '',
+            'supplier_name': row['supplier_name'] or '',
+            'product_code': row['product_code'] or '',
+            'product_name': row['product_name'] or '',
+            'spec': row['spec'] or '',
+            'qty': _num(row['qty']),
+            'unit': row['unit'] or '',
+            'price': _num(row['price']),
+            'amount': _num(row['amount']),
+            'is_same_supplier': same_supplier,
+            'match_reason': match_reason,
+        })
+        attachments.append(payload)
+    if not attachments:
+        diagnostics.append('本地历史采购附件库中暂未找到该商品的采购附件')
+    return attachments, diagnostics
 
 
 def _cache_upsert_purchase_inbound(conn, account, order):
@@ -11465,7 +11969,7 @@ def reorder_item_attachments(item_id):
             account = str(item.get('account') or '').strip()
             source_number = str(item.get('source_number') or item.get('sourceNumber') or '').strip()
             source_date = str(item.get('source_date') or item.get('sourceDate') or '').strip()[:10]
-            query_payload = _read_local_attachment_source(conn, {
+            legacy_query_payload = _read_local_attachment_source(conn, {
                 'account': account,
                 'source_type': item.get('source_type') or item.get('sourceType') or '',
                 'source_number': source_number,
@@ -11474,12 +11978,15 @@ def reorder_item_attachments(item_id):
                 'supplier_number': item.get('supplier_number') or item.get('supplierNumber') or '',
                 'supplier_name': item.get('supplier_name') or item.get('supplierName') or '',
             })
-            preferred_source = query_payload['preferred_source']
-            attachments = query_payload['attachments']
-            diagnostics = query_payload['diagnostics']
-            candidate_sources = query_payload['candidate_sources']
-            source_confidence = query_payload['source_confidence']
-            message = query_payload['message']
+            attachments, history_diagnostics = _read_historical_purchase_attachments(conn, item, limit=80)
+            preferred_source = 'historical_purchase_documents'
+            diagnostics = history_diagnostics + [
+                '原返单 source_number 仅用于高级诊断，不作为附件主匹配依据',
+                *legacy_query_payload.get('diagnostics', []),
+            ]
+            candidate_sources = legacy_query_payload.get('candidate_sources', [])
+            source_confidence = 'historical_product_match' if attachments else 'unknown'
+            message = '已读取历史采购附件' if attachments else '本地历史采购附件库中暂未找到该商品的采购附件。请先在 设置 -> 附件设置 中执行历史采购附件补齐。'
         finally:
             conn.close()
 
@@ -11651,11 +12158,101 @@ def attachments_refresh():
         }), 500
 
 
+@app.route('/attachments/local-file/<path:relpath>', methods=['GET'])
+def attachments_local_file(relpath):
+    try:
+        root = os.path.abspath(_attachment_download_root())
+        full = os.path.abspath(os.path.join(root, relpath or ''))
+        if not full.startswith(root + os.sep) and full != root:
+            return jsonify({'success': False, 'error': '附件路径无效'}), 400
+        if not os.path.exists(full) or not os.path.isfile(full):
+            return jsonify({'success': False, 'error': '本地附件文件不存在'}), 404
+        return send_file(full)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/attachments/history-backfill-dry-run', methods=['POST'])
+def attachments_history_backfill_dry_run():
+    try:
+        data = request.get_json(silent=True) or {}
+        sample_jdy = bool(data.get('sample_jdy'))
+        plan = _history_backfill_plan(data, sample_jdy=sample_jdy)
+        warnings = [
+            'dry-run 默认不写库、不下载附件',
+            '历史附件补齐会按商品编号建立 purchase_attachment_items，用于返单附件匹配',
+        ]
+        sample = []
+        called_jdy = False
+        if sample_jdy:
+            for account_name, cli in _attachment_account_clients(plan['account'] or 'all')[:1]:
+                for flow in plan['flows'][:1]:
+                    try:
+                        called_jdy = True
+                        res = _history_fetch_flow(cli, flow, page=1, page_size=min(plan['page_size'], 5))
+                        for row in (res.get('list') or [])[:5]:
+                            sample.append({
+                                'account': account_name,
+                                'source_type': flow['source_type'],
+                                'source_number': str(_first_value(row, ['number', 'billNo', 'billNumber', 'id'], '') or ''),
+                                'source_date': str(_first_value(row, ['date', 'billDate', 'orderDate'], '') or '')[:10],
+                                'attachment_count': len(_extract_purchase_attachments(row)),
+                                'entry_count': len(_reorder_entries_from_order(row)),
+                                'raw_keys': sorted(str(k) for k in row.keys())[:40],
+                            })
+                    except Exception as e:
+                        warnings.append(f'抽样检查失败：{_short_sync_error(e)}')
+                    break
+                break
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'would_call_jdy': bool(sample_jdy),
+            'called_jdy': called_jdy,
+            'would_download': False,
+            'plan': plan,
+            'sample': sample,
+            'warnings': warnings,
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] attachments_history_backfill_dry_run: {tb}')
+        return jsonify({'success': False, 'dry_run': True, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/attachments/history-backfill', methods=['POST'])
+def attachments_history_backfill():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '').strip() != 'BACKFILL_PURCHASE_ATTACHMENTS':
+            return jsonify({
+                'success': False,
+                'called_jdy': False,
+                'download_files': bool(data.get('download_files', True)),
+                'metadata_written': False,
+                'error': '必须确认 confirm = BACKFILL_PURCHASE_ATTACHMENTS',
+            }), 400
+        payload = _run_history_backfill(data)
+        return jsonify(payload), (200 if payload.get('success') else 400)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] attachments_history_backfill: {tb}')
+        return jsonify({
+            'success': False,
+            'called_jdy': False,
+            'download_files': bool((request.get_json(silent=True) or {}).get('download_files', True)),
+            'metadata_written': False,
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
 @app.route('/attachments/status', methods=['GET'])
 def attachments_status():
     try:
         tables = {
             'bill_attachments': {'exists': False, 'count': 0, 'columns': []},
+            'purchase_attachment_items': {'exists': False, 'count': 0, 'columns': []},
             'purchase_inbound_attachments': {'exists': False, 'count': 0, 'columns': []},
             'purchase_inbounds': {'exists': False, 'count': 0, 'columns': []},
             'accessory_purchase_orders': {'exists': False, 'count': 0, 'columns': []},

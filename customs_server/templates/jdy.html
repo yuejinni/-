@@ -2702,6 +2702,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
     </div>
     <div class="attachment-status-grid" id="attachment-status-grid">
       <div class="attachment-status-row"><span>统一附件表</span><b>待读取</b></div>
+      <div class="attachment-status-row"><span>历史采购附件商品索引</span><b>待读取</b></div>
       <div class="attachment-status-row"><span>旧购货附件表</span><b>待读取</b></div>
       <div class="attachment-status-row"><span>购货单缓存</span><b>待读取</b></div>
       <div class="attachment-status-row"><span>采购订单缓存</span><b>待读取</b></div>
@@ -2743,6 +2744,63 @@ td.code { font-family: monospace; color: #1a2c5b; }
       </div>
       <div class="attachment-dryrun-results" id="attachment-dryrun-results">
         <div class="attachment-empty">等待 dry-run 预览本地候选来源</div>
+      </div>
+    </div>
+    <div class="attachment-dryrun-tool">
+      <div class="settings-v2-note">
+        历史采购附件库用于返单商品按商品编号匹配过往采购/购货纸质单据附件。补齐会低频调用 JDY，并把附件保存到服务端 _attachments/purchase_documents。
+      </div>
+      <div class="attachment-dryrun-grid">
+        <div class="form-item">
+          <label>账套</label>
+          <input id="attachment-history-account" type="text" placeholder="留空为全部">
+        </div>
+        <div class="form-item">
+          <label>模式</label>
+          <select id="attachment-history-mode">
+            <option value="all">全部</option>
+            <option value="old_only">旧流程</option>
+            <option value="new_only">新流程</option>
+          </select>
+        </div>
+        <div class="form-item">
+          <label>旧流程日期</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <input id="attachment-history-old-from" type="date" value="2025-01-01">
+            <input id="attachment-history-old-to" type="date" value="2026-05-28">
+          </div>
+        </div>
+        <div class="form-item">
+          <label>新流程日期</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <input id="attachment-history-new-from" type="date" value="2026-05-29">
+            <input id="attachment-history-new-to" type="date">
+          </div>
+        </div>
+        <div class="form-item">
+          <label>limit</label>
+          <input id="attachment-history-limit" type="number" min="1" max="200" value="50">
+        </div>
+        <div class="form-item">
+          <label>page_size</label>
+          <input id="attachment-history-page-size" type="number" min="1" max="50" value="20">
+        </div>
+        <div class="form-item">
+          <label>sleep_ms</label>
+          <input id="attachment-history-sleep-ms" type="number" min="300" value="500">
+        </div>
+        <label class="form-item" style="justify-content:end;">
+          <span>下载文件</span>
+          <input id="attachment-history-download" type="checkbox" checked>
+        </label>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="runAttachmentHistoryPlan(false)">dry-run 计划预览</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="runAttachmentHistoryPlan(true)">抽样检查 JDY 返回结构</button>
+        <button type="button" class="btn btn-warn btn-sm" onclick="runAttachmentHistoryBackfill()">开始低频补齐历史附件库</button>
+      </div>
+      <div class="attachment-dryrun-results" id="attachment-history-results">
+        <div class="attachment-empty">等待历史采购附件库计划预览</div>
       </div>
     </div>
     <div class="settings-v2-note" style="margin-top:12px;">
@@ -4225,6 +4283,7 @@ function renderReorderItems(list) {
 function reorderAttachmentSourceLabel(source) {
   if (source === 'purchase_inbound') return '购货单 / 采购单';
   if (source === 'purchase_order') return '采购订单';
+  if (source === 'historical_purchase_documents') return '历史采购附件';
   return '无法判断';
 }
 
@@ -4248,7 +4307,7 @@ function closeReorderAttachmentModal() {
 }
 
 function reorderAttachmentEmptyMessage(message) {
-  return '本地暂未缓存附件。可在 设置 -> 附件设置 中执行附件元数据补齐。';
+  return '本地历史采购附件库中暂未找到该商品的采购附件。可在 设置 -> 附件设置 中执行历史采购附件补齐。';
 }
 
 function attachmentLooksLikeImage(att) {
@@ -4269,14 +4328,15 @@ function handleAttachmentImageError(img) {
 function renderAttachmentCard(att, idx) {
   const url = att.url || '';
   const localPath = att.localPath || att.local_path || '';
+  const previewUrl = att.localUrl || att.local_url || url;
   const sourceType = att.sourceType || att.source_type || '';
   const sourceNumber = att.sourceNumber || att.source_number || '';
   const isImage = attachmentLooksLikeImage(att);
-  const preview = isImage && url
-    ? `<img src="${salesAttr(url)}" alt="${salesAttr(att.name || '附件图片')}" loading="lazy" onerror="handleAttachmentImageError(this)">`
+  const preview = isImage && previewUrl
+    ? `<img src="${salesAttr(previewUrl)}" alt="${salesAttr(att.name || '附件图片')}" loading="lazy" onerror="handleAttachmentImageError(this)">`
     : '<div>文件</div>';
-  const viewBtn = isImage && url
-    ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openSalesImageViewer('${salesJs(url)}')">查看</button>`
+  const viewBtn = isImage && previewUrl
+    ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openSalesImageViewer('${salesJs(previewUrl)}')">查看</button>`
     : '';
   const openBtn = url
     ? `<a class="btn btn-ghost btn-sm" href="${salesAttr(url)}" target="_blank" rel="noopener noreferrer">打开链接</a>`
@@ -4286,8 +4346,12 @@ function renderAttachmentCard(att, idx) {
       <div class="attachment-card-preview">${preview}</div>
       <div class="attachment-card-body">
         <strong>${idx + 1}. ${salesAttr(att.name || '附件')}</strong>
+        <span>单据类型：${salesAttr(reorderAttachmentSourceLabel(sourceType))}</span>
         <span>来源单号：${salesAttr(sourceNumber || '—')}</span>
-        <span>来源类型：${salesAttr(reorderAttachmentSourceLabel(sourceType))}</span>
+        <span>单据日期：${salesAttr(att.sourceDate || att.source_date || '—')}</span>
+        <span>供应商：${salesAttr(att.supplier_name || att.supplierName || att.supplier_number || att.supplierNumber || '—')}</span>
+        <span>数量：${salesAttr(att.qty ?? '—')}；单价：${salesAttr(att.price ?? '—')}；金额：${salesAttr(att.amount ?? '—')}</span>
+        <span>${salesAttr(att.match_reason || '')}</span>
         ${localPath ? '<span>本地文件已缓存</span>' : ''}
         <div class="attachment-card-actions">${viewBtn}${openBtn || '<span>无可打开链接</span>'}</div>
       </div>
@@ -4351,12 +4415,12 @@ function renderReorderAttachmentModal(data) {
     </div>
   ` : '';
   body.innerHTML = `
+    <h3 style="margin:0 0 8px;">历史采购附件</h3>
     <div class="attachment-business-summary">
       <div>商品编号：<b>${salesAttr(item.code || '—')}</b></div>
       <div>商品名称：<b>${salesAttr(item.name || '—')}</b></div>
       <div>供应商：<b>${salesAttr(item.supplier_name || item.supplierName || item.supplier_number || item.supplierNumber || '—')}</b></div>
-      <div>返单来源日期：<b>${salesAttr(item.source_date || '—')}</b></div>
-      <div>附件来源类型：<b>${salesAttr(reorderAttachmentSourceLabel(data.preferred_source))}</b></div>
+      <div>附件命中：<b>${attachments.length ? `${attachments.length} 个历史附件` : '暂无'}</b></div>
     </div>
     <div class="attachment-list">${listHtml}</div>
     <details class="attachment-diagnostics-details">
@@ -4364,6 +4428,7 @@ function renderReorderAttachmentModal(data) {
       <div class="attachment-meta-grid" style="margin-top:10px;">
         <div>来源可信度：<b>${salesAttr(reorderAttachmentConfidenceLabel(data.source_confidence))}</b></div>
         <div>返单来源单号：<b>${salesAttr(item.source_number || '—')}</b></div>
+        <div>返单来源类型：<b>${salesAttr(item.source_type || item.sourceType || '—')}</b></div>
         <div>本地附件命中：<b>${attachments.length ? `是（${attachments.length} 个）` : '否'}</b></div>
         <div>候选状态：<b>${attachments.length ? '已命中附件' : (candidates.length ? '仅候选，需人工判断' : '无候选来源')}</b></div>
         <div>联网查询：<b>${data.live_lookup ? '是' : '否'}</b></div>
@@ -4396,6 +4461,7 @@ async function loadAttachmentStatus() {
       const count = Number(info.count || 0);
       const noteMap = {
         bill_attachments: '正常：当前还未补齐附件元数据',
+        purchase_attachment_items: '历史采购附件商品索引',
         purchase_inbound_attachments: '正常：旧附件尚未导入本地',
         purchase_inbounds: '仅用于旧流程候选',
         accessory_purchase_orders: '可作为新流程候选来源',
@@ -4407,6 +4473,7 @@ async function loadAttachmentStatus() {
     if (grid) {
       grid.innerHTML = `
         ${row('统一附件表 bill_attachments', 'bill_attachments')}
+        ${row('历史采购附件商品索引 purchase_attachment_items', 'purchase_attachment_items')}
         ${row('旧购货附件表 purchase_inbound_attachments', 'purchase_inbound_attachments')}
         ${row('购货单缓存 purchase_inbounds', 'purchase_inbounds')}
         ${row('采购订单缓存 accessory_purchase_orders', 'accessory_purchase_orders')}
@@ -4543,6 +4610,114 @@ async function runAttachmentMetadataRefresh() {
     appendSettingsLog(`附件元数据补齐失败：${e.message}`, 'error');
   } finally {
     if (refreshBtn) refreshBtn.disabled = attachmentLastDryRunCount <= 0;
+  }
+}
+
+function attachmentHistoryPayload(sampleJdy = false) {
+  const today = new Date().toISOString().slice(0, 10);
+  const newTo = document.getElementById('attachment-history-new-to');
+  if (newTo && !newTo.value) newTo.value = today;
+  return {
+    account: document.getElementById('attachment-history-account')?.value || '',
+    mode: document.getElementById('attachment-history-mode')?.value || 'all',
+    old_date_from: document.getElementById('attachment-history-old-from')?.value || '2025-01-01',
+    old_date_to: document.getElementById('attachment-history-old-to')?.value || '2026-05-28',
+    new_date_from: document.getElementById('attachment-history-new-from')?.value || '2026-05-29',
+    new_date_to: newTo?.value || today,
+    limit: Number(document.getElementById('attachment-history-limit')?.value || 50),
+    page_size: Number(document.getElementById('attachment-history-page-size')?.value || 20),
+    sleep_ms: Number(document.getElementById('attachment-history-sleep-ms')?.value || 500),
+    download_files: Boolean(document.getElementById('attachment-history-download')?.checked),
+    sample_jdy: sampleJdy,
+  };
+}
+
+function renderAttachmentHistoryResult(data) {
+  const box = document.getElementById('attachment-history-results');
+  if (!box) return;
+  const warnings = data.warnings || [];
+  const results = data.results || data.sample || [];
+  const plan = data.plan || {};
+  if (data.dry_run) {
+    box.innerHTML = `
+      <div class="settings-v2-note" style="margin-bottom:8px;">
+        计划：${salesAttr(plan.mode || '')}；limit ${Number(plan.limit || 0)}；page_size ${Number(plan.page_size || 0)}；sleep ${Number(plan.sleep_ms || 0)}ms；${plan.download_files ? '会下载有 URL 的附件' : '仅写元数据'}。
+      </div>
+      ${(plan.flows || []).map(flow => `
+        <div class="attachment-dryrun-item">
+          <b>${salesAttr(flow.label || reorderAttachmentSourceLabel(flow.source_type))}</b>
+          <span>${salesAttr(flow.date_from || '')} ~ ${salesAttr(flow.date_to || '')}</span>
+          <span>接口：${salesAttr(flow.endpoint || '')}</span>
+        </div>
+      `).join('')}
+      ${results.length ? `<div class="settings-v2-note" style="margin:8px 0;">抽样 ${results.length} 条：</div>${results.map(row => `
+        <div class="attachment-dryrun-item">
+          <b>${salesAttr(reorderAttachmentSourceLabel(row.source_type))} ${salesAttr(row.source_number || '—')}</b>
+          <span>日期：${salesAttr(row.source_date || '—')}；附件字段：${Number(row.attachment_count || 0)}；明细：${Number(row.entry_count || 0)}</span>
+          <span>字段：${salesAttr((row.raw_keys || []).join(', '))}</span>
+        </div>
+      `).join('')}` : ''}
+      ${warnings.length ? `<div class="settings-v2-note" style="margin-top:8px;">${warnings.map(w => salesAttr(w)).join('<br>')}</div>` : ''}
+    `;
+    return;
+  }
+  box.innerHTML = `
+    <div class="settings-v2-note" style="margin-bottom:8px;">
+      检查单据 ${Number(data.sources_checked || 0)}；有附件单据 ${Number(data.sources_with_attachments || 0)}；附件 ${Number(data.attachments_found || 0)}；下载成功 ${Number(data.files_downloaded || 0)}；商品索引 ${Number(data.items_indexed || 0)}；写入 ${Number(data.inserted || 0)}；更新 ${Number(data.updated || 0)}；跳过 ${Number(data.skipped || 0)}。
+    </div>
+    ${data.backup_path ? `<div class="settings-v2-note" style="margin-bottom:8px;">备份：${salesAttr(data.backup_path)}</div>` : ''}
+    ${warnings.length ? `<div class="settings-v2-note" style="margin-bottom:8px;">${warnings.map(w => salesAttr(w)).join('<br>')}</div>` : ''}
+    ${results.length ? results.map(row => `
+      <div class="attachment-dryrun-item">
+        <b>${salesAttr(reorderAttachmentSourceLabel(row.source_type))} ${salesAttr(row.source_number || '—')}：${salesAttr(row.status || '')}</b>
+        <span>日期：${salesAttr(row.source_date || '—')}；供应商：${salesAttr(row.supplier_name || row.supplier_number || '—')}</span>
+        <span>附件：${Number(row.attachments_found || 0)}；下载：${Number(row.files_downloaded || 0)}；索引：${Number(row.items_indexed || 0)}；写入：${Number(row.inserted || 0)}；更新：${Number(row.updated || 0)}</span>
+        ${row.warnings?.length ? `<span>提示：${row.warnings.map(w => salesAttr(w)).join('；')}</span>` : ''}
+      </div>
+    `).join('') : '<div class="attachment-empty">没有执行结果明细</div>'}
+  `;
+}
+
+async function runAttachmentHistoryPlan(sampleJdy = false) {
+  const box = document.getElementById('attachment-history-results');
+  if (box) box.innerHTML = `<div class="attachment-empty">${sampleJdy ? '正在抽样检查 JDY 返回结构...' : '正在生成历史附件库 dry-run 计划...'}</div>`;
+  appendSettingsLog(sampleJdy ? '开始历史附件库 JDY 抽样检查' : '开始历史附件库 dry-run 计划');
+  try {
+    const data = await attachmentFetchJson(`${API}/attachments/history-backfill-dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(attachmentHistoryPayload(sampleJdy)),
+    });
+    renderAttachmentHistoryResult(data);
+    appendSettingsLog(sampleJdy ? '历史附件库抽样检查完成' : '历史附件库 dry-run 计划完成');
+  } catch(e) {
+    if (box) box.innerHTML = `<div class="attachment-empty">历史附件库 dry-run 失败：${salesAttr(e.message)}</div>`;
+    appendSettingsLog(`历史附件库 dry-run 失败：${e.message}`, 'error');
+  }
+}
+
+async function runAttachmentHistoryBackfill() {
+  const ok = window.confirm('将低频调用 JDY，下载采购/购货附件到本地，并写入 bill_attachments 与 purchase_attachment_items。不会修改销售、返单、报关、辅料业务数据。确认继续？');
+  if (!ok) return;
+  const box = document.getElementById('attachment-history-results');
+  const payload = {
+    ...attachmentHistoryPayload(false),
+    confirm: 'BACKFILL_PURCHASE_ATTACHMENTS',
+  };
+  if (box) box.innerHTML = '<div class="attachment-empty">正在低频补齐历史采购附件库...</div>';
+  appendSettingsLog('开始低频补齐历史采购附件库');
+  try {
+    const data = await attachmentFetchJson(`${API}/attachments/history-backfill`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    renderAttachmentHistoryResult(data);
+    appendSettingsLog(`历史附件库补齐完成：附件 ${Number(data.attachments_found || 0)}，下载 ${Number(data.files_downloaded || 0)}，索引 ${Number(data.items_indexed || 0)}`);
+    loadAttachmentStatus();
+  } catch(e) {
+    if (box) box.innerHTML = `<div class="attachment-empty">历史附件库补齐失败：${salesAttr(e.message)}</div>`;
+    appendSettingsLog(`历史附件库补齐失败：${e.message}`, 'error');
   }
 }
 
