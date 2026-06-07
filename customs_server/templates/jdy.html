@@ -929,7 +929,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
   font-size: 12px;
 }
 .attachment-status-row b {
+  display: block;
   color: #17315f;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .attachment-status-row small {
   display: block;
@@ -1411,6 +1414,9 @@ td.code { font-family: monospace; color: #1a2c5b; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .settings-info-grid {
+    grid-template-columns: 1fr;
+  }
+  .attachment-status-grid {
     grid-template-columns: 1fr;
   }
   .webhook-events-table {
@@ -2558,7 +2564,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <div class="card">
     <div class="card-title">附件设置</div>
     <div class="settings-v2-note">
-      附件来源规则先按业务固定日期展示：2026-05-28 当天及之前优先读取旧购货/采购附件；2026-05-29 及之后优先读取采购订单附件。本阶段不下载附件，不调用 JDY。
+      附件来源规则先按业务固定日期展示：2026-05-28 当天及之前优先读取旧购货/采购附件；2026-05-29 及之后优先读取采购订单附件。当前阶段只读取本地 SQLite 元数据；不会自动调用 JDY，也不会下载附件文件。
     </div>
     <div class="settings-info-grid" style="margin-top:12px;">
       <div class="settings-info-card"><span>切换日期</span><b>2026-05-28</b></div>
@@ -4063,6 +4069,7 @@ function reorderAttachmentSourceLabel(source) {
 function reorderAttachmentConfidenceLabel(value) {
   if (value === 'direct') return '直接来源';
   if (value === 'candidate') return '候选来源';
+  if (value === 'unable' || value === 'unknown') return '无法直接判断，当前来源号可能来自销售单或销售汇总，不一定是采购/购货单号';
   return '无法判断';
 }
 
@@ -4078,6 +4085,15 @@ function closeReorderAttachmentModal() {
   document.getElementById('reorder-attachment-modal')?.classList.add('hidden');
 }
 
+function reorderAttachmentEmptyMessage(message) {
+  const text = message || '采购订单附件本地未缓存';
+  if (text.includes('本地还没有补齐附件元数据')) return text;
+  if (text.includes('本地未缓存') || text.includes('主来源无附件')) {
+    return `${text}；这不代表 JDY 没有附件，只代表本地还没有补齐附件元数据。`;
+  }
+  return text;
+}
+
 function renderReorderAttachmentModal(data) {
   const body = document.getElementById('reorder-attachment-body');
   if (!body) return;
@@ -4087,7 +4103,7 @@ function renderReorderAttachmentModal(data) {
   const candidates = data.candidate_sources || [];
   const configBegin = data.config_factory_purchase_begin_date || '未设置';
   const configNew = data.config_factory_new_logic_begin_date || '未设置';
-  const message = data.message || (attachments.length ? '已读取本地附件' : '主来源无附件或本地未缓存');
+  const message = data.message || (attachments.length ? '已读取本地附件' : '采购订单附件本地未缓存');
   const listHtml = attachments.length ? attachments.map((att, idx) => {
     const preview = att.url || att.localPath || att.local_path || '';
     const canPreview = preview && (att.isImage || att.is_image);
@@ -4101,7 +4117,7 @@ function renderReorderAttachmentModal(data) {
         ${canPreview ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openSalesImageViewer('${salesJs(preview)}')">查看大图</button>` : ''}
       </div>
     `;
-  }).join('') : `<div class="attachment-empty">${salesAttr(message)}</div>`;
+  }).join('') : `<div class="attachment-empty">${salesAttr(reorderAttachmentEmptyMessage(message))}</div>`;
   const candidateHtml = candidates.length ? `
     <div class="attachment-candidates">
       <b>候选附件来源</b>
@@ -4159,7 +4175,16 @@ async function loadAttachmentStatus() {
     const tables = data.tables || {};
     const row = (title, tableKey) => {
       const info = tables[tableKey] || {};
-      return `<div class="attachment-status-row"><span>${salesAttr(title)}</span><b>${info.exists ? `${Number(info.count || 0)} 条` : '表不存在'}</b><small>${salesAttr((info.columns || []).join(', ') || '无字段')}</small></div>`;
+      const count = Number(info.count || 0);
+      const noteMap = {
+        bill_attachments: '正常：当前还未补齐附件元数据',
+        purchase_inbound_attachments: '正常：旧附件尚未导入本地',
+        purchase_inbounds: '仅用于旧流程候选',
+        accessory_purchase_orders: '可作为新流程候选来源',
+      };
+      const note = noteMap[tableKey] || '';
+      const countText = info.exists ? `${count} 条${note ? `（${note}）` : ''}` : '表不存在';
+      return `<div class="attachment-status-row"><span>${salesAttr(title)}</span><b>${salesAttr(countText)}</b><small>${salesAttr((info.columns || []).join(', ') || '无字段')}</small></div>`;
     };
     if (grid) {
       grid.innerHTML = `
@@ -4167,8 +4192,8 @@ async function loadAttachmentStatus() {
         ${row('旧购货附件表 purchase_inbound_attachments', 'purchase_inbound_attachments')}
         ${row('购货单缓存 purchase_inbounds', 'purchase_inbounds')}
         ${row('采购订单缓存 accessory_purchase_orders', 'accessory_purchase_orders')}
-        <div class="attachment-status-row"><span>本地文件字段</span><b>${data.download?.has_local_path_fields ? '已预留 local_path' : '未发现'}</b></div>
-        <div class="attachment-status-row"><span>附件下载能力</span><b>${data.download?.download_function_ready ? '已就绪' : '未启用'}</b></div>
+        <div class="attachment-status-row"><span>本地文件字段</span><b>${data.download?.has_local_path_fields ? '已预留 local_path（尚未启用文件下载）' : '未发现'}</b></div>
+        <div class="attachment-status-row"><span>附件下载能力</span><b>${data.download?.download_function_ready ? '已就绪' : '未启用（本阶段不联网、不下载）'}</b></div>
       `;
     }
     if (tip) tip.textContent = data.download?.message || '普通页面查看附件只读本地缓存，不会自动调用 JDY。';
