@@ -187,6 +187,7 @@ def _admin_path_required():
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
+        '/attachments/status',
     }
     if request.path in admin_exact:
         return True
