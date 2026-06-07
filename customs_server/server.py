@@ -3748,17 +3748,19 @@ def _sales_cache_conn():
         CREATE INDEX IF NOT EXISTS idx_bill_attachments_status
         ON bill_attachments(download_status)
     ''')
-    cols = {row['name'] for row in conn.execute('PRAGMA table_info(sales_product_quantities)').fetchall()}
+    cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(sales_product_quantities)').fetchall()}
     if 'stock_local' not in cols:
         conn.execute('ALTER TABLE sales_product_quantities ADD COLUMN stock_local REAL DEFAULT 0')
+        cols.add('stock_local')
     if 'stock_factory' not in cols:
         conn.execute('ALTER TABLE sales_product_quantities ADD COLUMN stock_factory REAL DEFAULT 0')
+        cols.add('stock_factory')
     _ensure_reorder_item_columns(conn)
     return conn
 
 
 def _ensure_reorder_item_columns(conn):
-    cols = {row['name'] for row in conn.execute('PRAGMA table_info(reorder_items)').fetchall()}
+    cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(reorder_items)').fetchall()}
     additions = [
         ('created_by', 'TEXT'),
         ('created_by_name', 'TEXT'),
@@ -3771,8 +3773,10 @@ def _ensure_reorder_item_columns(conn):
         ('sync_error', 'TEXT'),
     ]
     for name, ddl in additions:
-        if name not in cols:
+        key = name.lower()
+        if key not in cols:
             conn.execute(f'ALTER TABLE reorder_items ADD COLUMN {name} {ddl}')
+            cols.add(key)
 
 
 def _cache_upsert_sales_order(conn, order):
@@ -3938,8 +3942,8 @@ def _jdy_supplier_columns(conn):
 
 
 def _missing_jdy_supplier_columns(columns):
-    existing = {str(c) for c in (columns or [])}
-    return [name for name in JDY_SUPPLIER_EXTRA_COLUMNS if name not in existing]
+    existing = {str(c).lower() for c in (columns or [])}
+    return [name for name in JDY_SUPPLIER_EXTRA_COLUMNS if name.lower() not in existing]
 
 
 def _ensure_jdy_suppliers_schema(conn):
@@ -3950,6 +3954,7 @@ def _ensure_jdy_suppliers_schema(conn):
     for name in _missing_jdy_supplier_columns(columns):
         conn.execute(f'ALTER TABLE jdy_suppliers ADD COLUMN {name} {JDY_SUPPLIER_EXTRA_COLUMNS[name]}')
         added.append(name)
+        columns.append(name)
     return added
 
 
@@ -10331,6 +10336,8 @@ def sales_order_detail(order_no):
         date_str = request.args.get('date', '') or datetime.now().strftime('%Y-%m-%d')
         account = request.args.get('account', 'all')
         source = request.args.get('source', 'cache')
+        allow_live = str(request.args.get('allow_live') or '').lower() in ('1', 'true', 'yes', 'y')
+        refresh_quantities = str(request.args.get('refresh_quantities') or '').lower() in ('1', 'true', 'yes', 'y')
         if source == 'cache':
             cached = _read_cached_sales_detail(order_no, account)
             if cached:
@@ -10341,9 +10348,15 @@ def sales_order_detail(order_no):
                     _sales_detail_needs_quantity_enrich(cached)
                     or (uses_new_logic and cached.get('quantityLogicVersion') != logic_key)
                 )
-                if should_refresh_qty:
+                quantity_enrichment_skipped = bool(should_refresh_qty)
+                live_lookup = False
+                called_jdy = False
+                if should_refresh_qty and allow_live and refresh_quantities:
                     try:
                         cached, warning = _refresh_cached_sales_detail_quantities(cached)
+                        quantity_enrichment_skipped = False
+                        live_lookup = True
+                        called_jdy = True
                     except Exception as e:
                         warning = f'本单库存/工厂数量刷新失败，已显示本地旧缓存：{e}'
                 return jsonify({
@@ -10351,9 +10364,30 @@ def sales_order_detail(order_no):
                     'data': cached,
                     'mock': False,
                     'cache': True,
+                    'local_only': not live_lookup,
+                    'live_lookup': live_lookup,
+                    'called_jdy': called_jdy,
+                    'would_call_jdy': bool(should_refresh_qty and allow_live and refresh_quantities),
+                    'cache_source': 'sales_details',
+                    'quantity_enrichment_skipped': quantity_enrichment_skipped,
                     'warning': warning,
+                    'message': (
+                        '已按显式参数刷新销售单数量字段。'
+                        if live_lookup else
+                        '本地缓存数量字段可能需要补齐；默认未联网刷新。'
+                        if quantity_enrichment_skipped else '读取本地销售单缓存。'
+                    ),
                 })
-            return jsonify({'success': False, 'error': '本地缓存未找到这张销货单，请先同步本月数据或切换实际读取'}), 404
+            return jsonify({
+                'success': False,
+                'error': '本地缓存未找到这张销货单，请先同步本月数据或切换实际读取',
+                'local_only': True,
+                'live_lookup': False,
+                'called_jdy': False,
+                'would_call_jdy': False,
+                'cache_source': 'sales_details',
+                'quantity_enrichment_skipped': True,
+            }), 404
         if source == 'live':
             cfg2 = _load_jdy_config2()
             cfg1 = _load_jdy_config()
@@ -10382,7 +10416,18 @@ def sales_order_detail(order_no):
                         errors.append(f'{name}: 未找到销货单')
                         continue
                     order = _normalize_sales_order(detail, name)
-                    return jsonify({'success': True, 'data': _enrich_sales_order(cli, order), 'mock': False, 'cache': False})
+                    return jsonify({
+                        'success': True,
+                        'data': _enrich_sales_order(cli, order),
+                        'mock': False,
+                        'cache': False,
+                        'local_only': False,
+                        'live_lookup': True,
+                        'called_jdy': True,
+                        'would_call_jdy': True,
+                        'cache_source': 'jdy_live',
+                        'quantity_enrichment_skipped': False,
+                    })
                 except Exception as e:
                     errors.append(f'{name}: {e}')
             return jsonify({'success': False, 'error': '；'.join(errors) or '未找到销货单'}), 404
@@ -13075,14 +13120,46 @@ def accessory_orders_list():
 def accessory_order_detail(order_no):
     try:
         account = request.args.get('account', '').strip()
+        allow_live = str(request.args.get('allow_live') or '').lower() in ('1', 'true', 'yes', 'y')
+        refresh = str(request.args.get('refresh') or '').lower() in ('1', 'true', 'yes', 'y')
         order = _read_cached_accessory_purchase_order_detail(order_no, account)
         if not order:
-            return jsonify({'success': False, 'error': '未找到本地辅料订单'}), 404
-        order = _enrich_accessory_purchase_order(order)
-        with _sales_cache_conn() as conn:
-            _cache_upsert_accessory_purchase_order(conn, order)
-            conn.commit()
-        return jsonify({'success': True, 'data': order, 'cache': True})
+            return jsonify({
+                'success': False,
+                'error': '未找到本地辅料订单',
+                'local_only': True,
+                'live_lookup': False,
+                'called_jdy': False,
+                'would_call_jdy': False,
+                'cache_source': 'accessory_purchase_orders',
+                'enrich_skipped': True,
+            }), 404
+        enrich_skipped = True
+        live_lookup = False
+        called_jdy = False
+        if allow_live and refresh:
+            order = _enrich_accessory_purchase_order(order)
+            with _sales_cache_conn() as conn:
+                _cache_upsert_accessory_purchase_order(conn, order)
+                conn.commit()
+            enrich_skipped = False
+            live_lookup = True
+            called_jdy = True
+        return jsonify({
+            'success': True,
+            'data': order,
+            'cache': True,
+            'local_only': not live_lookup,
+            'live_lookup': live_lookup,
+            'called_jdy': called_jdy,
+            'would_call_jdy': bool(allow_live and refresh),
+            'cache_source': 'accessory_purchase_orders',
+            'enrich_skipped': enrich_skipped,
+            'message': (
+                '默认仅读取本地辅料订单缓存，未联网补齐商品信息。'
+                if enrich_skipped else '已按显式参数刷新辅料订单商品信息。'
+            ),
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -13105,13 +13182,7 @@ def accessory_products():
         supplier = request.args.get('supplier', '').strip()
         items, summary, categories = _read_cached_accessory_products(search, category, supplier)
         stats = _accessory_product_cache_stats()
-        if not items and not stats.get('products_count') and not _accessory_product_sync_state.get('running'):
-            threading.Thread(
-                target=_run_accessory_product_sync,
-                kwargs={'reason': 'auto-empty'},
-                daemon=True,
-                name='accessory-product-sync-auto-empty',
-            ).start()
+        cache_empty = not stats.get('products_count')
         return jsonify({
             'success': True,
             'list': items,
@@ -13121,6 +13192,13 @@ def accessory_products():
             'matched_categories': categories,
             'cache_stats': stats,
             'sync_state': _accessory_product_sync_state,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'cache_source': 'accessory_products',
+            'auto_sync_started': False,
+            'message': '本地辅料商品缓存为空，请在设置页手动同步。' if cache_empty else '读取本地辅料商品缓存。',
             'errors': [],
             'error': '',
         })
