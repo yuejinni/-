@@ -187,7 +187,7 @@ def _admin_path_required():
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
-        '/attachments/status', '/attachments/refresh-dry-run',
+        '/attachments/status', '/attachments/refresh-dry-run', '/attachments/refresh',
     }
     if request.path in admin_exact:
         return True
@@ -5322,6 +5322,245 @@ def _read_local_attachment_candidates(conn, filters):
             'limit': limit,
         },
         'warnings': warnings,
+    }
+
+
+def _attachment_limit(value, default=20, maximum=50):
+    try:
+        limit = int(value or default)
+    except Exception:
+        limit = default
+    return max(1, min(limit, maximum))
+
+
+def _attachment_stable_key(source_number, name='', url=''):
+    raw = '|'.join(str(x or '').strip() for x in (source_number, name, url))
+    return hashlib.sha1(raw.encode('utf-8', errors='ignore')).hexdigest()[:24]
+
+
+def _normalize_attachment_meta(att, source):
+    att = att or {}
+    source = source or {}
+    url = str(att.get('url') or att.get('fileUrl') or att.get('downloadUrl') or '').strip()
+    name = str(att.get('name') or att.get('fileName') or att.get('attachmentName') or att.get('title') or '').strip()
+    key = str(att.get('id') or att.get('attachment_key') or att.get('fileId') or att.get('attachmentId') or att.get('key') or '').strip()
+    if not key:
+        key = _attachment_stable_key(source.get('source_number'), name, url)
+    file_mime = str(att.get('file_mime') or att.get('mime') or att.get('mimeType') or '').strip()
+    file_size = int(_num(att.get('file_size') or att.get('size') or 0))
+    raw = att.get('raw') if isinstance(att.get('raw'), dict) else att
+    return {
+        'account': source.get('account') or '',
+        'source_type': source.get('source_type') or '',
+        'source_number': source.get('source_number') or '',
+        'source_date': source.get('source_date') or '',
+        'bill_type': source.get('source_type') or '',
+        'attachment_key': key,
+        'name': name or key or '附件',
+        'url': url,
+        'local_path': '',
+        'file_mime': file_mime,
+        'file_size': file_size,
+        'download_status': 'metadata_only',
+        'download_error': '',
+        'data_json': json.dumps(raw or {}, ensure_ascii=False),
+    }
+
+
+def _bill_attachments_existing_write_conn():
+    if not os.path.exists(_SALES_CACHE_DB):
+        return None, '本地销售缓存不存在'
+    conn = sqlite3.connect(_SALES_CACHE_DB, timeout=30)
+    conn.row_factory = sqlite3.Row
+    if not _attachment_has_table(conn, 'bill_attachments'):
+        conn.close()
+        return None, 'bill_attachments 表不存在，已停止写入'
+    return conn, ''
+
+
+def _upsert_bill_attachment_metadata(conn, meta):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    existing = conn.execute('''
+        SELECT id FROM bill_attachments
+        WHERE account = ? AND source_type = ? AND source_number = ? AND attachment_key = ?
+        LIMIT 1
+    ''', (
+        meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key']
+    )).fetchone()
+    conn.execute('''
+        INSERT OR REPLACE INTO bill_attachments
+        (id, account, source_type, source_number, source_date, bill_type, attachment_key,
+         name, url, local_path, file_mime, file_size, download_status, download_error,
+         data_json, created_at, updated_at)
+        VALUES (
+          COALESCE((SELECT id FROM bill_attachments WHERE account=? AND source_type=? AND source_number=? AND attachment_key=?), NULL),
+          ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 'metadata_only', '', ?,
+          COALESCE((SELECT created_at FROM bill_attachments WHERE account=? AND source_type=? AND source_number=? AND attachment_key=?), ?),
+          ?
+        )
+    ''', (
+        meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key'],
+        meta['account'], meta['source_type'], meta['source_number'], meta['source_date'], meta['bill_type'],
+        meta['attachment_key'], meta['name'], meta['url'], meta['file_mime'], meta['file_size'], meta['data_json'],
+        meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key'], now,
+        now,
+    ))
+    return 'updated' if existing else 'inserted'
+
+
+def _attachment_account_clients(account=''):
+    clients = []
+    for cli_fn, name in _sales_sources_for_account(account or 'all'):
+        if account and account != 'all' and name != account:
+            continue
+        try:
+            cli = cli_fn()
+        except Exception:
+            cli = None
+        if cli:
+            clients.append((name, cli))
+    return clients
+
+
+def _find_live_order_for_attachment_candidate(candidate):
+    account = candidate.get('account') or ''
+    source_type = candidate.get('source_type') or ''
+    number = candidate.get('source_number') or ''
+    warnings = []
+    if not number:
+        return None, False, ['候选来源缺少单号，已跳过']
+    clients = _attachment_account_clients(account)
+    if not clients:
+        return None, False, [f'{account or "全部账套"} 未配置可用 JDY 客户端，已跳过']
+    called = False
+    for name, cli in clients:
+        try:
+            if source_type == 'purchase_order':
+                if not hasattr(cli, 'get_purchase_order_requests'):
+                    warnings.append('当前项目未确认官方采购订单 list 查询能力，已跳过该来源。')
+                    continue
+                called = True
+                result = cli.get_purchase_order_requests(page=1, page_size=10, search=number, check_status=2)
+            elif source_type == 'purchase_inbound':
+                if not hasattr(cli, 'get_purchase_orders'):
+                    warnings.append('当前项目未确认官方购货/采购 list 查询能力，已跳过该来源。')
+                    continue
+                called = True
+                result = cli.get_purchase_orders(page=1, page_size=10, search=number)
+            else:
+                warnings.append(f'{source_type or "未知来源"} 暂不支持官方查询，已跳过')
+                continue
+            rows = result.get('list') or []
+            for row in rows:
+                row_no = str(_first_value(row, ['number', 'billNo', 'billNumber', 'id'], '') or '').strip()
+                if row_no == number:
+                    row['_account'] = name
+                    return row, called, warnings
+            warnings.append(f'{name} 已查询 {number}，但没有精确命中候选单号')
+        except Exception as e:
+            called = True
+            warnings.append(f'{account or name} 查询 {number} 失败：{_short_sync_error(e)}')
+    return None, called, warnings
+
+
+def _refresh_attachment_metadata_for_candidates(filters):
+    limit = _attachment_limit(filters.get('limit'), default=20, maximum=50)
+    warnings = []
+    conn_ro = _sales_readonly_conn()
+    if not conn_ro:
+        return {
+            'success': True, 'metadata_only': True, 'would_download': False,
+            'local_file_download': False, 'called_jdy': False,
+            'inserted': 0, 'updated': 0, 'skipped': 0, 'sources_checked': 0,
+            'attachments_found': 0, 'warnings': ['本地销售缓存不存在，未查询 JDY，未写库'], 'results': [],
+        }
+    try:
+        dry = _read_local_attachment_candidates(conn_ro, {
+            'account': filters.get('account') or '',
+            'source_type': filters.get('source_type') or '',
+            'date_from': filters.get('date_from') or '',
+            'date_to': filters.get('date_to') or '',
+            'limit': limit,
+        })
+    finally:
+        conn_ro.close()
+    candidates = (dry.get('candidates') or [])[:limit]
+    warnings.extend(dry.get('warnings') or [])
+    if not candidates:
+        return {
+            'success': True, 'metadata_only': True, 'would_download': False,
+            'local_file_download': False, 'called_jdy': False,
+            'inserted': 0, 'updated': 0, 'skipped': 0, 'sources_checked': 0,
+            'attachments_found': 0, 'warnings': warnings + ['本地 dry-run 候选为空，未调用 JDY，未写库'], 'results': [],
+        }
+    conn_wr, err = _bill_attachments_existing_write_conn()
+    if not conn_wr:
+        return {
+            'success': False, 'metadata_only': True, 'would_download': False,
+            'local_file_download': False, 'called_jdy': False,
+            'inserted': 0, 'updated': 0, 'skipped': len(candidates), 'sources_checked': 0,
+            'attachments_found': 0, 'warnings': warnings + [err], 'results': [],
+            'error': err,
+        }
+    inserted = updated = skipped = sources_checked = attachments_found = 0
+    called_jdy = False
+    results = []
+    try:
+        for candidate in candidates:
+            sources_checked += 1
+            order, called, source_warnings = _find_live_order_for_attachment_candidate(candidate)
+            called_jdy = called_jdy or called
+            warnings.extend(source_warnings)
+            if not order:
+                skipped += 1
+                results.append({**candidate, 'status': 'skipped', 'warnings': source_warnings})
+                continue
+            attachments = _extract_purchase_attachments(order)
+            attachments_found += len(attachments)
+            if not attachments:
+                skipped += 1
+                results.append({**candidate, 'status': 'no_attachments', 'attachments_found': 0, 'warnings': source_warnings})
+                continue
+            source = {
+                'account': candidate.get('account') or order.get('_account') or '',
+                'source_type': candidate.get('source_type') or '',
+                'source_number': candidate.get('source_number') or '',
+                'source_date': str(_first_value(order, ['date', 'billDate', 'orderDate'], candidate.get('source_date') or '') or '')[:10],
+            }
+            row_inserted = row_updated = 0
+            for att in attachments:
+                meta = _normalize_attachment_meta(att, source)
+                action = _upsert_bill_attachment_metadata(conn_wr, meta)
+                if action == 'inserted':
+                    inserted += 1
+                    row_inserted += 1
+                else:
+                    updated += 1
+                    row_updated += 1
+            conn_wr.commit()
+            results.append({
+                **candidate,
+                'status': 'metadata_saved',
+                'attachments_found': len(attachments),
+                'inserted': row_inserted,
+                'updated': row_updated,
+                'warnings': source_warnings,
+            })
+    finally:
+        conn_wr.close()
+    return {
+        'success': True,
+        'metadata_only': True,
+        'would_download': False,
+        'local_file_download': False,
+        'called_jdy': called_jdy,
+        'inserted': inserted,
+        'updated': updated,
+        'skipped': skipped,
+        'sources_checked': sources_checked,
+        'attachments_found': attachments_found,
+        'warnings': warnings,
+        'results': results,
     }
 
 
@@ -11371,6 +11610,42 @@ def attachments_refresh_dry_run():
             'live_lookup': False,
             'would_call_jdy': False,
             'would_download': False,
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
+@app.route('/attachments/refresh', methods=['POST'])
+def attachments_refresh():
+    try:
+        data = request.get_json(silent=True) or {}
+        if str(data.get('confirm') or '').strip() != 'REFRESH_ATTACHMENT_METADATA_ONLY':
+            return jsonify({
+                'success': False,
+                'metadata_only': True,
+                'would_download': False,
+                'local_file_download': False,
+                'called_jdy': False,
+                'error': '必须确认 confirm = REFRESH_ATTACHMENT_METADATA_ONLY',
+            }), 400
+        payload = _refresh_attachment_metadata_for_candidates({
+            'account': data.get('account') or '',
+            'source_type': data.get('source_type') or '',
+            'date_from': data.get('date_from') or '',
+            'date_to': data.get('date_to') or '',
+            'limit': _attachment_limit(data.get('limit'), default=20, maximum=50),
+        })
+        status = 200 if payload.get('success') else 400
+        return jsonify(payload), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] attachments_refresh: {tb}')
+        return jsonify({
+            'success': False,
+            'metadata_only': True,
+            'would_download': False,
+            'local_file_download': False,
+            'called_jdy': False,
             'error': str(e),
             'traceback': tb,
         }), 500
