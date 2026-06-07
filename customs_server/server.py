@@ -3634,6 +3634,11 @@ def _sales_cache_conn():
             confirmed_qty REAL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
             note TEXT DEFAULT '',
+            created_by TEXT,
+            created_by_name TEXT,
+            reorder_price REAL DEFAULT 0,
+            generated_batch_no TEXT,
+            generated_at TEXT,
             data_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -3697,8 +3702,11 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_accessory_products_category ON accessory_products(category)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_status ON webhook_events(status, id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_bill ON webhook_events(account, bill_no, resource)')
+    _ensure_reorder_item_columns(conn)
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_supplier ON reorder_items(status, supplier_name, supplier_number)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_code ON reorder_items(account, code, status)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_picker ON reorder_items(status, created_by_name, created_by)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_source ON reorder_items(account, source_number, code)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_purchase_inbounds_code_json ON purchase_inbounds(account, number)')
     conn.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS idx_bill_attachments_unique
@@ -3740,7 +3748,22 @@ def _sales_cache_conn():
         conn.execute('ALTER TABLE sales_product_quantities ADD COLUMN stock_local REAL DEFAULT 0')
     if 'stock_factory' not in cols:
         conn.execute('ALTER TABLE sales_product_quantities ADD COLUMN stock_factory REAL DEFAULT 0')
+    _ensure_reorder_item_columns(conn)
     return conn
+
+
+def _ensure_reorder_item_columns(conn):
+    cols = {row['name'] for row in conn.execute('PRAGMA table_info(reorder_items)').fetchall()}
+    additions = [
+        ('created_by', 'TEXT'),
+        ('created_by_name', 'TEXT'),
+        ('reorder_price', 'REAL DEFAULT 0'),
+        ('generated_batch_no', 'TEXT'),
+        ('generated_at', 'TEXT'),
+    ]
+    for name, ddl in additions:
+        if name not in cols:
+            conn.execute(f'ALTER TABLE reorder_items ADD COLUMN {name} {ddl}')
 
 
 def _cache_upsert_sales_order(conn, order):
@@ -6099,92 +6122,229 @@ def _cache_upsert_purchase_inbound(conn, account, order):
         ))
 
 
-def _read_cached_purchase_history(account, code, limit=20):
+def _read_cached_purchase_history(account, code, limit=20, date_from='', date_to=''):
     code = str(code or '').strip()
     if not code:
         return []
-    clauses = ['data_json LIKE ?']
-    params = [f'%{code}%']
-    if account and account != 'all':
-        clauses.append('account = ?')
-        params.append(account)
-    with _sales_cache_conn() as conn:
+    limit = max(1, min(int(limit or 20), 100))
+    records = []
+    conn = _sales_readonly_conn()
+    if not conn:
+        return records
+    def table_exists(name):
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        return bool(row)
+    def date_ok(value):
+        value = str(value or '')[:10]
+        if date_from and value and value < date_from:
+            return False
+        if date_to and value and value > date_to:
+            return False
+        return True
+    def append_order_rows(table, source_type):
+        if not table_exists(table):
+            return
+        clauses = ['data_json LIKE ?']
+        params = [f'%{code}%']
+        if account and account != 'all':
+            clauses.append('account = ?')
+            params.append(account)
+        if date_from:
+            clauses.append('date >= ?')
+            params.append(date_from)
+        if date_to:
+            clauses.append('date <= ?')
+            params.append(date_to)
         rows = conn.execute(f'''
-            SELECT account, number, data_json FROM purchase_inbounds
+            SELECT account, number, date, supplier_name, supplier_number, data_json
+            FROM {table}
             WHERE {' AND '.join(clauses)}
             ORDER BY date DESC, number DESC
             LIMIT ?
-        ''', [*params, int(limit or 20)]).fetchall()
-    items = []
-    for row in rows:
-        try:
-            order = json.loads(row['data_json'])
-        except Exception:
-            continue
-        matched_entries = [
-            e for e in (order.get('entries') or [])
-            if _reorder_purchase_entry_matches(e, code)
-        ]
-        if not matched_entries:
-            continue
-        qty = sum(_purchase_entry_order_qty(e, prefer_actual=True) or _purchase_entry_order_qty(e) for e in matched_entries)
-        items.append({
-            'account': row['account'],
-            'number': _first_value(order, ['number', 'billNo', 'id'], row['number']),
-            'date': str(_first_value(order, ['date', 'billDate', 'createTime'], ''))[:10],
-            'supplierNumber': _first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], ''),
-            'supplierName': _first_value(order, ['supplierName', 'vendorName'], ''),
-            'qty': qty,
-            'entries': matched_entries,
-            'attachments': _extract_purchase_attachments(order),
-        })
-    return items
+        ''', [*params, limit]).fetchall()
+        for row in rows:
+            try:
+                order = json.loads(row['data_json'] or '{}')
+            except Exception:
+                continue
+            order_date = str(_first_value(order, ['date', 'billDate', 'orderDate', 'createTime'], row['date'] or ''))[:10]
+            if not date_ok(order_date):
+                continue
+            matched_entries = [
+                e for e in _reorder_entries_from_order(order)
+                if isinstance(e, dict) and _reorder_purchase_entry_matches(e, code)
+            ]
+            if not matched_entries:
+                continue
+            for entry in matched_entries:
+                qty = _purchase_entry_order_qty(entry, prefer_actual=True) or _purchase_entry_order_qty(entry)
+                price = _num(_first_value(entry, ['price', 'unitPrice', 'taxPrice', 'discountPrice'], 0))
+                amount = _num(_first_value(entry, ['amount', 'taxAmount', 'totalAmount'], 0))
+                if not amount and price and qty:
+                    amount = price * qty
+                records.append({
+                    'account': row['account'] or '',
+                    'source_type': source_type,
+                    'source_number': _first_value(order, ['number', 'billNo', 'id'], row['number']),
+                    'source_date': order_date,
+                    'number': _first_value(order, ['number', 'billNo', 'id'], row['number']),
+                    'date': order_date,
+                    'supplier_number': _first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], row['supplier_number'] or ''),
+                    'supplier_name': _first_value(order, ['supplierName', 'vendorName'], row['supplier_name'] or ''),
+                    'supplierNumber': _first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], row['supplier_number'] or ''),
+                    'supplierName': _first_value(order, ['supplierName', 'vendorName'], row['supplier_name'] or ''),
+                    'qty': qty,
+                    'price': price,
+                    'amount': amount,
+                    'from_cache': True,
+                })
+    try:
+        append_order_rows('purchase_inbounds', 'purchase_inbound')
+        append_order_rows('accessory_purchase_orders', 'purchase_order')
+        if table_exists('purchase_order_prices'):
+            clauses = ['product_number = ?']
+            params = [code]
+            if account and account != 'all':
+                clauses.append('account = ?')
+                params.append(account)
+            if date_from:
+                clauses.append('order_date >= ?')
+                params.append(date_from)
+            if date_to:
+                clauses.append('order_date <= ?')
+                params.append(date_to)
+            rows = conn.execute(f'''
+                SELECT account, order_number, order_date, supplier_name, supplier_number,
+                       product_number, price, qty
+                FROM purchase_order_prices
+                WHERE {' AND '.join(clauses)}
+                ORDER BY order_date DESC, order_number DESC
+                LIMIT ?
+            ''', [*params, limit]).fetchall()
+            for row in rows:
+                qty = _num(row['qty'])
+                price = _num(row['price'])
+                records.append({
+                    'account': row['account'] or '',
+                    'source_type': 'purchase_order_price',
+                    'source_number': row['order_number'] or '',
+                    'source_date': row['order_date'] or '',
+                    'number': row['order_number'] or '',
+                    'date': row['order_date'] or '',
+                    'supplier_number': row['supplier_number'] or '',
+                    'supplier_name': row['supplier_name'] or '',
+                    'supplierNumber': row['supplier_number'] or '',
+                    'supplierName': row['supplier_name'] or '',
+                    'qty': qty,
+                    'price': price,
+                    'amount': qty * price if qty and price else 0,
+                    'from_cache': True,
+                })
+    finally:
+        conn.close()
+    records.sort(key=lambda x: (x.get('source_date') or '', x.get('source_number') or ''), reverse=True)
+    return records[:limit]
 
 
-def _reorder_item_payload_from_entry(entry, account='', source=None, cli=None):
+def _current_reorder_user():
+    username = (
+        session.get('auth_user')
+        or session.get('auth_name')
+        or session.get('username')
+        or ''
+    )
+    display = (
+        session.get('auth_name')
+        or session.get('auth_user')
+        or session.get('username')
+        or username
+        or '未知添加人'
+    )
+    return str(username or display or '').strip(), str(display or username or '未知添加人').strip()
+
+
+def _reorder_collect_codes(items, account=''):
+    by_account = {}
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        acct = raw.get('account') or account or ''
+        code = _reorder_entry_identity(raw)
+        if code:
+            by_account.setdefault(acct, set()).add(code)
+    return by_account
+
+
+def _reorder_batch_local_context(items, account=''):
+    by_account = _reorder_collect_codes(items, account)
+    quantities = {}
+    products = {}
+    suppliers = {}
+    supplier_by_product = {}
+    code_cache = _load_code_cache()
+    for acct, codes in by_account.items():
+        code_list = sorted(codes)
+        for code, row in _read_cached_sales_product_quantities(acct, code_list).items():
+            quantities[(acct, code)] = row
+        product_index = _local_product_index(acct)
+        supplier_index = _local_supplier_index(acct)
+        products[acct] = product_index
+        suppliers[acct] = supplier_index
+        for code in code_list:
+            product = product_index.get(code) or {}
+            supplier_number, supplier_name = _sales_summary_supplier_from_cache(
+                acct, code, product, code_cache, supplier_index
+            )
+            supplier_by_product[(acct, code)] = {
+                'supplierNumber': supplier_number,
+                'supplierName': supplier_name,
+                'source': 'local_product_supplier',
+            }
+    return {
+        'quantities': quantities,
+        'products': products,
+        'suppliers': suppliers,
+        'supplier_by_product': supplier_by_product,
+    }
+
+
+def _reorder_item_payload_from_entry(entry, account='', source=None, local_ctx=None, created_by='', created_by_name=''):
     source = source or {}
     account = entry.get('account') or account or ''
     code = _reorder_entry_identity(entry)
     warehouses = entry.get('warehouses') or []
     stock = {str(w.get('name') or ''): _num(w.get('qty')) for w in warehouses if isinstance(w, dict)}
-    qmap = _read_cached_sales_product_quantities(account, [code]) if code else {}
-    cached_q = qmap.get(code) or {}
+    local_ctx = local_ctx or _reorder_batch_local_context([entry], account)
+    cached_q = (local_ctx.get('quantities') or {}).get((account, code)) or {}
     cached_stock = cached_q.get('stock') or {}
+    product = ((local_ctx.get('products') or {}).get(account) or {}).get(code) or {}
     supplier = {
         'supplierNumber': entry.get('supplier_number') or entry.get('supplierNumber') or '',
         'supplierName': entry.get('supplier_name') or entry.get('supplierName') or '',
     }
     if not (supplier.get('supplierNumber') or supplier.get('supplierName')):
-        supplier = _reorder_supplier_from_cached_sources(account, code) or {}
-    if not supplier and source.get('type') != 'sales_summary':
-        supplier = _reorder_supplier_from_live_purchase(cli, code) or {}
-    image_url = entry.get('imageUrl') or ''
-    if not image_url and cli and code:
-        try:
-            product = cli.get_product_by_code(code) or {}
-            imgs = product.get('multiImg') or []
-            if imgs and isinstance(imgs, list):
-                image_url = imgs[0].get('url') or ''
-        except Exception:
-            pass
-    sales_qty_60 = _reorder_recent_sales_qty(account, code)
+        supplier = (local_ctx.get('supplier_by_product') or {}).get((account, code)) or {}
+    image_url = entry.get('imageUrl') or entry.get('image_url') or _product_image_url_from_cache(product)
     factory_qty = _num(cached_q.get('factory_qty') or (entry.get('purchase') or {}).get('pending') or 0)
     return {
         'account': account or '',
         'supplierNumber': supplier.get('supplierNumber') or '',
         'supplierName': supplier.get('supplierName') or '未识别供应商',
         'code': code,
-        'name': _reorder_entry_name(entry),
-        'spec': entry.get('spec') or '',
-        'barcode': entry.get('barcode') or '',
-        'unit': entry.get('unit') or '',
+        'name': _reorder_entry_name(entry) or str(product.get('productName') or ''),
+        'spec': entry.get('spec') or entry.get('specification') or str(product.get('spec') or ''),
+        'barcode': entry.get('barcode') or entry.get('barCode') or str(product.get('barcode') or ''),
+        'unit': entry.get('unit') or entry.get('unitName') or str(product.get('unitName') or ''),
         'imageUrl': image_url,
         'sourceType': source.get('type') or 'sales',
         'sourceNumber': source.get('number') or '',
         'sourceDate': source.get('date') or '',
         'sourceCustomer': source.get('customer') or '',
         'sourceUser': source.get('user') or '',
-        'salesQty60': sales_qty_60,
+        'salesQty60': 0,
         'stockNew': _num(cached_stock.get('新大仓库') or cached_stock.get('鏂板ぇ浠撳簱') or stock.get('新大仓库') or stock.get('鏂板ぇ浠撳簱')),
         'stockTransit': _num(cached_stock.get('在途') or cached_stock.get('鍦ㄩ€?') or stock.get('在途') or stock.get('鍦ㄩ€?')),
         'stockLocal': _num(cached_stock.get('金华/本地') or cached_stock.get('閲戝崕/鏈湴') or stock.get('金华/本地') or stock.get('閲戝崕/鏈湴')),
@@ -6192,8 +6352,13 @@ def _reorder_item_payload_from_entry(entry, account='', source=None, cli=None):
         'factoryQty': factory_qty,
         'suggestedQty': 0,
         'confirmedQty': 0,
+        'reorderPrice': _num(entry.get('reorder_price') or entry.get('reorderPrice') or 0),
+        'createdBy': created_by or '',
+        'createdByName': created_by_name or '未知添加人',
         'raw': entry,
         'supplierSource': supplier,
+        'localOnly': True,
+        'liveLookup': False,
     }
 
 
@@ -6213,7 +6378,10 @@ def _cache_insert_reorder_item(conn, item):
             UPDATE reorder_items
                SET supplier_number=?, supplier_name=?, name=?, spec=?, barcode=?, unit=?,
                    image_url=?, sales_qty_60=?, stock_new=?, stock_transit=?, stock_local=?,
-                   stock_factory=?, factory_qty=?, data_json=?, updated_at=?
+                   stock_factory=?, factory_qty=?,
+                   created_by=COALESCE(NULLIF(created_by, ''), ?),
+                   created_by_name=COALESCE(NULLIF(created_by_name, ''), ?),
+                   data_json=?, updated_at=?
              WHERE id=?
         ''', (
             item.get('supplierNumber') or '', item.get('supplierName') or '',
@@ -6222,6 +6390,7 @@ def _cache_insert_reorder_item(conn, item):
             _num(item.get('salesQty60')), _num(item.get('stockNew')),
             _num(item.get('stockTransit')), _num(item.get('stockLocal')),
             _num(item.get('stockFactory')), _num(item.get('factoryQty')),
+            item.get('createdBy') or '', item.get('createdByName') or '',
             data_json, now, existing['id'],
         ))
         return existing['id'], False
@@ -6230,8 +6399,9 @@ def _cache_insert_reorder_item(conn, item):
         (account, supplier_number, supplier_name, code, name, spec, barcode, unit,
          image_url, source_type, source_number, source_date, source_customer, source_user,
          sales_qty_60, stock_new, stock_transit, stock_local, stock_factory, factory_qty,
-         suggested_qty, confirmed_qty, status, note, data_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?, ?)
+         suggested_qty, confirmed_qty, status, note, created_by, created_by_name,
+         reorder_price, data_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?, ?, ?, ?, ?)
     ''', (
         item.get('account') or '', item.get('supplierNumber') or '', item.get('supplierName') or '',
         item.get('code') or '', item.get('name') or '', item.get('spec') or '',
@@ -6241,7 +6411,8 @@ def _cache_insert_reorder_item(conn, item):
         _num(item.get('salesQty60')), _num(item.get('stockNew')), _num(item.get('stockTransit')),
         _num(item.get('stockLocal')), _num(item.get('stockFactory')), _num(item.get('factoryQty')),
         _num(item.get('suggestedQty')), _num(item.get('confirmedQty')),
-        data_json, now, now,
+        item.get('createdBy') or '', item.get('createdByName') or '未知添加人',
+        _num(item.get('reorderPrice')), data_json, now, now,
     ))
     return cur.lastrowid, True
 
@@ -6251,6 +6422,9 @@ def _reorder_row_to_item(row):
         data = json.loads(row['data_json'] or '{}')
     except Exception:
         data = {}
+    keys = set(row.keys()) if hasattr(row, 'keys') else set()
+    def rv(name, default=''):
+        return row[name] if name in keys else default
     data.update({
         'id': row['id'],
         'account': row['account'] or '',
@@ -6291,6 +6465,16 @@ def _reorder_row_to_item(row):
         'confirmed_qty': _num(row['confirmed_qty']),
         'status': row['status'] or '',
         'note': row['note'] or '',
+        'createdBy': rv('created_by') or '',
+        'created_by': rv('created_by') or '',
+        'createdByName': rv('created_by_name') or '未知添加人',
+        'created_by_name': rv('created_by_name') or '未知添加人',
+        'reorderPrice': _num(rv('reorder_price', 0)),
+        'reorder_price': _num(rv('reorder_price', 0)),
+        'generatedBatchNo': rv('generated_batch_no') or '',
+        'generated_batch_no': rv('generated_batch_no') or '',
+        'generatedAt': rv('generated_at') or '',
+        'generated_at': rv('generated_at') or '',
         'createdAt': row['created_at'] or '',
         'created_at': row['created_at'] or '',
         'updatedAt': row['updated_at'] or '',
@@ -11610,6 +11794,7 @@ def sales_cache_cleanup():
 @app.route('/reorder-items/import', methods=['POST'])
 def reorder_items_import():
     try:
+        started = time.perf_counter()
         data = request.get_json(force=True) or {}
         items = data.get('items') or []
         source = data.get('source') or {}
@@ -11635,30 +11820,30 @@ def reorder_items_import():
         if not items:
             return jsonify({'success': False, 'error': '请选择需要返单的商品'}), 400
 
-        cli = None
-        try:
-            if source.get('type') == 'sales_summary':
-                cli = None
-            elif account:
-                for cli_fn, name in _sales_sources_for_account(account):
-                    if name == account:
-                        cli = cli_fn()
-                        break
-            if source.get('type') != 'sales_summary':
-                cli = cli or _ensure_jdy_client() or _ensure_jdy_client2()
-        except Exception:
-            cli = None
-
+        load_started = time.perf_counter()
+        local_ctx = _reorder_batch_local_context(items, account)
+        load_ms = int((time.perf_counter() - load_started) * 1000)
+        build_ms = 0
         inserted = 0
         updated = 0
+        skipped = 0
         created_ids = []
+        created_by, created_by_name = _current_reorder_user()
+        upsert_started = time.perf_counter()
         with _sales_cache_conn() as conn:
             for raw in items:
                 if not isinstance(raw, dict):
+                    skipped += 1
                     continue
                 item_account = raw.get('account') or account
-                item = _reorder_item_payload_from_entry(raw, item_account, source, cli)
+                build_item_started = time.perf_counter()
+                item = _reorder_item_payload_from_entry(
+                    raw, item_account, source, local_ctx=local_ctx,
+                    created_by=created_by, created_by_name=created_by_name,
+                )
+                build_ms += int((time.perf_counter() - build_item_started) * 1000)
                 if not item.get('code'):
+                    skipped += 1
                     continue
                 rid, is_new = _cache_insert_reorder_item(conn, item)
                 created_ids.append(rid)
@@ -11667,11 +11852,30 @@ def reorder_items_import():
                 else:
                     updated += 1
             conn.commit()
+        db_ms = int((time.perf_counter() - upsert_started) * 1000)
+        total_ms = int((time.perf_counter() - started) * 1000)
+        perf = {
+            'items_count': len(items),
+            'load_local_cache_ms': load_ms,
+            'build_payload_ms': build_ms,
+            'db_upsert_ms': db_ms,
+            'total_ms': total_ms,
+            'live_lookup': False,
+        }
+        print(
+            '[REORDER IMPORT] '
+            f"items_count={perf['items_count']} load_local_cache_ms={load_ms} "
+            f"build_payload_ms={build_ms} db_upsert_ms={db_ms} total_ms={total_ms} live_lookup=false"
+        )
         return jsonify({
             'success': True,
             'inserted': inserted,
             'updated': updated,
+            'skipped': skipped,
             'ids': created_ids,
+            'local_only': True,
+            'live_lookup': False,
+            'performance': perf,
         })
     except Exception as e:
         tb = traceback.format_exc()
@@ -11682,6 +11886,9 @@ def reorder_items_import():
 @app.route('/reorder-suppliers', methods=['GET'])
 def reorder_suppliers():
     try:
+        view_mode = (request.args.get('view_mode') or 'supplier').strip().lower()
+        if view_mode not in ('supplier', 'picker'):
+            view_mode = 'supplier'
         status = request.args.get('status', 'pending').strip() or 'pending'
         account = request.args.get('account', '').strip()
         search = request.args.get('search', '').strip().lower()
@@ -11700,40 +11907,110 @@ def reorder_suppliers():
                     OR LOWER(COALESCE(supplier_number, '')) LIKE ?
                     OR LOWER(COALESCE(code, '')) LIKE ?
                     OR LOWER(COALESCE(name, '')) LIKE ?
+                    OR LOWER(COALESCE(created_by_name, '')) LIKE ?
+                    OR LOWER(COALESCE(created_by, '')) LIKE ?
                 )
             ''')
             kw = f'%{search}%'
-            params.extend([kw, kw, kw, kw])
+            params.extend([kw, kw, kw, kw, kw, kw])
         where = 'WHERE ' + ' AND '.join(clauses) if clauses else ''
         with _sales_cache_conn() as conn:
-            rows = conn.execute(f'''
-                SELECT supplier_number, supplier_name,
-                       COUNT(*) AS count,
-                       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
-                       SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
-                       SUM(CASE WHEN status IN ('completed', 'done', 'ordered') THEN 1 ELSE 0 END) AS completed_count,
-                       SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored_count,
-                       SUM(sales_qty_60) AS sales_qty_60,
-                       SUM(stock_new) AS stock_new,
-                       SUM(stock_transit) AS stock_transit,
-                       SUM(stock_local) AS stock_local,
-                       SUM(factory_qty) AS factory_qty,
-                       SUM(suggested_qty) AS suggested_qty,
-                       SUM(confirmed_qty) AS confirmed_qty,
-                       MIN(created_at) AS first_created_at,
-                       MAX(created_at) AS latest_created_at,
-                       MAX(updated_at) AS updated_at,
-                       GROUP_CONCAT(DISTINCT account) AS accounts
-                FROM reorder_items
-                {where}
-                GROUP BY COALESCE(supplier_number, ''), COALESCE(supplier_name, '')
-                ORDER BY latest_created_at DESC, updated_at DESC, supplier_name, supplier_number
-            ''', params).fetchall()
+            if view_mode == 'picker':
+                rows = conn.execute(f'''
+                    SELECT COALESCE(NULLIF(created_by, ''), 'unknown') AS created_by,
+                           COALESCE(NULLIF(created_by_name, ''), '未知添加人') AS created_by_name,
+                           COUNT(*) AS count,
+                           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                           SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
+                           SUM(CASE WHEN status IN ('completed', 'done', 'ordered') THEN 1 ELSE 0 END) AS completed_count,
+                           SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored_count,
+                           SUM(sales_qty_60) AS sales_qty_60,
+                           SUM(stock_new) AS stock_new,
+                           SUM(stock_transit) AS stock_transit,
+                           SUM(stock_local) AS stock_local,
+                           SUM(factory_qty) AS factory_qty,
+                           SUM(suggested_qty) AS suggested_qty,
+                           SUM(confirmed_qty) AS confirmed_qty,
+                           SUM(confirmed_qty * COALESCE(reorder_price, 0)) AS confirmed_amount,
+                           MIN(created_at) AS first_created_at,
+                           MAX(created_at) AS latest_created_at,
+                           MAX(updated_at) AS updated_at,
+                           GROUP_CONCAT(DISTINCT account) AS accounts
+                    FROM reorder_items
+                    {where}
+                    GROUP BY COALESCE(NULLIF(created_by, ''), 'unknown'), COALESCE(NULLIF(created_by_name, ''), '未知添加人')
+                    ORDER BY latest_created_at DESC, updated_at DESC, created_by_name, created_by
+                ''', params).fetchall()
+            else:
+                rows = conn.execute(f'''
+                    SELECT supplier_number, supplier_name,
+                           COUNT(*) AS count,
+                           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                           SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
+                           SUM(CASE WHEN status IN ('completed', 'done', 'ordered') THEN 1 ELSE 0 END) AS completed_count,
+                           SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored_count,
+                           SUM(sales_qty_60) AS sales_qty_60,
+                           SUM(stock_new) AS stock_new,
+                           SUM(stock_transit) AS stock_transit,
+                           SUM(stock_local) AS stock_local,
+                           SUM(factory_qty) AS factory_qty,
+                           SUM(suggested_qty) AS suggested_qty,
+                           SUM(confirmed_qty) AS confirmed_qty,
+                           SUM(confirmed_qty * COALESCE(reorder_price, 0)) AS confirmed_amount,
+                           MIN(created_at) AS first_created_at,
+                           MAX(created_at) AS latest_created_at,
+                           MAX(updated_at) AS updated_at,
+                           GROUP_CONCAT(DISTINCT account) AS accounts
+                    FROM reorder_items
+                    {where}
+                    GROUP BY COALESCE(supplier_number, ''), COALESCE(supplier_name, '')
+                    ORDER BY latest_created_at DESC, updated_at DESC, supplier_name, supplier_number
+                ''', params).fetchall()
         items = []
         for row in rows:
+            if view_mode == 'picker':
+                created_by = row['created_by'] or 'unknown'
+                created_by_name = row['created_by_name'] or '未知添加人'
+                items.append({
+                    'viewMode': 'picker',
+                    'groupKey': f'picker:{created_by}',
+                    'supplierKey': f'picker:{created_by}',
+                    'pickerKey': created_by,
+                    'pickerName': created_by_name,
+                    'createdBy': created_by,
+                    'created_by': created_by,
+                    'createdByName': created_by_name,
+                    'created_by_name': created_by_name,
+                    'supplierName': created_by_name,
+                    'supplier_name': created_by_name,
+                    'supplierNumber': '',
+                    'supplier_number': '',
+                    'count': row['count'] or 0,
+                    'itemCount': row['count'] or 0,
+                    'item_count': row['count'] or 0,
+                    'pendingCount': row['pending_count'] or 0,
+                    'confirmedCount': row['confirmed_count'] or 0,
+                    'completedCount': row['completed_count'] or 0,
+                    'ignoredCount': row['ignored_count'] or 0,
+                    'salesQty60': _num(row['sales_qty_60']),
+                    'stockNew': _num(row['stock_new']),
+                    'stockTransit': _num(row['stock_transit']),
+                    'stockLocal': _num(row['stock_local']),
+                    'factoryQty': _num(row['factory_qty']),
+                    'suggestedQty': _num(row['suggested_qty']),
+                    'confirmedQty': _num(row['confirmed_qty']),
+                    'confirmedAmount': _num(row['confirmed_amount']),
+                    'latestCreatedAt': row['latest_created_at'] or '',
+                    'createdAt': row['first_created_at'] or '',
+                    'updatedAt': row['updated_at'] or '',
+                    'accounts': row['accounts'] or '',
+                })
+                continue
             supplier_number = row['supplier_number'] or ''
             supplier_name = row['supplier_name'] or '未识别供应商'
             items.append({
+                'viewMode': 'supplier',
+                'groupKey': supplier_number or supplier_name,
                 'supplierKey': supplier_number or supplier_name,
                 'supplierNumber': supplier_number,
                 'supplier_number': supplier_number,
@@ -11753,12 +12030,13 @@ def reorder_suppliers():
                 'factoryQty': _num(row['factory_qty']),
                 'suggestedQty': _num(row['suggested_qty']),
                 'confirmedQty': _num(row['confirmed_qty']),
+                'confirmedAmount': _num(row['confirmed_amount']),
                 'latestCreatedAt': row['latest_created_at'] or '',
                 'createdAt': row['first_created_at'] or '',
                 'updatedAt': row['updated_at'] or '',
                 'accounts': row['accounts'] or '',
             })
-        return jsonify({'success': True, 'list': items, 'total': len(items)})
+        return jsonify({'success': True, 'view_mode': view_mode, 'list': items, 'total': len(items)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -11766,11 +12044,17 @@ def reorder_suppliers():
 @app.route('/reorder-items', methods=['GET'])
 def reorder_items():
     try:
+        view_mode = (request.args.get('view_mode') or 'supplier').strip().lower()
+        if view_mode not in ('supplier', 'picker'):
+            view_mode = 'supplier'
         status = request.args.get('status', 'pending').strip() or 'pending'
         account = request.args.get('account', '').strip()
         supplier = request.args.get('supplier', '').strip()
         supplier_number = request.args.get('supplier_number', '').strip()
         supplier_name = request.args.get('supplier_name', '').strip()
+        picker_key = request.args.get('picker_key', '').strip()
+        created_by = request.args.get('created_by', '').strip()
+        created_by_name = request.args.get('created_by_name', '').strip()
         search = request.args.get('search', '').strip().lower()
         clauses = []
         params = []
@@ -11780,15 +12064,28 @@ def reorder_items():
         if account and account != 'all':
             clauses.append('account = ?')
             params.append(account)
-        if supplier_number:
-            clauses.append('supplier_number = ?')
-            params.append(supplier_number)
-        elif supplier_name:
-            clauses.append('supplier_name = ?')
-            params.append(supplier_name)
-        elif supplier:
-            clauses.append('(supplier_number = ? OR supplier_name = ?)')
-            params.extend([supplier, supplier])
+        if view_mode == 'picker':
+            picker = created_by or picker_key
+            if picker.startswith('picker:'):
+                picker = picker.split(':', 1)[1]
+            if picker and picker != 'unknown':
+                clauses.append('created_by = ?')
+                params.append(picker)
+            elif created_by_name:
+                clauses.append('created_by_name = ?')
+                params.append(created_by_name)
+            elif picker == 'unknown':
+                clauses.append("(COALESCE(created_by, '') = '' OR created_by = 'unknown')")
+        else:
+            if supplier_number:
+                clauses.append('supplier_number = ?')
+                params.append(supplier_number)
+            elif supplier_name:
+                clauses.append('supplier_name = ?')
+                params.append(supplier_name)
+            elif supplier:
+                clauses.append('(supplier_number = ? OR supplier_name = ?)')
+                params.extend([supplier, supplier])
         if search:
             clauses.append('''
                 (
@@ -11798,10 +12095,11 @@ def reorder_items():
                     OR LOWER(COALESCE(barcode, '')) LIKE ?
                     OR LOWER(COALESCE(supplier_name, '')) LIKE ?
                     OR LOWER(COALESCE(supplier_number, '')) LIKE ?
+                    OR LOWER(COALESCE(created_by_name, '')) LIKE ?
                 )
             ''')
             kw = f'%{search}%'
-            params.extend([kw, kw, kw, kw, kw, kw])
+            params.extend([kw, kw, kw, kw, kw, kw, kw])
         where = 'WHERE ' + ' AND '.join(clauses) if clauses else ''
         with _sales_cache_conn() as conn:
             rows = conn.execute(f'''
@@ -11819,8 +12117,9 @@ def reorder_items():
             'factoryQty': sum(_num(x.get('factoryQty')) for x in items),
             'suggestedQty': sum(_num(x.get('suggestedQty')) for x in items),
             'confirmedQty': sum(_num(x.get('confirmedQty')) for x in items),
+            'confirmedAmount': sum(_num(x.get('confirmedQty')) * _num(x.get('reorderPrice')) for x in items),
         }
-        return jsonify({'success': True, 'list': items, 'summary': summary})
+        return jsonify({'success': True, 'view_mode': view_mode, 'list': items, 'summary': summary})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -11894,6 +12193,7 @@ def reorder_item_update(item_id):
         if status and status not in allowed:
             return jsonify({'success': False, 'error': '状态无效'}), 400
         confirmed_qty = _num(data.get('confirmed_qty'))
+        reorder_price = _num(data.get('reorder_price'))
         note = str(data.get('note') or '').strip()
         updates = []
         params = []
@@ -11903,6 +12203,9 @@ def reorder_item_update(item_id):
         if 'confirmed_qty' in data:
             updates.append('confirmed_qty = ?')
             params.append(confirmed_qty)
+        if 'reorder_price' in data:
+            updates.append('reorder_price = ?')
+            params.append(reorder_price)
         if 'note' in data:
             updates.append('note = ?')
             params.append(note)
@@ -12299,38 +12602,186 @@ def attachments_status():
 def reorder_product_history(code):
     try:
         account = request.args.get('account', '').strip()
-        refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
-        allow_live = request.args.get('allow_live', '').lower() in ('1', 'true', 'yes')
-        if refresh and allow_live:
-            for cli_fn, name in _sales_sources_for_account(account or 'all'):
-                cli = cli_fn()
-                if not cli:
-                    continue
-                try:
-                    result = cli.get_purchase_orders_by_product(code, page=1, page_size=20)
-                    with _sales_cache_conn() as conn:
-                        for row in result.get('list') or []:
-                            _cache_upsert_purchase_inbound(conn, name, row)
-                        conn.commit()
-                except Exception as e:
-                    print(f'[REORDER] refresh purchase history failed {name}/{code}: {_short_sync_error(e)}')
-        items = _read_cached_purchase_history(account, code, limit=30)
+        date_from = (request.args.get('date_from') or '').strip()[:10]
+        date_to = (request.args.get('date_to') or '').strip()[:10]
+        local_only = request.args.get('local_only', '1').lower() not in ('0', 'false', 'no')
+        items = _read_cached_purchase_history(account, code, limit=30, date_from=date_from, date_to=date_to)
         year = datetime.now().strftime('%Y')
-        year_items = [x for x in items if str(x.get('date') or '').startswith(year)]
+        year_items = [x for x in items if str(x.get('source_date') or x.get('date') or '').startswith(year)]
         return jsonify({
             'success': True,
             'code': code,
+            'local_only': True,
+            'live_lookup': False,
+            'would_call_jdy': False,
+            'date_from': date_from,
+            'date_to': date_to,
+            'count': len(items),
+            'records': items,
             'list': items,
             'history': items,
             'yearCount': len(year_items),
             'latest': items[0] if items else None,
             'source': 'local_cache',
-            'liveRefreshSkipped': bool(refresh and not allow_live),
+            'message': '' if items else '本地采购历史未缓存',
+            'liveRefreshSkipped': True,
         })
     except Exception as e:
         tb = traceback.format_exc()
         print(f'[ERROR] reorder_product_history: {tb}')
         return jsonify({'success': False, 'error': str(e), 'traceback': tb}), 500
+
+
+def _reorder_generated_dir():
+    path = os.path.join(_SALES_CACHE_DIR, 'reorder_generated')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _reorder_generate_html(batch_no, mode, items):
+    title = f'返单 {batch_no}'
+    groups = {}
+    for item in items:
+        if mode == 'picker':
+            key = item.get('createdByName') or '未知添加人'
+        else:
+            key = item.get('supplierName') or item.get('supplier_name') or '未识别供应商'
+        groups.setdefault(key, []).append(item)
+    group_html = []
+    for group_name, rows in groups.items():
+        total_amount = sum(
+            (_num(row.get('confirmedQty')) or _num(row.get('suggestedQty'))) * _num(row.get('reorderPrice'))
+            for row in rows
+        )
+        body = []
+        for idx, row in enumerate(rows, 1):
+            qty = _num(row.get('confirmedQty')) or _num(row.get('suggestedQty'))
+            price = _num(row.get('reorderPrice'))
+            amount = qty * price
+            img = row.get('imageUrl') or ''
+            img_html = f'<img src="{html.escape(img)}" alt="">' if img else '<span class="no-img">无图</span>'
+            body.append(f'''
+                <tr>
+                  <td>{idx}</td>
+                  <td class="img-cell">{img_html}</td>
+                  <td>{html.escape(str(row.get('code') or ''))}</td>
+                  <td>{html.escape(str(row.get('name') or ''))}</td>
+                  <td>{html.escape(str(row.get('spec') or ''))}</td>
+                  <td>{html.escape(str(row.get('barcode') or ''))}</td>
+                  <td>{html.escape(str(row.get('supplierName') or row.get('supplier_name') or ''))}</td>
+                  <td class="num">{qty:g}</td>
+                  <td class="num">{price:.2f}</td>
+                  <td class="num">{amount:.2f}</td>
+                  <td>{html.escape(str(row.get('note') or ''))}</td>
+                  <td>{html.escape(str(row.get('createdByName') or '未知添加人'))}</td>
+                </tr>
+            ''')
+        group_html.append(f'''
+          <section>
+            <h2>{html.escape(str(group_name))}</h2>
+            <div class="meta">共 {len(rows)} 款，金额 {total_amount:.2f}</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>图片</th><th>商品编号</th><th>商品名称</th><th>规格</th><th>条码</th>
+                  <th>供应商</th><th>数量</th><th>单价</th><th>金额</th><th>备注</th><th>添加人</th>
+                </tr>
+              </thead>
+              <tbody>{''.join(body)}</tbody>
+            </table>
+          </section>
+        ''')
+    return f'''<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{ font-family: "Microsoft YaHei", Arial, sans-serif; margin: 24px; color: #202124; }}
+    h1 {{ font-size: 22px; margin: 0 0 8px; }}
+    h2 {{ font-size: 18px; margin: 24px 0 6px; }}
+    .meta {{ color: #5f6368; font-size: 13px; margin-bottom: 10px; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 12px; page-break-inside: auto; }}
+    th, td {{ border: 1px solid #d9dee8; padding: 6px 7px; vertical-align: middle; }}
+    th {{ background: #f5f7fb; text-align: left; }}
+    .num {{ text-align: right; white-space: nowrap; }}
+    .img-cell {{ width: 64px; text-align: center; }}
+    .img-cell img {{ max-width: 56px; max-height: 56px; object-fit: contain; }}
+    .no-img {{ color: #98a1b2; }}
+    @media print {{ body {{ margin: 10mm; }} .no-print {{ display: none; }} }}
+  </style>
+</head>
+<body>
+  <button class="no-print" onclick="window.print()">打印</button>
+  <h1>{html.escape(title)}</h1>
+  <div class="meta">模式：{html.escape(mode)}；生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}；本文件仅为本地返单打印页，不会提交精斗云采购订单。</div>
+  {''.join(group_html)}
+</body>
+</html>'''
+
+
+@app.route('/reorder-generate', methods=['POST'])
+def reorder_generate():
+    try:
+        data = request.get_json(force=True) or {}
+        ids = [int(x) for x in (data.get('item_ids') or []) if str(x).isdigit()]
+        mode = str(data.get('mode') or 'supplier').strip().lower()
+        if mode not in ('supplier', 'picker'):
+            mode = 'supplier'
+        if not ids:
+            return jsonify({'success': False, 'error': '请先勾选要生成返单的商品'}), 400
+        marks = ','.join('?' for _ in ids)
+        with _sales_cache_conn() as conn:
+            rows = conn.execute(f'SELECT * FROM reorder_items WHERE id IN ({marks})', ids).fetchall()
+            items = [_reorder_row_to_item(row) for row in rows]
+            missing_qty = [
+                f"{item.get('code') or item.get('name') or item.get('id')}"
+                for item in items
+                if (_num(item.get('confirmedQty')) or _num(item.get('suggestedQty'))) <= 0
+            ]
+            missing_price = [
+                f"{item.get('code') or item.get('name') or item.get('id')}"
+                for item in items
+                if _num(item.get('reorderPrice')) <= 0
+            ]
+            if missing_qty or missing_price:
+                return jsonify({
+                    'success': False,
+                    'error': '生成返单前请补齐数量和价格',
+                    'missing_qty': missing_qty,
+                    'missing_price': missing_price,
+                    'called_jdy': False,
+                }), 400
+            batch_no = 'RO' + datetime.now().strftime('%Y%m%d%H%M%S')
+            generated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            html_text = _reorder_generate_html(batch_no, mode, items)
+            filename = f'{batch_no}.html'
+            out_path = os.path.join(_reorder_generated_dir(), filename)
+            with open(out_path, 'w', encoding='utf-8') as fp:
+                fp.write(html_text)
+            conn.execute(
+                f"UPDATE reorder_items SET generated_batch_no=?, generated_at=?, status='confirmed', updated_at=? WHERE id IN ({marks})",
+                [batch_no, generated_at, generated_at, *ids],
+            )
+            conn.commit()
+        return jsonify({
+            'success': True,
+            'batch_no': batch_no,
+            'output_type': 'html',
+            'url': f'/reorder-generate/download/{filename}',
+            'called_jdy': False,
+            'would_call_jdy': False,
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] reorder_generate: {tb}')
+        return jsonify({'success': False, 'error': str(e), 'traceback': tb, 'called_jdy': False}), 500
+
+
+@app.route('/reorder-generate/download/<path:filename>', methods=['GET'])
+def reorder_generate_download(filename):
+    safe = os.path.basename(filename)
+    return send_file(os.path.join(_reorder_generated_dir(), safe), mimetype='text/html')
 
 
 @app.route('/purchase-inbound-verify', methods=['GET'])

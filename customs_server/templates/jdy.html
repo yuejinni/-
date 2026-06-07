@@ -1875,6 +1875,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <div class="card-title" style="margin:0 auto 0 0;">供应商返单</div>
+      <div class="segmented" style="display:flex;gap:4px;">
+        <button class="btn btn-primary btn-sm" data-reorder-mode="supplier" onclick="setReorderViewMode('supplier')">供应商模式</button>
+        <button class="btn btn-ghost btn-sm" data-reorder-mode="picker" onclick="setReorderViewMode('picker')">选品模式</button>
+      </div>
       <div class="reorder-filter-row">
         <select id="reorder-status-filter" onchange="loadReorderSuppliers(true)">
           <option value="all">全部状态</option>
@@ -1889,17 +1893,29 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <option value="祺航箱包">箱包</option>
         </select>
       </div>
+      <div class="reorder-filter-row">
+        <select id="reorder-history-range" onchange="setReorderHistoryRange(this.value)">
+          <option value="month">本月采购历史</option>
+          <option value="year">今年</option>
+          <option value="last_year">去年</option>
+          <option value="custom">自定义</option>
+        </select>
+        <input id="reorder-history-start" type="date" onchange="setReorderHistoryRange('custom')" style="width:135px;">
+        <input id="reorder-history-end" type="date" onchange="setReorderHistoryRange('custom')" style="width:135px;">
+      </div>
       <input id="reorder-search" placeholder="搜索供应商 / 商品编号 / 名称" type="text"
              style="width:240px;border:1px solid #d9d9d9;border-radius:4px;padding:7px 10px;font-size:13px;"
              onkeydown="if(event.key==='Enter') loadReorderSuppliers(true)">
       <button class="btn btn-primary" onclick="loadReorderSuppliers()">刷新</button>
+      <button class="btn btn-warn" onclick="deleteSelectedReorderItems()">删除</button>
+      <button class="btn btn-success" onclick="generateSelectedReorder()">生成返单</button>
       <span id="reorder-status" class="tip"></span>
     </div>
   </div>
   <div class="sales-shell table-mode" style="min-height:0;">
     <div class="sales-phone" style="height:calc(100vh - 150px);min-height:520px;border-radius:8px;">
       <div class="sales-phone-header">
-        <div class="sales-phone-title">供应商</div>
+        <div class="sales-phone-title" id="reorder-group-title">供应商</div>
       </div>
       <div class="sales-list" id="reorder-supplier-list">
         <div class="empty">点击刷新加载供应商返单</div>
@@ -1917,10 +1933,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <span>左侧选择供应商，查看待返单商品。</span>
         </div>
         <div class="reorder-batch-bar">
-          <button class="btn btn-ghost btn-sm" onclick="batchUpdateReorderStatus('confirmed')">批量标记已确认</button>
-          <button class="btn btn-ghost btn-sm" onclick="batchUpdateReorderStatus('completed')">批量标记已完成</button>
-          <button class="btn btn-ghost btn-sm" onclick="batchUpdateReorderStatus('ignored')">批量忽略</button>
-          <span class="tip">采购附件将在 C 阶段实现：按“工厂数据切换日期”分流附件来源。</span>
+          <span class="tip">导入和历史查询只读本地缓存，不调用精斗云；生成返单为本地打印文件。</span>
         </div>
       </div>
       <div class="sales-product-list" id="reorder-item-list">
@@ -3236,7 +3249,10 @@ function showPage(name) {
   updateNavigationState(name);
   if (name === 'settings') loadSettings();
   if (name === 'purchase-list' && !window._poRawList.length) setPODateRange(30);
-  if (name === 'reorder-list' && !window._reorderSuppliersLoaded) loadReorderSuppliers();
+  if (name === 'reorder-list') {
+    if (!document.getElementById('reorder-history-start')?.value) setReorderHistoryRange('month');
+    setReorderViewMode(window._reorderViewMode || 'supplier');
+  }
   if (name === 'accessory-list' && !window._accessoryRawList.length) loadAccessoryOrders();
   if (name === 'accessory-product-search') {
     loadAccessorySupplierOptions();
@@ -4022,9 +4038,10 @@ window._reorderSuppliers = [];
 window._reorderCurrentSupplier = '';
 window._reorderCurrentSupplierRow = null;
 window._reorderCurrentItems = [];
+window._reorderViewMode = 'supplier';
 
 function reorderKey(row) {
-  return String(row?.supplierKey || row?.supplierNumber || row?.supplier_number || row?.supplierName || row?.supplier_name || '未匹配供应商');
+  return String(row?.groupKey || row?.supplierKey || row?.pickerKey || row?.createdBy || row?.created_by || row?.supplierNumber || row?.supplier_number || row?.supplierName || row?.supplier_name || '未匹配供应商');
 }
 
 function reorderAccountParam() {
@@ -4038,7 +4055,7 @@ function reorderStatusParam() {
 }
 
 function reorderStatusLabel(status) {
-  return ({pending:'待处理', confirmed:'已确认', completed:'已完成', ignored:'已忽略', done:'已完成', ordered:'已完成'})[status] || status || '待处理';
+  return ({pending:'待处理', confirmed:'已确认', completed:'已完成', ignored:'已忽略', deleted:'已删除', done:'已完成', ordered:'已完成'})[status] || status || '待处理';
 }
 
 function reorderSourceLabel(type) {
@@ -4047,6 +4064,52 @@ function reorderSourceLabel(type) {
 
 function reorderCurrentSupplierRow() {
   return (window._reorderSuppliers || []).find(row => reorderKey(row) === window._reorderCurrentSupplier) || window._reorderCurrentSupplierRow || {};
+}
+
+function setReorderViewMode(mode) {
+  window._reorderViewMode = mode === 'picker' ? 'picker' : 'supplier';
+  document.querySelectorAll('[data-reorder-mode]').forEach(btn => {
+    const active = btn.dataset.reorderMode === window._reorderViewMode;
+    btn.classList.toggle('btn-primary', active);
+    btn.classList.toggle('btn-ghost', !active);
+  });
+  const title = document.getElementById('reorder-group-title');
+  if (title) title.textContent = window._reorderViewMode === 'picker' ? '添加人' : '供应商';
+  window._reorderCurrentSupplier = '';
+  window._reorderCurrentSupplierRow = null;
+  loadReorderSuppliers(true);
+}
+
+function setReorderHistoryRange(value) {
+  const sel = document.getElementById('reorder-history-range');
+  if (sel) sel.value = value || sel.value || 'month';
+  const startEl = document.getElementById('reorder-history-start');
+  const endEl = document.getElementById('reorder-history-end');
+  const now = new Date();
+  const fmt = d => d.toISOString().slice(0, 10);
+  let start = startEl?.value || '';
+  let end = endEl?.value || '';
+  if (value === 'month') {
+    start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    end = fmt(now);
+  } else if (value === 'year') {
+    start = `${now.getFullYear()}-01-01`;
+    end = fmt(now);
+  } else if (value === 'last_year') {
+    const y = now.getFullYear() - 1;
+    start = `${y}-01-01`;
+    end = `${y}-12-31`;
+  }
+  if (startEl && start) startEl.value = start;
+  if (endEl && end) endEl.value = end;
+}
+
+function reorderHistoryDateParams() {
+  if (!document.getElementById('reorder-history-start')?.value) setReorderHistoryRange('month');
+  return {
+    date_from: document.getElementById('reorder-history-start')?.value || '',
+    date_to: document.getElementById('reorder-history-end')?.value || ''
+  };
 }
 
 async function importSelectedSalesToReorder() {
@@ -4102,7 +4165,7 @@ async function loadReorderSuppliers(resetCurrent=false) {
   if (wrap) wrap.innerHTML = '<div class="empty">加载中…</div>';
   if (status) status.textContent = '';
   try {
-    const url = `${API}/reorder-suppliers?status=${encodeURIComponent(reorderStatusParam())}&account=${encodeURIComponent(reorderAccountParam())}&search=${encodeURIComponent(search)}`;
+    const url = `${API}/reorder-suppliers?view_mode=${encodeURIComponent(window._reorderViewMode || 'supplier')}&status=${encodeURIComponent(reorderStatusParam())}&account=${encodeURIComponent(reorderAccountParam())}&search=${encodeURIComponent(search)}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
@@ -4113,14 +4176,14 @@ async function loadReorderSuppliers(resetCurrent=false) {
       window._reorderCurrentSupplierRow = null;
     }
     renderReorderSuppliers(window._reorderSuppliers);
-    if (total) total.innerHTML = `共 <b>${data.total || 0}</b> 个供应商`;
-    if (status) status.textContent = `当前筛选：${reorderStatusLabel(reorderStatusParam())}，${reorderAccountParam() || '全部账套'}`;
+    if (total) total.innerHTML = `共 <b>${data.total || 0}</b> 个${(window._reorderViewMode || 'supplier') === 'picker' ? '添加人' : '供应商'}`;
+    if (status) status.textContent = `当前筛选：${(window._reorderViewMode || 'supplier') === 'picker' ? '选品模式' : '供应商模式'}，${reorderStatusLabel(reorderStatusParam())}，${reorderAccountParam() || '全部账套'}`;
     if (window._reorderSuppliers.length && !window._reorderCurrentSupplier) {
       openReorderSupplier(reorderKey(window._reorderSuppliers[0]));
     } else if (!window._reorderSuppliers.length) {
       window._reorderCurrentItems = [];
       document.getElementById('reorder-item-list').innerHTML = '<div class="empty">暂无详情</div>';
-      document.getElementById('reorder-detail-meta').innerHTML = '<span>当前筛选下暂无供应商返单。</span>';
+      document.getElementById('reorder-detail-meta').innerHTML = '<span>当前筛选下暂无返单商品。</span>';
     }
   } catch(e) {
     if (wrap) wrap.innerHTML = `<div class="empty log-err">加载失败：${e.message}</div>`;
@@ -4131,26 +4194,27 @@ function renderReorderSuppliers(list) {
   const wrap = document.getElementById('reorder-supplier-list');
   if (!wrap) return;
   if (!list || !list.length) {
-    wrap.innerHTML = '<div class="empty">暂无供应商返单</div>';
+    wrap.innerHTML = `<div class="empty">暂无${(window._reorderViewMode || 'supplier') === 'picker' ? '添加人选品' : '供应商返单'}</div>`;
     document.getElementById('reorder-item-list').innerHTML = '<div class="empty">暂无详情</div>';
     return;
   }
   wrap.innerHTML = list.map(row => {
     const name = reorderKey(row);
     const active = name === window._reorderCurrentSupplier ? ' active' : '';
-    const displayName = row.supplierName || row.supplier_name || '未识别供应商';
-    const supplierNo = row.supplierNumber || row.supplier_number || '';
+    const pickerMode = (window._reorderViewMode || 'supplier') === 'picker';
+    const displayName = pickerMode ? (row.pickerName || row.createdByName || row.created_by_name || '未知添加人') : (row.supplierName || row.supplier_name || '未识别供应商');
+    const supplierNo = pickerMode ? (row.createdBy || row.created_by || '') : (row.supplierNumber || row.supplier_number || '');
     return `
       <div class="reorder-supplier-row${active}" onclick="openReorderSupplier('${salesJs(name)}')">
         <div>
           <h3>${salesAttr(displayName)}</h3>
-          <p>${supplierNo ? `编号：${salesAttr(supplierNo)} · ` : ''}${salesAttr(row.accounts || '未标账套')}</p>
+          <p>${supplierNo ? `${pickerMode ? '账号' : '编号'}：${salesAttr(supplierNo)} · ` : ''}${salesAttr(row.accounts || '未标账套')}</p>
           <div class="reorder-supplier-stats">
             <span>待处理 <b>${salesAttr(row.pendingCount || 0)}</b></span>
             <span>已确认 <b>${salesAttr(row.confirmedCount || 0)}</b></span>
             <span>已完成 <b>${salesAttr(row.completedCount || 0)}</b></span>
-            <span>建议 <b>${salesAttr(row.suggestedQty || 0)}</b></span>
             <span>确认 <b>${salesAttr(row.confirmedQty || 0)}</b></span>
+            <span>金额 <b>${salesMoney(row.confirmedAmount || 0)}</b></span>
             <span>${salesAttr(row.latestCreatedAt || row.updatedAt || '')}</span>
           </div>
         </div>
@@ -4178,16 +4242,20 @@ async function loadReorderItems() {
   const search = document.getElementById('reorder-search')?.value.trim() || '';
   const supplier = reorderCurrentSupplierRow();
   if (!window._reorderCurrentSupplier && !search) {
-    if (wrap) wrap.innerHTML = '<div class="empty">左侧选择供应商，查看待返单商品。</div>';
+    if (wrap) wrap.innerHTML = `<div class="empty">左侧选择${(window._reorderViewMode || 'supplier') === 'picker' ? '添加人' : '供应商'}，查看待返单商品。</div>`;
     return;
   }
   if (wrap) wrap.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const params = new URLSearchParams({
+      view_mode: window._reorderViewMode || 'supplier',
       status: reorderStatusParam(),
       supplier: window._reorderCurrentSupplier || '',
       supplier_number: supplier.supplierNumber || supplier.supplier_number || '',
       supplier_name: supplier.supplierName || supplier.supplier_name || '',
+      picker_key: supplier.pickerKey || supplier.createdBy || supplier.created_by || '',
+      created_by: supplier.createdBy || supplier.created_by || '',
+      created_by_name: supplier.createdByName || supplier.created_by_name || '',
       search,
       account: reorderAccountParam(),
     });
@@ -4195,14 +4263,15 @@ async function loadReorderItems() {
     const res = await fetch(url);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
-    if (title) title.textContent = supplier.supplierName || supplier.supplier_name || window._reorderCurrentSupplier || '返单详情';
+    if (title) title.textContent = (window._reorderViewMode || 'supplier') === 'picker'
+      ? (supplier.createdByName || supplier.created_by_name || supplier.pickerName || '未知添加人')
+      : (supplier.supplierName || supplier.supplier_name || window._reorderCurrentSupplier || '返单详情');
     if (meta) {
       const s = data.summary || {};
       meta.innerHTML = `
         <span>${reorderStatusLabel(reorderStatusParam())}：${s.count || 0} 款</span>
-        <span>近60天销量：${s.salesQty60 || 0}</span>
-        <span>建议：${s.suggestedQty || 0}</span>
         <span>确认：${s.confirmedQty || 0}</span>
+        <span>金额：${salesMoney(s.confirmedAmount || 0)}</span>
       `;
     }
     window._reorderCurrentItems = data.list || [];
@@ -4227,6 +4296,8 @@ function renderReorderItems(list) {
     const sourceNo = item.sourceNumber || item.source_number || '';
     const sourceDate = item.sourceDate || item.source_date || '';
     const sourceCustomer = item.sourceCustomer || item.source_customer || '';
+    const createdByName = item.createdByName || item.created_by_name || '未知添加人';
+    const reorderPrice = Number(item.reorderPrice || item.reorder_price || 0);
     return `
       <div class="sales-product-card" data-reorder-id="${id}">
         <div class="sales-product-image-cell">
@@ -4244,13 +4315,16 @@ function renderReorderItems(list) {
           <p>条码：${salesAttr(item.barcode || '—')}</p>
           <p><span class="reorder-source-tag">${salesAttr(reorderSourceLabel(sourceType))}</span>${salesAttr(sourceNo || '—')} ${salesAttr(sourceDate || '')}</p>
           <p>客户/来源：${salesAttr(sourceCustomer || '—')}</p>
-          <p>近60天销售：<span class="sales-sold">${salesQty}</span></p>
+          <p>添加人：${salesAttr(createdByName)}</p>
           <div class="reorder-edit-grid">
             <label>建议返单数量
               <input class="reorder-suggested" type="number" value="${salesAttr(item.suggestedQty || item.suggested_qty || 0)}" readonly>
             </label>
             <label>确认返单数量
               <input class="reorder-confirmed" type="number" step="1" min="0" value="${salesAttr(item.confirmedQty || item.confirmed_qty || 0)}">
+            </label>
+            <label>本次返单价格
+              <input class="reorder-price" type="number" step="0.01" min="0" value="${salesAttr(reorderPrice || '')}">
             </label>
             <label>状态
               <select class="reorder-status-select">
@@ -4742,22 +4816,24 @@ async function loadReorderProductHistory(code, account, btn) {
   if (!code) return;
   if (btn) btn.disabled = true;
   try {
-    const url = `${API}/reorder-product-history/${encodeURIComponent(code)}?account=${encodeURIComponent(account || '')}`;
+    const range = reorderHistoryDateParams();
+    const url = `${API}/reorder-product-history/${encodeURIComponent(code)}?account=${encodeURIComponent(account || '')}&date_from=${encodeURIComponent(range.date_from)}&date_to=${encodeURIComponent(range.date_to)}&local_only=1`;
     const res = await fetch(url);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
     const card = btn?.closest('.sales-product-card');
     const box = card?.querySelector('.reorder-history-list');
     if (box) {
-      const history = data.history || data.list || [];
+      const history = data.records || data.history || data.list || [];
       box.innerHTML = history.length ? history.slice(0, 5).map(row => `
         <div class="reorder-history-card">
-          <b>${salesAttr(row.number || '—')}</b>
-          <span>${salesAttr(row.date || '')}</span>
+          <b>${salesAttr(row.source_number || row.number || '—')}</b>
+          <span>${salesAttr(row.source_date || row.date || '')}</span>
+          <span>来源：${salesAttr(row.source_type || 'local_cache')}</span>
           <span>供应商：${salesAttr(row.supplierName || row.supplier_name || '—')}</span>
-          <span>附件：${(row.attachments || []).length || 0}</span>
+          <span>数量：${salesAttr(row.qty || 0)}；单价：${salesMoney(row.price || 0)}</span>
         </div>
-      `).join('') : '<div class="reorder-history-card">暂无采购历史</div>';
+      `).join('') : `<div class="reorder-history-card">${salesAttr(data.message || '本地采购历史未缓存')}</div>`;
     }
   } catch(e) {
     alert('采购历史加载失败：' + e.message);
@@ -4789,7 +4865,8 @@ async function saveReorderItem(id, btn) {
   const payload = {
     confirmed_qty: card.querySelector('.reorder-confirmed')?.value || 0,
     status: card.querySelector('.reorder-status-select')?.value || 'pending',
-    note: card.querySelector('.reorder-note')?.value || ''
+    note: card.querySelector('.reorder-note')?.value || '',
+    reorder_price: card.querySelector('.reorder-price')?.value || 0
   };
   try {
     await patchReorderItem(id, payload, btn);
@@ -4824,6 +4901,84 @@ async function batchUpdateReorderStatus(status) {
     await loadReorderSuppliers(true);
   } catch(e) {
     alert('批量更新失败：' + e.message);
+  }
+}
+
+function selectedReorderIds() {
+  return Array.from(document.querySelectorAll('.reorder-item-cb:checked')).map(cb => Number(cb.value || 0)).filter(Boolean);
+}
+
+async function deleteSelectedReorderItems() {
+  const ids = selectedReorderIds();
+  if (!ids.length) {
+    alert('请先勾选要删除的返单商品');
+    return;
+  }
+  if (!confirm(`确认删除 ${ids.length} 款返单商品？\n本操作只会把本地返单记录标记为已忽略，不会删除销售/商品缓存。`)) return;
+  try {
+    for (const id of ids) {
+      await patchReorderItem(id, {status: 'ignored'});
+    }
+    await loadReorderSuppliers(true);
+  } catch(e) {
+    alert('删除失败：' + e.message);
+  }
+}
+
+async function saveSelectedReorderEdits(ids) {
+  for (const id of ids) {
+    const card = document.querySelector(`.sales-product-card[data-reorder-id="${id}"]`);
+    if (!card) continue;
+    await patchReorderItem(id, {
+      confirmed_qty: card.querySelector('.reorder-confirmed')?.value || 0,
+      status: card.querySelector('.reorder-status-select')?.value || 'pending',
+      note: card.querySelector('.reorder-note')?.value || '',
+      reorder_price: card.querySelector('.reorder-price')?.value || 0
+    });
+  }
+}
+
+async function generateSelectedReorder() {
+  const ids = selectedReorderIds();
+  if (!ids.length) {
+    alert('请先勾选要生成返单的商品');
+    return;
+  }
+  const missingPrice = [];
+  const missingQty = [];
+  ids.forEach(id => {
+    const card = document.querySelector(`.sales-product-card[data-reorder-id="${id}"]`);
+    if (!card) return;
+    const code = card.querySelector('p')?.textContent?.replace('商品编号：', '').trim() || `ID ${id}`;
+    const qty = Number(card.querySelector('.reorder-confirmed')?.value || card.querySelector('.reorder-suggested')?.value || 0);
+    const price = Number(card.querySelector('.reorder-price')?.value || 0);
+    if (qty <= 0) missingQty.push(code);
+    if (price <= 0) missingPrice.push(code);
+  });
+  if (missingQty.length || missingPrice.length) {
+    alert([
+      missingQty.length ? `这些商品未填写返单数量：${missingQty.slice(0, 10).join('、')}` : '',
+      missingPrice.length ? `这些商品未填写本次返单价格：${missingPrice.slice(0, 10).join('、')}` : ''
+    ].filter(Boolean).join('\n'));
+    return;
+  }
+  try {
+    await saveSelectedReorderEdits(ids);
+    const res = await fetch(`${API}/reorder-generate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({item_ids: ids, mode: window._reorderViewMode || 'supplier'})
+    });
+    const data = await res.json();
+    if (!data.success) {
+      const detail = data.missing_price?.length ? `：${data.missing_price.join('、')}` : '';
+      throw new Error((data.error || '生成失败') + detail);
+    }
+    alert(`返单已生成：${data.batch_no}`);
+    if (data.url) window.open(data.url, '_blank');
+    await loadReorderSuppliers(true);
+  } catch(e) {
+    alert('生成返单失败：' + e.message);
   }
 }
 
