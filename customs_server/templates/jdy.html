@@ -1876,6 +1876,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <div class="card-title" style="margin:0 auto 0 0;">供应商返单</div>
       <div class="segmented" style="display:flex;gap:4px;">
+        <button class="btn btn-primary btn-sm" data-reorder-section="pool" onclick="setReorderSection('pool')">返单池</button>
+        <button class="btn btn-ghost btn-sm" data-reorder-section="batches" onclick="setReorderSection('batches')">返单记录</button>
+      </div>
+      <div class="segmented" style="display:flex;gap:4px;">
         <button class="btn btn-primary btn-sm" data-reorder-mode="supplier" onclick="setReorderViewMode('supplier')">供应商模式</button>
         <button class="btn btn-ghost btn-sm" data-reorder-mode="picker" onclick="setReorderViewMode('picker')">选品模式</button>
       </div>
@@ -1912,7 +1916,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <span id="reorder-status" class="tip"></span>
     </div>
   </div>
-  <div class="sales-shell table-mode" style="min-height:0;">
+  <div class="sales-shell table-mode" id="reorder-pool-section" style="min-height:0;">
     <div class="sales-phone" style="height:calc(100vh - 150px);min-height:520px;border-radius:8px;">
       <div class="sales-phone-header">
         <div class="sales-phone-title" id="reorder-group-title">供应商</div>
@@ -1940,6 +1944,50 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="empty">暂无详情</div>
       </div>
       <div class="sales-note-card" id="reorder-verify-result" style="display:none;"></div>
+    </div>
+  </div>
+  <div id="reorder-batches-section" style="display:none;min-height:0;">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="segmented" style="display:flex;gap:4px;">
+          <button class="btn btn-primary btn-sm" data-batch-status="not_synced" onclick="setReorderBatchStatus('not_synced')">未同步到 JDY</button>
+          <button class="btn btn-ghost btn-sm" data-batch-status="synced" onclick="setReorderBatchStatus('synced')">已同步到 JDY</button>
+          <button class="btn btn-ghost btn-sm" data-batch-status="all" onclick="setReorderBatchStatus('all')">全部</button>
+        </div>
+        <input id="reorder-batch-start" type="date" style="width:135px;">
+        <input id="reorder-batch-end" type="date" style="width:135px;">
+        <input id="reorder-batch-search" placeholder="搜索批次 / 供应商 / 商品 / 添加人" type="text"
+               style="width:260px;border:1px solid #d9d9d9;border-radius:4px;padding:7px 10px;font-size:13px;"
+               onkeydown="if(event.key==='Enter') loadReorderBatches()">
+        <button class="btn btn-primary" onclick="loadReorderBatches()">刷新</button>
+        <button class="btn btn-ghost" onclick="setReorderSection('pool')">返回返单池</button>
+        <span class="tip">这里是本地返单批次，不代表已生成 JDY 官方采购订单。</span>
+      </div>
+    </div>
+    <div class="sales-shell table-mode" style="min-height:0;">
+      <div class="sales-phone" style="height:calc(100vh - 190px);min-height:480px;border-radius:8px;">
+        <div class="sales-phone-header">
+          <div class="sales-phone-title">返单记录</div>
+        </div>
+        <div class="sales-list" id="reorder-batch-list">
+          <div class="empty">点击刷新加载返单记录</div>
+        </div>
+        <div class="sales-total-bar" id="reorder-batch-total">共 <b>0</b> 个批次</div>
+      </div>
+      <div class="sales-detail-panel" style="height:calc(100vh - 190px);min-height:480px;">
+        <div class="sales-detail-head">
+          <div class="sales-detail-title-line">
+            <h3 id="reorder-batch-detail-title">返单记录详情</h3>
+            <button class="btn btn-ghost btn-sm" onclick="loadReorderBatches()">刷新记录</button>
+          </div>
+          <div class="sales-detail-meta" id="reorder-batch-detail-meta">
+            <span>左侧选择一个本地返单批次。</span>
+          </div>
+        </div>
+        <div class="sales-product-list" id="reorder-batch-detail">
+          <div class="empty">暂无详情</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3251,7 +3299,8 @@ function showPage(name) {
   if (name === 'purchase-list' && !window._poRawList.length) setPODateRange(30);
   if (name === 'reorder-list') {
     if (!document.getElementById('reorder-history-start')?.value) setReorderHistoryRange('month');
-    setReorderViewMode(window._reorderViewMode || 'supplier');
+    setReorderSection(window._reorderSection || 'pool');
+    if ((window._reorderSection || 'pool') === 'pool') setReorderViewMode(window._reorderViewMode || 'supplier');
   }
   if (name === 'accessory-list' && !window._accessoryRawList.length) loadAccessoryOrders();
   if (name === 'accessory-product-search') {
@@ -4039,6 +4088,10 @@ window._reorderCurrentSupplier = '';
 window._reorderCurrentSupplierRow = null;
 window._reorderCurrentItems = [];
 window._reorderViewMode = 'supplier';
+window._reorderSection = 'pool';
+window._reorderBatchStatus = 'not_synced';
+window._reorderBatches = [];
+window._reorderCurrentBatch = '';
 
 function reorderKey(row) {
   return String(row?.groupKey || row?.supplierKey || row?.pickerKey || row?.createdBy || row?.created_by || row?.supplierNumber || row?.supplier_number || row?.supplierName || row?.supplier_name || '未匹配供应商');
@@ -4062,8 +4115,26 @@ function reorderSourceLabel(type) {
   return ({sales:'销售单', sales_summary:'销售汇总', supplier_recent:'近期款式'})[type] || type || '其他';
 }
 
+function reorderSyncStatusLabel(status) {
+  return ({not_synced:'未同步到 JDY', synced:'已同步到 JDY', failed:'同步失败', all:'全部'})[status || 'not_synced'] || '未同步到 JDY';
+}
+
 function reorderCurrentSupplierRow() {
   return (window._reorderSuppliers || []).find(row => reorderKey(row) === window._reorderCurrentSupplier) || window._reorderCurrentSupplierRow || {};
+}
+
+function setReorderSection(section) {
+  window._reorderSection = section === 'batches' ? 'batches' : 'pool';
+  document.querySelectorAll('[data-reorder-section]').forEach(btn => {
+    const active = btn.dataset.reorderSection === window._reorderSection;
+    btn.classList.toggle('btn-primary', active);
+    btn.classList.toggle('btn-ghost', !active);
+  });
+  const pool = document.getElementById('reorder-pool-section');
+  const batches = document.getElementById('reorder-batches-section');
+  if (pool) pool.style.display = window._reorderSection === 'pool' ? '' : 'none';
+  if (batches) batches.style.display = window._reorderSection === 'batches' ? '' : 'none';
+  if (window._reorderSection === 'batches') loadReorderBatches();
 }
 
 function setReorderViewMode(mode) {
@@ -4352,6 +4423,169 @@ function renderReorderItems(list) {
     `;
   }).join('');
   bindSalesProductImages();
+}
+
+function setReorderBatchStatus(status) {
+  window._reorderBatchStatus = status || 'not_synced';
+  document.querySelectorAll('[data-batch-status]').forEach(btn => {
+    const active = btn.dataset.batchStatus === window._reorderBatchStatus;
+    btn.classList.toggle('btn-primary', active);
+    btn.classList.toggle('btn-ghost', !active);
+  });
+  loadReorderBatches();
+}
+
+async function loadReorderBatches(focusBatch='') {
+  const wrap = document.getElementById('reorder-batch-list');
+  const total = document.getElementById('reorder-batch-total');
+  const search = document.getElementById('reorder-batch-search')?.value.trim() || '';
+  const dateFrom = document.getElementById('reorder-batch-start')?.value || '';
+  const dateTo = document.getElementById('reorder-batch-end')?.value || '';
+  document.querySelectorAll('[data-batch-status]').forEach(btn => {
+    const active = btn.dataset.batchStatus === (window._reorderBatchStatus || 'not_synced');
+    btn.classList.toggle('btn-primary', active);
+    btn.classList.toggle('btn-ghost', !active);
+  });
+  if (wrap) wrap.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const params = new URLSearchParams({
+      sync_status: window._reorderBatchStatus || 'not_synced',
+      date_from: dateFrom,
+      date_to: dateTo,
+      search
+    });
+    const res = await fetch(`${API}/reorder-batches?${params.toString()}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '接口错误');
+    window._reorderBatches = data.batches || [];
+    renderReorderBatches(window._reorderBatches);
+    if (total) total.innerHTML = `共 <b>${data.total || 0}</b> 个批次`;
+    if (focusBatch) {
+      await openReorderBatch(focusBatch);
+    } else if (window._reorderBatches.length && !window._reorderCurrentBatch) {
+      await openReorderBatch(window._reorderBatches[0].batch_no);
+    } else if (!window._reorderBatches.length) {
+      window._reorderCurrentBatch = '';
+      document.getElementById('reorder-batch-detail').innerHTML =
+        `<div class="empty">${window._reorderBatchStatus === 'synced' ? '暂无已同步到 JDY 的返单记录。' : '暂无本地返单记录。'}</div>`;
+      document.getElementById('reorder-batch-detail-meta').innerHTML = '<span>本地返单批次不会自动同步 JDY。</span>';
+    }
+  } catch(e) {
+    if (wrap) wrap.innerHTML = `<div class="empty log-err">加载失败：${e.message}</div>`;
+  }
+}
+
+function renderReorderBatches(list) {
+  const wrap = document.getElementById('reorder-batch-list');
+  if (!wrap) return;
+  if (!list || !list.length) {
+    wrap.innerHTML = `<div class="empty">${window._reorderBatchStatus === 'synced' ? '暂无已同步到 JDY 的返单记录。' : '暂无返单记录'}</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(row => {
+    const active = row.batch_no === window._reorderCurrentBatch ? ' active' : '';
+    const names = (row.created_by_names || []).join(' / ') || '未知添加人';
+    const suppliers = (row.suppliers || []).slice(0, 3).join(' / ') || '未识别供应商';
+    return `
+      <div class="reorder-supplier-row${active}" onclick="openReorderBatch('${salesJs(row.batch_no)}')">
+        <div>
+          <h3>${salesAttr(row.batch_no || '—')}</h3>
+          <p>${salesAttr(row.generated_at || '—')} · ${salesAttr(reorderSyncStatusLabel(row.sync_status))}</p>
+          <div class="reorder-supplier-stats">
+            <span>供应商 <b>${salesAttr(row.supplier_count || 0)}</b></span>
+            <span>商品 <b>${salesAttr(row.item_count || 0)}</b></span>
+            <span>数量 <b>${salesAttr(row.total_qty || 0)}</b></span>
+            <span>金额 <b>${salesMoney(row.total_amount || 0)}</b></span>
+          </div>
+          <p>添加人：${salesAttr(names)}</p>
+          <p>供应商：${salesAttr(suppliers)}</p>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function openReorderBatch(batchNo) {
+  if (!batchNo) return;
+  window._reorderCurrentBatch = batchNo;
+  renderReorderBatches(window._reorderBatches || []);
+  const title = document.getElementById('reorder-batch-detail-title');
+  const meta = document.getElementById('reorder-batch-detail-meta');
+  const detail = document.getElementById('reorder-batch-detail');
+  if (detail) detail.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const res = await fetch(`${API}/reorder-batches/${encodeURIComponent(batchNo)}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '接口错误');
+    const batch = data.batch || {};
+    if (title) title.textContent = `返单批次 ${batchNo}`;
+    if (meta) {
+      meta.innerHTML = `
+        <span>${salesAttr(batch.generated_at || '—')}</span>
+        <span>${salesAttr(reorderSyncStatusLabel(batch.sync_status))}</span>
+        <span>JDY单号：${salesAttr(batch.jdy_order_no || '未同步')}</span>
+        <span>商品：${salesAttr(batch.item_count || 0)} 款</span>
+        <span>金额：${salesMoney(batch.total_amount || 0)}</span>
+      `;
+    }
+    renderReorderBatchDetail(data);
+  } catch(e) {
+    if (detail) detail.innerHTML = `<div class="empty log-err">加载失败：${e.message}</div>`;
+  }
+}
+
+function renderReorderBatchDetail(data) {
+  const detail = document.getElementById('reorder-batch-detail');
+  if (!detail) return;
+  const batch = data.batch || {};
+  const items = data.items || [];
+  if (!items.length) {
+    detail.innerHTML = '<div class="empty">暂无批次商品</div>';
+    return;
+  }
+  const actionBar = `
+    <div class="reorder-product-actions" style="margin-bottom:10px;">
+      <button class="btn btn-primary btn-sm" onclick="window.open('${salesAttr(`/reorder-batches/${batch.batch_no}/print`)}', '_blank')">打印/导出</button>
+      <button class="btn btn-ghost btn-sm" onclick="trySyncReorderBatch('${salesJs(batch.batch_no)}')">同步到 JDY（暂未开放）</button>
+      <button class="btn btn-ghost btn-sm" onclick="setReorderSection('pool')">返回返单池</button>
+    </div>`;
+  detail.innerHTML = actionBar + items.map(item => {
+    const qty = Number(item.confirmedQty || item.confirmed_qty || item.suggestedQty || item.suggested_qty || 0);
+    const price = Number(item.reorderPrice || item.reorder_price || 0);
+    return `
+      <div class="sales-product-card">
+        <div class="sales-product-image-cell">
+          ${item.imageUrl
+            ? `<img class="sales-product-img" src="${salesAttr(item.imageUrl)}" data-full-img="${salesAttr(item.imageUrl)}" alt="${salesAttr(item.name || item.code || '商品图片')}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'sales-product-img sales-product-img-empty', textContent:'无图'}))">`
+            : '<div class="sales-product-img sales-product-img-empty">无图</div>'}
+        </div>
+        <div>
+          <h4>${salesAttr(item.name || '—')}</h4>
+          <p>商品编号：${salesAttr(item.code || '—')}</p>
+          <p>规格：${salesAttr(item.spec || '—')}；条码：${salesAttr(item.barcode || '—')}</p>
+          <p>供应商：${salesAttr(item.supplierName || item.supplier_name || '未识别供应商')}</p>
+          <p>添加人：${salesAttr(item.createdByName || item.created_by_name || '未知添加人')}</p>
+          <p>备注：${salesAttr(item.note || '—')}</p>
+        </div>
+        <div class="sales-side-mini">
+          <div class="summary-metrics">
+            <span>数量<b>${salesAttr(qty)}</b></span>
+            <span>单价<b>${salesMoney(price)}</b></span>
+            <span>金额<b>${salesMoney(qty * price)}</b></span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  bindSalesProductImages();
+}
+
+async function trySyncReorderBatch(batchNo) {
+  try {
+    const res = await fetch(`${API}/reorder-batches/${encodeURIComponent(batchNo)}/sync-jdy`, {method: 'POST'});
+    const data = await res.json();
+    alert(data.error || '同步到 JDY 功能暂未开放');
+  } catch(e) {
+    alert('同步到 JDY 功能暂未开放');
+  }
 }
 
 function reorderAttachmentSourceLabel(source) {
@@ -4974,8 +5208,11 @@ async function generateSelectedReorder() {
       const detail = data.missing_price?.length ? `：${data.missing_price.join('、')}` : '';
       throw new Error((data.error || '生成失败') + detail);
     }
-    alert(`返单已生成：${data.batch_no}`);
-    if (data.url) window.open(data.url, '_blank');
+    alert(`本地返单已生成：${data.batch_no}\n当前未同步到 JDY 官方采购订单。`);
+    if (data.print_url) window.open(data.print_url, '_blank');
+    window._reorderBatchStatus = 'not_synced';
+    setReorderSection('batches');
+    await loadReorderBatches(data.batch_no);
     await loadReorderSuppliers(true);
   } catch(e) {
     alert('生成返单失败：' + e.message);
@@ -7972,9 +8209,23 @@ function updateConnBadge(ok) {
   el.textContent = ok ? '● 已连接' : '● 连接失败';
 }
 
+function handleInitialHashRoute() {
+  const hash = window.location.hash || '';
+  if (!hash.startsWith('#reorder-batches')) return false;
+  const query = hash.includes('?') ? hash.split('?')[1] : '';
+  const params = new URLSearchParams(query);
+  const batchNo = params.get('batch_no') || '';
+  showPage('reorder-list');
+  window._reorderBatchStatus = 'all';
+  setReorderSection('batches');
+  loadReorderBatches(batchNo);
+  return true;
+}
+
 // ── 初始化 ────────────────────────────────────────────────────────
 (async function init() {
   await loadCurrentUser();
+  if (handleInitialHashRoute()) return;
   // 默认日期：近 30 天
   setDateRange(30);
 

@@ -3639,6 +3639,10 @@ def _sales_cache_conn():
             reorder_price REAL DEFAULT 0,
             generated_batch_no TEXT,
             generated_at TEXT,
+            sync_status TEXT DEFAULT 'not_synced',
+            jdy_order_no TEXT,
+            synced_at TEXT,
+            sync_error TEXT,
             data_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -3707,6 +3711,7 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_code ON reorder_items(account, code, status)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_picker ON reorder_items(status, created_by_name, created_by)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_source ON reorder_items(account, source_number, code)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_batch ON reorder_items(generated_batch_no, sync_status, generated_at)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_purchase_inbounds_code_json ON purchase_inbounds(account, number)')
     conn.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS idx_bill_attachments_unique
@@ -3760,6 +3765,10 @@ def _ensure_reorder_item_columns(conn):
         ('reorder_price', 'REAL DEFAULT 0'),
         ('generated_batch_no', 'TEXT'),
         ('generated_at', 'TEXT'),
+        ('sync_status', "TEXT DEFAULT 'not_synced'"),
+        ('jdy_order_no', 'TEXT'),
+        ('synced_at', 'TEXT'),
+        ('sync_error', 'TEXT'),
     ]
     for name, ddl in additions:
         if name not in cols:
@@ -6475,6 +6484,14 @@ def _reorder_row_to_item(row):
         'generated_batch_no': rv('generated_batch_no') or '',
         'generatedAt': rv('generated_at') or '',
         'generated_at': rv('generated_at') or '',
+        'syncStatus': rv('sync_status') or 'not_synced',
+        'sync_status': rv('sync_status') or 'not_synced',
+        'jdyOrderNo': rv('jdy_order_no') or '',
+        'jdy_order_no': rv('jdy_order_no') or '',
+        'syncedAt': rv('synced_at') or '',
+        'synced_at': rv('synced_at') or '',
+        'syncError': rv('sync_error') or '',
+        'sync_error': rv('sync_error') or '',
         'createdAt': row['created_at'] or '',
         'created_at': row['created_at'] or '',
         'updatedAt': row['updated_at'] or '',
@@ -12720,6 +12737,196 @@ def _reorder_generate_html(batch_no, mode, items):
 </html>'''
 
 
+def _normalize_reorder_sync_status(value):
+    value = str(value or '').strip()
+    return value or 'not_synced'
+
+
+def _reorder_batch_summary(batch_no, items):
+    sync_values = [_normalize_reorder_sync_status(x.get('syncStatus') or x.get('sync_status')) for x in items]
+    sync_status = 'synced' if sync_values and all(x == 'synced' for x in sync_values) else (
+        'failed' if any(x == 'failed' for x in sync_values) else 'not_synced'
+    )
+    suppliers = sorted({
+        str(x.get('supplierName') or x.get('supplier_name') or '未识别供应商').strip() or '未识别供应商'
+        for x in items
+    })
+    created_by_names = sorted({
+        str(x.get('createdByName') or x.get('created_by_name') or '未知添加人').strip() or '未知添加人'
+        for x in items
+    })
+    total_qty = sum((_num(x.get('confirmedQty')) or _num(x.get('suggestedQty'))) for x in items)
+    total_amount = sum(
+        (_num(x.get('confirmedQty')) or _num(x.get('suggestedQty'))) * _num(x.get('reorderPrice'))
+        for x in items
+    )
+    generated_at = max((str(x.get('generatedAt') or x.get('generated_at') or '') for x in items), default='')
+    synced_at = max((str(x.get('syncedAt') or x.get('synced_at') or '') for x in items), default='')
+    jdy_order_no = ', '.join(sorted({
+        str(x.get('jdyOrderNo') or x.get('jdy_order_no') or '').strip()
+        for x in items if str(x.get('jdyOrderNo') or x.get('jdy_order_no') or '').strip()
+    }))
+    preview_items = [{
+        'id': x.get('id'),
+        'code': x.get('code') or '',
+        'name': x.get('name') or '',
+        'supplier_name': x.get('supplierName') or x.get('supplier_name') or '',
+        'qty': _num(x.get('confirmedQty')) or _num(x.get('suggestedQty')),
+        'price': _num(x.get('reorderPrice')),
+    } for x in items[:5]]
+    return {
+        'batch_no': batch_no,
+        'generated_at': generated_at,
+        'sync_status': sync_status,
+        'jdy_order_no': jdy_order_no,
+        'synced_at': synced_at,
+        'supplier_count': len(suppliers),
+        'item_count': len(items),
+        'total_qty': total_qty,
+        'total_amount': total_amount,
+        'created_by_names': created_by_names,
+        'suppliers': suppliers,
+        'preview_items': preview_items,
+    }
+
+
+def _read_reorder_batch_items(batch_no='', args=None):
+    args = args or {}
+    clauses = ["COALESCE(generated_batch_no, '') <> ''"]
+    params = []
+    if batch_no:
+        clauses.append('generated_batch_no = ?')
+        params.append(batch_no)
+    sync_status = str(args.get('sync_status') or 'all').strip().lower()
+    if sync_status == 'not_synced':
+        clauses.append("COALESCE(NULLIF(sync_status, ''), 'not_synced') = 'not_synced'")
+    elif sync_status in ('synced', 'failed'):
+        clauses.append("COALESCE(NULLIF(sync_status, ''), 'not_synced') = ?")
+        params.append(sync_status)
+    date_from = str(args.get('date_from') or '').strip()[:10]
+    date_to = str(args.get('date_to') or '').strip()[:10]
+    if date_from:
+        clauses.append('generated_at >= ?')
+        params.append(date_from)
+    if date_to:
+        clauses.append('generated_at <= ?')
+        params.append(date_to + ' 23:59:59')
+    search = str(args.get('search') or '').strip().lower()
+    if search:
+        clauses.append('''
+            (
+                LOWER(COALESCE(generated_batch_no, '')) LIKE ?
+                OR LOWER(COALESCE(jdy_order_no, '')) LIKE ?
+                OR LOWER(COALESCE(supplier_name, '')) LIKE ?
+                OR LOWER(COALESCE(code, '')) LIKE ?
+                OR LOWER(COALESCE(name, '')) LIKE ?
+                OR LOWER(COALESCE(created_by_name, '')) LIKE ?
+            )
+        ''')
+        kw = f'%{search}%'
+        params.extend([kw, kw, kw, kw, kw, kw])
+    where = ' AND '.join(clauses)
+    with _sales_cache_conn() as conn:
+        rows = conn.execute(f'''
+            SELECT * FROM reorder_items
+            WHERE {where}
+            ORDER BY generated_at DESC, generated_batch_no DESC, supplier_name, id
+        ''', params).fetchall()
+    return [_reorder_row_to_item(row) for row in rows]
+
+
+@app.route('/reorder-batches', methods=['GET'])
+def reorder_batches():
+    try:
+        items = _read_reorder_batch_items(args=request.args)
+        grouped = {}
+        for item in items:
+            batch_no = item.get('generatedBatchNo') or item.get('generated_batch_no') or ''
+            if not batch_no:
+                continue
+            grouped.setdefault(batch_no, []).append(item)
+        batches = [_reorder_batch_summary(batch_no, rows) for batch_no, rows in grouped.items()]
+        batches.sort(key=lambda x: (x.get('generated_at') or '', x.get('batch_no') or ''), reverse=True)
+        return jsonify({'success': True, 'batches': batches, 'total': len(batches)})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] reorder_batches: {tb}')
+        return jsonify({'success': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/reorder-batches/<path:batch_no>', methods=['GET'])
+def reorder_batch_detail(batch_no):
+    try:
+        items = _read_reorder_batch_items(batch_no=batch_no, args={'sync_status': 'all'})
+        if not items:
+            return jsonify({'success': False, 'error': '本地返单批次不存在'}), 404
+        supplier_groups = {}
+        for item in items:
+            key = item.get('supplierName') or item.get('supplier_name') or '未识别供应商'
+            supplier_groups.setdefault(key, []).append(item)
+        groups = [
+            {
+                'supplier_name': key,
+                'item_count': len(rows),
+                'total_qty': sum((_num(x.get('confirmedQty')) or _num(x.get('suggestedQty'))) for x in rows),
+                'total_amount': sum(
+                    (_num(x.get('confirmedQty')) or _num(x.get('suggestedQty'))) * _num(x.get('reorderPrice'))
+                    for x in rows
+                ),
+                'items': rows,
+            }
+            for key, rows in supplier_groups.items()
+        ]
+        batch = _reorder_batch_summary(batch_no, items)
+        return jsonify({
+            'success': True,
+            'batch': batch,
+            'items': items,
+            'supplier_groups': groups,
+            'total_amount': batch['total_amount'],
+            'sync_status': batch['sync_status'],
+            'jdy_order_no': batch['jdy_order_no'],
+            'generated_at': batch['generated_at'],
+            'created_by_names': batch['created_by_names'],
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] reorder_batch_detail: {tb}')
+        return jsonify({'success': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/reorder-batches/<path:batch_no>/print', methods=['GET'])
+def reorder_batch_print(batch_no):
+    try:
+        items = _read_reorder_batch_items(batch_no=batch_no, args={'sync_status': 'all'})
+        if not items:
+            return '<h2>本地返单批次不存在</h2>', 404, {'Content-Type': 'text/html; charset=utf-8'}
+        mode = request.args.get('mode') or 'supplier'
+        batch = _reorder_batch_summary(batch_no, items)
+        html_text = _reorder_generate_html(batch_no, mode, items)
+        html_text = html_text.replace(
+            '本文件仅为本地返单打印页，不会提交精斗云采购订单。',
+            f"同步状态：{batch['sync_status']}；JDY单号：{batch['jdy_order_no'] or '未同步'}；本文件仅为本地返单打印页，不会提交精斗云采购订单。",
+            1,
+        )
+        return html_text, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] reorder_batch_print: {tb}')
+        return f'<pre>{html.escape(str(e))}</pre>', 500, {'Content-Type': 'text/html; charset=utf-8'}
+
+
+@app.route('/reorder-batches/<path:batch_no>/sync-jdy', methods=['POST'])
+def reorder_batch_sync_jdy(batch_no):
+    return jsonify({
+        'success': False,
+        'batch_no': batch_no,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'error': '同步到 JDY 功能暂未开放',
+    }), 400
+
+
 @app.route('/reorder-generate', methods=['POST'])
 def reorder_generate():
     try:
@@ -12760,7 +12967,7 @@ def reorder_generate():
             with open(out_path, 'w', encoding='utf-8') as fp:
                 fp.write(html_text)
             conn.execute(
-                f"UPDATE reorder_items SET generated_batch_no=?, generated_at=?, status='confirmed', updated_at=? WHERE id IN ({marks})",
+                f"UPDATE reorder_items SET generated_batch_no=?, generated_at=?, sync_status='not_synced', status='confirmed', updated_at=? WHERE id IN ({marks})",
                 [batch_no, generated_at, generated_at, *ids],
             )
             conn.commit()
@@ -12769,6 +12976,9 @@ def reorder_generate():
             'batch_no': batch_no,
             'output_type': 'html',
             'url': f'/reorder-generate/download/{filename}',
+            'print_url': f'/reorder-batches/{batch_no}/print',
+            'detail_url': f'/jdy#reorder-batches?batch_no={batch_no}',
+            'sync_status': 'not_synced',
             'called_jdy': False,
             'would_call_jdy': False,
         })
