@@ -411,7 +411,8 @@ class JDYClient:
                                query=self._api_query())
         return result.get('items') or []
 
-    def get_products(self, page=1, page_size=100, product_number='', category_name='', search='', category_id=''):
+    def get_products(self, page=1, page_size=100, product_number='', category_name='', search='', category_id='',
+                     status=None, upd_time_begin='', upd_time_end=''):
         """查询商品列表（只读）。可按商品编号和分类名称过滤。"""
         f = {'page': page, 'pageSize': page_size}
         if product_number:
@@ -422,6 +423,12 @@ class JDYClient:
             f['categoryId'] = category_id
         if category_name:
             f['categoryName'] = category_name
+        if status not in (None, '', 'all'):
+            f['status'] = status
+        if upd_time_begin:
+            f['updTimeBegin'] = upd_time_begin
+        if upd_time_end:
+            f['updTimeEnd'] = upd_time_end
         result = self._request('POST', '/jdyscm/product/list',
                                body={'filter': f},
                                query=self._api_query(),

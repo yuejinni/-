@@ -2457,6 +2457,61 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="settings-info-card"><span>接口口径</span><b id="catalog-safety-state">local-only</b></div>
       </div>
       <div id="catalog-cache-status-box" class="settings-result-box" style="margin-top:10px;">待读取商品 / 供应商缓存状态</div>
+      <div style="margin-top:12px;border-top:1px solid #eef2f6;padding-top:12px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <b>商品缓存刷新</b>
+            <div class="tip" style="margin-top:2px;line-height:1.6;">
+              dry-run 只调用 JDY product/list 读接口，不写库；确认刷新只写本地 SQLite jdy_products，不调用商品新增/修改/删除接口。普通业务页面不会自动调用 JDY。
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="loadProductCacheRefreshStatus()">刷新刷新状态</button>
+        </div>
+        <div class="form-grid" style="margin-top:10px;">
+          <div class="form-item">
+            <label>账套</label>
+            <select id="product-cache-account">
+              <option value="all">全部账套</option>
+              <option value="饰品">饰品</option>
+              <option value="箱包">箱包</option>
+            </select>
+          </div>
+          <div class="form-item">
+            <label>状态</label>
+            <select id="product-cache-status">
+              <option value="all">全部</option>
+              <option value="0">启用</option>
+              <option value="1">禁用</option>
+            </select>
+          </div>
+          <div class="form-item">
+            <label>更新时间开始</label>
+            <input id="product-cache-upd-begin" type="datetime-local">
+          </div>
+          <div class="form-item">
+            <label>更新时间结束</label>
+            <input id="product-cache-upd-end" type="datetime-local">
+          </div>
+          <div class="form-item">
+            <label>page_size</label>
+            <input id="product-cache-page-size" type="number" min="1" max="500" value="50">
+          </div>
+          <div class="form-item">
+            <label>limit</label>
+            <input id="product-cache-limit" type="number" min="1" max="10000" value="100">
+          </div>
+          <div class="form-item">
+            <label>sleep_ms</label>
+            <input id="product-cache-sleep-ms" type="number" min="0" max="5000" value="0">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="runProductCacheDryRun()">预览商品缓存刷新（读 JDY / 不写库）</button>
+          <button class="btn btn-warn btn-sm" type="button" onclick="runProductCacheRefresh()">确认刷新商品缓存（读 JDY / 写本地 SQLite）</button>
+          <span id="product-cache-refresh-status" class="tip">未执行</span>
+        </div>
+        <div id="product-cache-refresh-result" class="settings-result-box" style="margin-top:10px;">等待 dry-run 或确认刷新。</div>
+      </div>
     </div>
     <input id="s-sales-sync-enabled" type="hidden" value="0">
     <input id="s-sales-sync-interval" type="hidden" value="5">
@@ -6893,6 +6948,7 @@ async function loadSettings() {
       document.getElementById('s2-domain').value    = jdy.domain2    || '';
       setSecretInputState('s2-app-secret', jdy.app_secret_masked2);
       setSecretInputState('s2-client-secret', jdy.client_secret_masked2);
+      updateProductCacheAccountOptions(jdy.name || '饰品', jdy.name2 || '箱包');
     }
     if (ai.success) {
       document.getElementById('s-qw-model').value   = ai.qianwen_model  || 'qwen-vl-max';
@@ -6973,6 +7029,18 @@ function catalogCountText(row) {
 
 function catalogBoolText(value, yes = '已就绪', no = '未就绪') {
   return value ? yes : no;
+}
+
+function updateProductCacheAccountOptions(name1 = '饰品', name2 = '箱包') {
+  const sel = document.getElementById('product-cache-account');
+  if (!sel) return;
+  const current = sel.value || 'all';
+  const accounts = ['all', name1 || '饰品', name2 || '箱包'];
+  sel.innerHTML = accounts.map((name, idx) => {
+    const label = idx === 0 ? '全部账套' : name;
+    return `<option value="${webhookHtml(name)}">${webhookHtml(label)}</option>`;
+  }).join('');
+  sel.value = accounts.includes(current) ? current : 'all';
 }
 
 function renderCatalogCacheStatus(data) {
@@ -7059,6 +7127,139 @@ async function loadCatalogCacheStatus() {
   } catch (e) {
     if (box) box.innerHTML = `<b>商品 / 供应商缓存状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
     appendSettingsLog('商品 / 供应商缓存状态读取失败：' + e.message, 'error');
+  }
+}
+
+function productCachePayload() {
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const dt = id => val(id).replace('T', ' ');
+  return {
+    account: val('product-cache-account') || 'all',
+    status: val('product-cache-status') || 'all',
+    updTimeBegin: dt('product-cache-upd-begin'),
+    updTimeEnd: dt('product-cache-upd-end'),
+    page_size: Number(val('product-cache-page-size') || 50),
+    limit: Number(val('product-cache-limit') || 100),
+    sleep_ms: Number(val('product-cache-sleep-ms') || 0),
+  };
+}
+
+function productCacheSummaryHtml(data) {
+  const opts = data.options || {};
+  const samples = data.sample_products || [];
+  const errors = data.errors || [];
+  const rows = samples.length ? samples.map(item => `
+    <tr>
+      <td>${webhookHtml(item.account || '')}</td>
+      <td>${webhookHtml(item.code || '')}</td>
+      <td>${webhookHtml(item.name || '')}</td>
+      <td>${webhookHtml(item.spec || '')}</td>
+      <td>${webhookHtml(item.category_name || '')}</td>
+      <td>${webhookHtml(item.default_supplier_name || '')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="6" class="tip">暂无样例商品</td></tr>';
+  const errorHtml = errors.length
+    ? `<div style="color:#b45309;margin-top:6px;">错误：${errors.map(webhookHtml).join('；')}</div>`
+    : '';
+  return `
+    <div style="line-height:1.7;">
+      <b>${webhookHtml(data.dry_run ? 'dry-run 预览结果' : '确认刷新结果')}</b>
+      <div class="tip" style="margin-top:4px;">
+        账套：${webhookHtml(opts.account || 'all')}；状态：${webhookHtml(opts.status || 'all')}；
+        page_size：${Number(opts.page_size || 0)}；limit：${Number(opts.limit || 0)}；sleep_ms：${Number(opts.sleep_ms || 0)}
+      </div>
+      <div class="tip">
+        scanned ${Number(data.scanned || 0)}，valid ${Number(data.valid || 0)}，skipped ${Number(data.skipped || 0)}，
+        inserted ${Number(data.inserted || 0)}，updated ${Number(data.updated || 0)}，estimated_pages ${Number(data.estimated_pages || 0)}，
+        duration ${Number(data.duration_seconds || 0)}s
+      </div>
+      <div class="tip">
+        called_jdy=${data.called_jdy ? 'true' : 'false'}；would_write=${data.would_write ? 'true' : 'false'}；would_download=${data.would_download ? 'true' : 'false'}
+      </div>
+      ${errorHtml}
+      <div class="settings-scroll-window" style="margin-top:8px;max-height:220px;">
+        <table class="mini-table" style="width:100%;">
+          <thead><tr><th>账套</th><th>商品编号</th><th>名称</th><th>规格</th><th>类别</th><th>默认供应商</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderProductCacheRefreshResult(data) {
+  const box = document.getElementById('product-cache-refresh-result');
+  if (box) box.innerHTML = productCacheSummaryHtml(data || {});
+  const status = document.getElementById('product-cache-refresh-status');
+  if (status) {
+    status.textContent = data?.success
+      ? `${data.dry_run ? 'dry-run 完成' : '刷新完成'}：有效 ${Number(data.valid || 0)} 条`
+      : '执行失败';
+  }
+}
+
+async function runProductCacheDryRun() {
+  const box = document.getElementById('product-cache-refresh-result');
+  const status = document.getElementById('product-cache-refresh-status');
+  if (box) box.innerHTML = '正在调用 JDY product/list 做 dry-run 预览，不写本地库...';
+  if (status) status.textContent = 'dry-run 执行中';
+  try {
+    const data = await attachmentFetchJson(`${API}/cache/product-refresh-dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(productCachePayload()),
+    });
+    renderProductCacheRefreshResult(data);
+    appendSettingsLog(`商品缓存 dry-run 完成：扫描 ${Number(data.scanned || 0)} 条，有效 ${Number(data.valid || 0)} 条`);
+  } catch (e) {
+    if (box) box.innerHTML = `<b>商品缓存 dry-run 失败</b>：${webhookHtml(e.message || String(e))}`;
+    if (status) status.textContent = 'dry-run 失败';
+    appendSettingsLog('商品缓存 dry-run 失败：' + (e.message || String(e)), 'error');
+  }
+}
+
+async function runProductCacheRefresh() {
+  if (!window.confirm('确认刷新商品缓存？这会调用 JDY product/list 读接口，并写入本地 SQLite jdy_products；不会调用商品新增、修改、删除接口。')) {
+    return;
+  }
+  const box = document.getElementById('product-cache-refresh-result');
+  const status = document.getElementById('product-cache-refresh-status');
+  if (box) box.innerHTML = '正在确认刷新商品缓存：读取 JDY product/list，并写入本地 SQLite jdy_products...';
+  if (status) status.textContent = '刷新执行中';
+  try {
+    const payload = {...productCachePayload(), confirm: 'REFRESH_PRODUCT_CACHE'};
+    const data = await attachmentFetchJson(`${API}/cache/product-refresh`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    renderProductCacheRefreshResult(data);
+    appendSettingsLog(`商品缓存刷新完成：插入 ${Number(data.inserted || 0)} 条，更新 ${Number(data.updated || 0)} 条`);
+    loadCatalogCacheStatus();
+  } catch (e) {
+    if (box) box.innerHTML = `<b>商品缓存刷新失败</b>：${webhookHtml(e.message || String(e))}`;
+    if (status) status.textContent = '刷新失败';
+    appendSettingsLog('商品缓存刷新失败：' + (e.message || String(e)), 'error');
+  }
+}
+
+async function loadProductCacheRefreshStatus() {
+  const box = document.getElementById('product-cache-refresh-result');
+  const status = document.getElementById('product-cache-refresh-status');
+  try {
+    const data = await attachmentFetchJson(`${API}/cache/product-refresh/status`);
+    const state = data.state || {};
+    if (status) status.textContent = state.running ? '刷新执行中' : (state.message || '未运行');
+    if (state.last_result && Object.keys(state.last_result).length) {
+      renderProductCacheRefreshResult(state.last_result);
+    } else if (box) {
+      box.innerHTML = `<div class="tip">最近状态：${webhookHtml(state.message || '暂无商品缓存刷新记录')}</div>`;
+    }
+    appendSettingsLog('商品缓存刷新状态已读取');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>商品缓存刷新状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    if (status) status.textContent = '状态读取失败';
+    appendSettingsLog('商品缓存刷新状态读取失败：' + (e.message || String(e)), 'error');
   }
 }
 

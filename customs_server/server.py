@@ -34,6 +34,7 @@ import time
 import shutil
 import zipfile
 import re
+import math
 import urllib.request
 from urllib.parse import urlparse
 
@@ -187,7 +188,8 @@ def _admin_path_required():
         '/jdy-webhook/archive-failed-dry-run', '/jdy-webhook/archive-failed',
         '/jdy-webhook/cleanup-old-dry-run', '/jdy-webhook/cleanup-old',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
-        '/cache/catalog-status',
+        '/cache/catalog-status', '/cache/product-refresh-dry-run', '/cache/product-refresh',
+        '/cache/product-refresh/status', '/cache/product-refresh/cancel',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
@@ -3593,6 +3595,30 @@ def _sales_cache_conn():
         )
     ''')
     conn.execute('''
+        CREATE TABLE IF NOT EXISTS jdy_products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT,
+            product_id TEXT,
+            product_number TEXT,
+            product_name TEXT,
+            spec TEXT,
+            barcode TEXT,
+            category_id TEXT,
+            category_name TEXT,
+            unit_id TEXT,
+            unit_name TEXT,
+            default_supplier_id TEXT,
+            default_supplier_number TEXT,
+            default_supplier_name TEXT,
+            image_url TEXT,
+            status TEXT,
+            data_json TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            last_seen_at TEXT
+        )
+    ''')
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS webhook_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account TEXT,
@@ -3705,6 +3731,12 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_accessory_po_date ON accessory_purchase_orders(date)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_suppliers_account_name ON jdy_suppliers(account, name)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_accessory_products_category ON accessory_products(category)')
+    _ensure_jdy_product_columns(conn)
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_jdy_products_unique ON jdy_products(account, product_number)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_name ON jdy_products(account, product_name)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_category ON jdy_products(account, category_name)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_updated ON jdy_products(account, updated_at)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_seen ON jdy_products(account, last_seen_at)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_status ON webhook_events(status, id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_bill ON webhook_events(account, bill_no, resource)')
     _ensure_reorder_item_columns(conn)
@@ -3777,6 +3809,36 @@ def _ensure_reorder_item_columns(conn):
         key = name.lower()
         if key not in cols:
             conn.execute(f'ALTER TABLE reorder_items ADD COLUMN {name} {ddl}')
+            cols.add(key)
+
+
+def _ensure_jdy_product_columns(conn):
+    cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(jdy_products)').fetchall()}
+    additions = [
+        ('account', 'TEXT'),
+        ('product_id', 'TEXT'),
+        ('product_number', 'TEXT'),
+        ('product_name', 'TEXT'),
+        ('spec', 'TEXT'),
+        ('barcode', 'TEXT'),
+        ('category_id', 'TEXT'),
+        ('category_name', 'TEXT'),
+        ('unit_id', 'TEXT'),
+        ('unit_name', 'TEXT'),
+        ('default_supplier_id', 'TEXT'),
+        ('default_supplier_number', 'TEXT'),
+        ('default_supplier_name', 'TEXT'),
+        ('image_url', 'TEXT'),
+        ('status', 'TEXT'),
+        ('data_json', 'TEXT'),
+        ('created_at', 'TEXT'),
+        ('updated_at', 'TEXT'),
+        ('last_seen_at', 'TEXT'),
+    ]
+    for name, ddl in additions:
+        key = name.lower()
+        if key not in cols:
+            conn.execute(f'ALTER TABLE jdy_products ADD COLUMN {name} {ddl}')
             cols.add(key)
 
 
@@ -4315,19 +4377,38 @@ def _local_supplier_cache_path(account):
 
 
 def _local_product_index(account):
-    data = _load_local_json_cached(_local_product_cache_path(account))
-    items = data.get('items') if isinstance(data, dict) else data
-    result = {}
-    for item in items or []:
-        if not isinstance(item, dict):
-            continue
-        code = str(_first_value(item, ['productNumber', 'number', 'code'], '')).strip()
-        if code:
-            result[code] = item
-    return result
+    return _load_local_product_index(account)
 
 
 def _local_supplier_index(account):
+    conn = _sales_readonly_conn()
+    try:
+        if conn and _cache_sqlite_table_count(conn, 'jdy_suppliers').get('exists'):
+            rows = conn.execute('SELECT * FROM jdy_suppliers WHERE account = ?', (account or '',)).fetchall()
+            if rows:
+                by_id = {}
+                by_number = {}
+                for row in rows:
+                    item = _supplier_row_to_dict(row)
+                    sid = str(item.get('id') or item.get('supplierId') or '').strip()
+                    number = str(item.get('number') or item.get('supplierNumber') or '').strip()
+                    normalized = {
+                        **item,
+                        'supplierNumber': number,
+                        'supplierName': str(item.get('name') or item.get('supplierName') or '').strip(),
+                        'source': 'jdy_suppliers',
+                    }
+                    if sid:
+                        by_id[sid] = normalized
+                    if number:
+                        by_number[number] = normalized
+                return {'by_id': by_id, 'by_number': by_number}
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
     data = _load_local_json_cached(_local_supplier_cache_path(account))
     items = data.get('items') if isinstance(data, dict) else data
     by_id = {}
@@ -4364,6 +4445,210 @@ def _local_json_cache_status(path):
     return info
 
 
+def _product_first_image(product):
+    imgs = product.get('multiImg') if isinstance(product, dict) else []
+    if isinstance(imgs, list):
+        for img in imgs:
+            if isinstance(img, dict):
+                url = str(_first_value(img, ['url', 'fileUrl', 'downloadUrl', 'src', 'path'], '') or '').strip()
+                if url:
+                    return url
+            elif img:
+                return str(img)
+    for sku in (product.get('invSku') or []) if isinstance(product, dict) else []:
+        if isinstance(sku, dict):
+            url = str(_first_value(sku, ['skuImg', 'imageUrl', 'imgUrl', 'picUrl'], '') or '').strip()
+            if url:
+                return url
+    return str(_first_value(product or {}, ['imageUrl', 'imgUrl', 'picture', 'pictureUrl', 'pic', 'picUrl'], '') or '').strip()
+
+
+def _normalize_product_cache_item(product, account='', source='jdy_products'):
+    product = product or {}
+    code = str(_first_value(product, ['productNumber', 'number', 'code'], '') or '').strip()
+    if not code:
+        return None
+    name = str(_first_value(product, ['productName', 'name'], '') or '').strip()
+    category_name = str(_first_value(product, ['categoryName', 'category'], '') or '').strip()
+    unit_name = str(_first_value(product, ['unitName', 'unit', 'baseUnitName'], '') or '').strip()
+    supplier_number = str(_first_value(product, ['defaultSupplierNumber', 'supplierNumber', 'supplierNo', 'vendorNumber'], '') or '').strip()
+    supplier_name = str(_first_value(product, ['defaultSupplierName', 'supplierName', 'vendorName'], '') or '').strip()
+    image_url = _product_first_image(product)
+    return {
+        'account': account or str(product.get('account') or ''),
+        'code': code,
+        'number': code,
+        'productNumber': code,
+        'name': name,
+        'productName': name,
+        'spec': str(_first_value(product, ['spec', 'model'], '') or '').strip(),
+        'barcode': str(_first_value(product, ['barcode', 'barCode'], '') or '').strip(),
+        'category_id': str(_first_value(product, ['categoryId'], '') or '').strip(),
+        'category_name': category_name,
+        'categoryName': category_name,
+        'unit_id': str(_first_value(product, ['unitId'], '') or '').strip(),
+        'unit_name': unit_name,
+        'unitName': unit_name,
+        'default_supplier_id': str(_first_value(product, ['defaultSupplierId', 'supplierId'], '') or '').strip(),
+        'default_supplier_number': supplier_number,
+        'default_supplier_name': supplier_name,
+        'supplierNumber': supplier_number,
+        'supplierName': supplier_name,
+        'image_url': image_url,
+        'imageUrl': image_url,
+        'status': str(_first_value(product, ['status', 'statusName', 'enable', 'enabled'], '') or '').strip(),
+        'source': source,
+        '_raw': product,
+    }
+
+
+def _cache_upsert_jdy_product(conn, account, product, now=None):
+    item = _normalize_product_cache_item(product, account=account, source='jdy_products')
+    if not item:
+        return None, 'skipped'
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    existing = conn.execute(
+        'SELECT id FROM jdy_products WHERE account = ? AND product_number = ?',
+        (account or '', item['code']),
+    ).fetchone()
+    values = (
+        account or '',
+        str(_first_value(product or {}, ['id', 'productId'], '') or ''),
+        item['code'],
+        item['name'],
+        item['spec'],
+        item['barcode'],
+        item['category_id'],
+        item['category_name'],
+        item['unit_id'],
+        item['unit_name'],
+        item['default_supplier_id'],
+        item['default_supplier_number'],
+        item['default_supplier_name'],
+        item['image_url'],
+        item['status'],
+        json.dumps(product or {}, ensure_ascii=False),
+        now,
+        now,
+    )
+    if existing:
+        conn.execute('''
+            UPDATE jdy_products
+               SET product_id=?, product_name=?, spec=?, barcode=?, category_id=?, category_name=?,
+                   unit_id=?, unit_name=?, default_supplier_id=?, default_supplier_number=?,
+                   default_supplier_name=?, image_url=?, status=?, data_json=?, updated_at=?, last_seen_at=?
+             WHERE account=? AND product_number=?
+        ''', (
+            values[1], values[3], values[4], values[5], values[6], values[7],
+            values[8], values[9], values[10], values[11], values[12], values[13],
+            values[14], values[15], now, now, account or '', item['code'],
+        ))
+        return item, 'updated'
+    conn.execute('''
+        INSERT INTO jdy_products
+        (account, product_id, product_number, product_name, spec, barcode, category_id, category_name,
+         unit_id, unit_name, default_supplier_id, default_supplier_number, default_supplier_name,
+         image_url, status, data_json, created_at, updated_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (*values, now))
+    return item, 'inserted'
+
+
+def _load_local_product_index(account=None):
+    account_filter = str(account or '').strip()
+    use_account_filter = bool(account_filter and account_filter != 'all')
+    index = {}
+
+    def add_item(item):
+        if not item:
+            return
+        code = str(item.get('code') or item.get('productNumber') or '').strip()
+        if code and code not in index:
+            index[code] = item
+
+    conn = _sales_readonly_conn()
+    try:
+        if conn and _cache_sqlite_table_count(conn, 'jdy_products').get('exists'):
+            clauses, params = [], []
+            if use_account_filter:
+                clauses.append('account = ?')
+                params.append(account_filter)
+            where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
+            rows = conn.execute(f'''
+                SELECT account, data_json FROM jdy_products
+                {where}
+                ORDER BY updated_at DESC, id DESC
+            ''', params).fetchall()
+            for row in rows:
+                try:
+                    raw = json.loads(row['data_json'] or '{}')
+                except Exception:
+                    raw = {}
+                add_item(_normalize_product_cache_item(raw, row['account'] or account_filter, 'jdy_products'))
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+    json_accounts = [account_filter] if use_account_filter else ['account1', '箱包']
+    for acct in json_accounts:
+        data = _load_local_json_cached(_local_product_cache_path(acct))
+        items = data.get('items') if isinstance(data, dict) else data
+        for product in items or []:
+            if isinstance(product, dict):
+                add_item(_normalize_product_cache_item(product, acct, 'product_json'))
+
+    conn = _sales_readonly_conn()
+    try:
+        if conn and _cache_sqlite_table_count(conn, 'sales_details').get('exists'):
+            clauses, params = [], []
+            if use_account_filter:
+                clauses.append('account = ?')
+                params.append(account_filter)
+            where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
+            rows = conn.execute(f'SELECT account, data_json FROM sales_details {where}', params).fetchall()
+            for row in rows:
+                try:
+                    order = json.loads(row['data_json'] or '{}')
+                except Exception:
+                    continue
+                acct = order.get('account') or row['account'] or account_filter
+                for entry in (order.get('entries') or []):
+                    if isinstance(entry, dict):
+                        add_item(_normalize_product_cache_item(entry, acct, 'sales_details'))
+        if conn and _cache_sqlite_table_count(conn, 'sales_product_quantities').get('exists'):
+            clauses, params = [], []
+            if use_account_filter:
+                clauses.append('account = ?')
+                params.append(account_filter)
+            where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
+            rows = conn.execute(f'SELECT account, code FROM sales_product_quantities {where}', params).fetchall()
+            for row in rows:
+                add_item(_normalize_product_cache_item({'productNumber': row['code'], 'account': row['account']}, row['account'] or account_filter, 'sales_product_quantities'))
+        if conn and _cache_sqlite_table_count(conn, 'accessory_products').get('exists'):
+            clauses, params = [], []
+            if use_account_filter:
+                clauses.append('account = ?')
+                params.append(account_filter)
+            where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
+            rows = conn.execute(f'SELECT account, data_json FROM accessory_products {where}', params).fetchall()
+            for row in rows:
+                try:
+                    raw = json.loads(row['data_json'] or '{}')
+                except Exception:
+                    raw = {}
+                add_item(_normalize_product_cache_item(raw, row['account'] or account_filter, 'accessory_products'))
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    return index
+
+
 def _cache_sqlite_table_count(conn, table):
     result = {'exists': False, 'count': 0}
     if not conn:
@@ -4394,6 +4679,14 @@ def _catalog_cache_status_payload():
     }
     conn = _sales_readonly_conn()
     try:
+        jdy_products = _cache_sqlite_table_count(conn, 'jdy_products')
+        if conn and jdy_products.get('exists'):
+            try:
+                row = conn.execute('SELECT MAX(updated_at) AS updated_at_max, MAX(last_seen_at) AS last_seen_at_max FROM jdy_products').fetchone()
+                jdy_products['updated_at_max'] = row['updated_at_max'] or ''
+                jdy_products['last_seen_at_max'] = row['last_seen_at_max'] or ''
+            except Exception as e:
+                jdy_products['stats_error'] = str(e)
         sales_details = _cache_sqlite_table_count(conn, 'sales_details')
         sales_product_quantities = _cache_sqlite_table_count(conn, 'sales_product_quantities')
         accessory_products = _cache_sqlite_table_count(conn, 'accessory_products')
@@ -4415,7 +4708,7 @@ def _catalog_cache_status_payload():
         except Exception:
             pass
     jdy_suppliers['per_account'] = supplier_per_account if 'supplier_per_account' in locals() else {}
-    product_json_ready = any(row.get('exists') and row.get('count', 0) > 0 for row in product_json.values())
+    product_sqlite_ready = bool(jdy_products.get('exists') and jdy_products.get('count', 0) > 0)
     supplier_sqlite_ready = bool(jdy_suppliers.get('exists') and jdy_suppliers.get('count', 0) > 0)
     return {
         'success': True,
@@ -4424,10 +4717,11 @@ def _catalog_cache_status_payload():
         'called_jdy': False,
         'would_call_jdy': False,
         'product': {
-            'primary_cache': 'product_json',
-            'primary_cache_ready': product_json_ready,
-            'sqlite_master_table_ready': False,
-            'sqlite_master_table': {'exists': False, 'count': 0, 'message': '通用 SQLite 商品主档暂未启用'},
+            'primary_cache': 'jdy_products',
+            'primary_cache_ready': product_sqlite_ready,
+            'sqlite_master_table_ready': product_sqlite_ready,
+            'jdy_products': jdy_products,
+            'sqlite_master_table': jdy_products,
             'product_json': product_json,
             'fallbacks': {
                 'sales_details': sales_details,
@@ -4447,9 +4741,9 @@ def _catalog_cache_status_payload():
             'note': 'SQLite jdy_suppliers 是供应商主缓存；JSON 是兼容导出/启用子集，数量不一致不一定是错误',
         },
         'recommendations': [
-            '暂不自动全量刷新商品',
-            '下一步可设计管理员手动商品缓存 dry-run/刷新',
-            '后续建议新增 SQLite 商品主数据表',
+            '普通业务页面继续默认 local-only，不自动刷新商品主档',
+            '管理员可在设置页手动 dry-run 预览 JDY product/list 读取结果',
+            '确认刷新后仅写入本地 SQLite jdy_products，不调用 JDY 商品写接口',
         ],
     }
 
@@ -7699,6 +7993,16 @@ _accessory_product_sync_state = {
     'last_reason': '',
     'summary': {},
 }
+_product_cache_refresh_lock = threading.Lock()
+_product_cache_refresh_state = {
+    'running': False,
+    'last_started_at': '',
+    'last_finished_at': '',
+    'last_success': False,
+    'last_error': '',
+    'last_result': {},
+    'message': '当前商品刷新为同步执行，暂无后台任务',
+}
 
 ACCESSORY_MATERIAL_CATEGORIES = ['绳子', '卡片', '泡壳', '塑料盒子', '塑料桶', '贴纸', '吸塑卡片', '纸盒', '纸箱']
 _SALES_ORDER_HASH_VERSION = 'sales-order-v2'
@@ -10553,6 +10857,149 @@ def sales_cache_status():
     return jsonify({'success': True, 'stats': _sales_cache_stats()})
 
 
+def _normalize_product_refresh_request(payload):
+    payload = payload or {}
+    account = str(payload.get('account') or 'all').strip() or 'all'
+    status = str(payload.get('status') or 'all').strip()
+    if status in ('enabled', '启用'):
+        status = '0'
+    elif status in ('disabled', '禁用'):
+        status = '1'
+    elif status in ('all', '全部', ''):
+        status = 'all'
+    page_size = max(1, min(int(payload.get('page_size') or 50), 500))
+    limit = max(1, min(int(payload.get('limit') or 100), 10000))
+    sleep_ms = max(0, min(int(payload.get('sleep_ms') or 0), 5000))
+    return {
+        'account': account,
+        'status': status,
+        'upd_time_begin': str(payload.get('updTimeBegin') or payload.get('begin') or payload.get('begin_date') or '').strip(),
+        'upd_time_end': str(payload.get('updTimeEnd') or payload.get('end') or payload.get('end_date') or '').strip(),
+        'page_size': page_size,
+        'limit': limit,
+        'sleep_ms': sleep_ms,
+    }
+
+
+def _product_refresh_sources(account):
+    return _sales_sources_for_account(account or 'all')
+
+
+def _run_product_cache_refresh(payload, dry_run=True):
+    opts = _normalize_product_refresh_request(payload)
+    started_at = datetime.now()
+    result = {
+        'success': True,
+        'dry_run': bool(dry_run),
+        'local_only': False,
+        'live_lookup': True,
+        'called_jdy': True,
+        'would_call_jdy': True,
+        'would_write': not dry_run,
+        'would_download': False,
+        'options': opts,
+        'scanned': 0,
+        'valid': 0,
+        'inserted': 0,
+        'updated': 0,
+        'skipped': 0,
+        'errors': [],
+        'estimated_pages': 0,
+        'sample_products': [],
+        'fields': [
+            'account', 'product_id', 'product_number', 'product_name', 'spec', 'barcode',
+            'category_id', 'category_name', 'unit_id', 'unit_name', 'default_supplier_id',
+            'default_supplier_number', 'default_supplier_name', 'image_url', 'status',
+            'data_json', 'updated_at', 'last_seen_at',
+        ],
+    }
+    sources = _product_refresh_sources(opts['account'])
+    if not sources:
+        result['success'] = False
+        result['errors'].append(f"unknown account: {opts['account']}")
+        return result
+
+    def status_arg():
+        return None if opts['status'] in ('', 'all') else opts['status']
+
+    now = started_at.strftime('%Y-%m-%d %H:%M:%S')
+    conn = None
+    if not dry_run:
+        conn = _sales_cache_conn()
+    try:
+        remaining = opts['limit']
+        for cli_fn, account_name in sources:
+            if remaining <= 0:
+                break
+            cli = cli_fn()
+            if not cli:
+                result['errors'].append(f'{account_name}: 请先配置 JDY API')
+                continue
+            page = 1
+            while remaining > 0:
+                page_size = min(opts['page_size'], remaining)
+                try:
+                    resp = cli.get_products(
+                        page=page,
+                        page_size=page_size,
+                        status=status_arg(),
+                        upd_time_begin=opts['upd_time_begin'],
+                        upd_time_end=opts['upd_time_end'],
+                    )
+                except Exception as e:
+                    result['errors'].append(f'{account_name} page {page}: {_short_sync_error(e)}')
+                    break
+                rows = resp.get('list') or []
+                total = int(resp.get('total') or len(rows) or 0)
+                if total and opts['page_size']:
+                    result['estimated_pages'] = max(result['estimated_pages'], int(math.ceil(total / opts['page_size'])))
+                if not rows:
+                    break
+                for product in rows:
+                    result['scanned'] += 1
+                    item = _normalize_product_cache_item(product, account_name, 'jdy_products')
+                    if not item:
+                        result['skipped'] += 1
+                        continue
+                    result['valid'] += 1
+                    if len(result['sample_products']) < 10:
+                        result['sample_products'].append({
+                            'account': account_name,
+                            'code': item['code'],
+                            'name': item['name'],
+                            'spec': item['spec'],
+                            'category_name': item['category_name'],
+                            'unit_name': item['unit_name'],
+                            'default_supplier_name': item['default_supplier_name'],
+                            'image_url': item['image_url'],
+                        })
+                    if not dry_run:
+                        _, action = _cache_upsert_jdy_product(conn, account_name, product, now=now)
+                        if action == 'inserted':
+                            result['inserted'] += 1
+                        elif action == 'updated':
+                            result['updated'] += 1
+                        else:
+                            result['skipped'] += 1
+                remaining -= len(rows)
+                if len(rows) < page_size:
+                    break
+                page += 1
+                if opts['sleep_ms']:
+                    time.sleep(opts['sleep_ms'] / 1000.0)
+        if conn:
+            conn.commit()
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    result['duration_seconds'] = round((datetime.now() - started_at).total_seconds(), 2)
+    result['success'] = not bool(result['errors'])
+    return result
+
+
 @app.route('/cache/catalog-status', methods=['GET'])
 def cache_catalog_status():
     """只读查看商品/供应商缓存口径状态，不调用 JDY，不写本地库。"""
@@ -10567,6 +11014,128 @@ def cache_catalog_status():
             'would_call_jdy': False,
             'error': str(e),
         }), 500
+
+
+@app.route('/cache/product-refresh-dry-run', methods=['POST'])
+def cache_product_refresh_dry_run():
+    """管理员手动预览商品主档刷新。只调用 JDY product/list，不写本地库。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        result = _run_product_cache_refresh(payload, dry_run=True)
+        status = 200 if result.get('success') else 500
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'dry_run': True,
+            'local_only': False,
+            'live_lookup': True,
+            'called_jdy': True,
+            'would_call_jdy': True,
+            'would_write': False,
+            'would_download': False,
+            'error': str(e),
+        }), 500
+
+
+@app.route('/cache/product-refresh', methods=['POST'])
+def cache_product_refresh():
+    """管理员确认后刷新商品主档 SQLite 缓存。仅调用 JDY product/list 读接口。"""
+    payload = request.get_json(silent=True) or {}
+    if str(payload.get('confirm') or '').strip() != 'REFRESH_PRODUCT_CACHE':
+        return jsonify({
+            'success': False,
+            'dry_run': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'would_write': True,
+            'would_download': False,
+            'error': 'missing confirm token REFRESH_PRODUCT_CACHE',
+            'message': '请先 dry-run 预览，再输入确认码后刷新商品缓存。',
+        }), 400
+    if not _product_cache_refresh_lock.acquire(blocking=False):
+        return jsonify({
+            'success': False,
+            'running': True,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'would_write': True,
+            'message': '商品缓存刷新正在执行，请稍后查看状态。',
+            'state': _product_cache_refresh_state,
+        }), 409
+    started = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    _product_cache_refresh_state.update({
+        'running': True,
+        'last_started_at': started,
+        'last_finished_at': '',
+        'last_success': False,
+        'last_error': '',
+        'message': '商品缓存刷新执行中',
+    })
+    try:
+        result = _run_product_cache_refresh(payload, dry_run=False)
+        _product_cache_refresh_state.update({
+            'running': False,
+            'last_finished_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'last_success': bool(result.get('success')),
+            'last_error': '; '.join(result.get('errors') or [])[:800],
+            'last_result': result,
+            'message': '商品缓存刷新已完成' if result.get('success') else '商品缓存刷新完成但存在错误',
+        })
+        status = 200 if result.get('success') else 500
+        return jsonify({**result, 'state': _product_cache_refresh_state}), status
+    except Exception as e:
+        _product_cache_refresh_state.update({
+            'running': False,
+            'last_finished_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'last_success': False,
+            'last_error': str(e),
+            'message': '商品缓存刷新失败',
+        })
+        return jsonify({
+            'success': False,
+            'dry_run': False,
+            'local_only': False,
+            'live_lookup': True,
+            'called_jdy': True,
+            'would_call_jdy': True,
+            'would_write': True,
+            'would_download': False,
+            'error': str(e),
+            'state': _product_cache_refresh_state,
+        }), 500
+    finally:
+        _product_cache_refresh_lock.release()
+
+
+@app.route('/cache/product-refresh/status', methods=['GET'])
+def cache_product_refresh_status():
+    return jsonify({
+        'success': True,
+        'local_only': True,
+        'live_lookup': False,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'state': _product_cache_refresh_state,
+    })
+
+
+@app.route('/cache/product-refresh/cancel', methods=['POST'])
+def cache_product_refresh_cancel():
+    return jsonify({
+        'success': False,
+        'local_only': True,
+        'live_lookup': False,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'cancelled': False,
+        'message': '当前商品缓存刷新为同步执行，暂无可取消的后台任务。',
+        'state': _product_cache_refresh_state,
+    }), 409
 
 
 @app.route('/sales-cache-refresh', methods=['POST'])
