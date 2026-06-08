@@ -2440,6 +2440,24 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div class="settings-v2-note" style="margin-bottom:12px;">
       平时由 Webhook 接收 JDY 推送并触发本地缓存更新；每日 3 点整体比对用于兜底校准。Webhook 只负责新事件触发，不作为历史失败无限重试中心。
     </div>
+    <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
+          <b>商品 / 供应商缓存状态</b>
+          <div class="tip" style="margin-top:2px;">本页只读取本地缓存状态，不调用 JDY。</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="loadCatalogCacheStatus()">刷新状态</button>
+      </div>
+      <div class="settings-info-grid" style="margin-top:10px;">
+        <div class="settings-info-card"><span>商品主档 JSON</span><b id="catalog-product-json-state">待读取</b></div>
+        <div class="settings-info-card"><span>商品 SQLite 主档</span><b id="catalog-product-sqlite-state">待读取</b></div>
+        <div class="settings-info-card"><span>商品 fallback</span><b id="catalog-product-fallback-state">待读取</b></div>
+        <div class="settings-info-card"><span>供应商主缓存</span><b id="catalog-supplier-sqlite-state">待读取</b></div>
+        <div class="settings-info-card"><span>供应商 JSON 导出</span><b id="catalog-supplier-json-state">待读取</b></div>
+        <div class="settings-info-card"><span>接口口径</span><b id="catalog-safety-state">local-only</b></div>
+      </div>
+      <div id="catalog-cache-status-box" class="settings-result-box" style="margin-top:10px;">待读取商品 / 供应商缓存状态</div>
+    </div>
     <input id="s-sales-sync-enabled" type="hidden" value="0">
     <input id="s-sales-sync-interval" type="hidden" value="5">
     <input id="s-accessory-sync-enabled" type="hidden" value="0">
@@ -6887,6 +6905,7 @@ async function loadSettings() {
     }
     loadWebhookStatus();
     loadSystemBackups();
+    loadCatalogCacheStatus();
   } catch(e) { console.error(e); }
 }
 
@@ -6945,6 +6964,102 @@ function webhookHtml(value) {
     '"': '&quot;',
     "'": '&#39;',
   }[ch]));
+}
+
+function catalogCountText(row) {
+  if (!row || !row.exists) return '缺失';
+  return `${Number(row.count || row.items_count || 0)} 条`;
+}
+
+function catalogBoolText(value, yes = '已就绪', no = '未就绪') {
+  return value ? yes : no;
+}
+
+function renderCatalogCacheStatus(data) {
+  const product = data.product || {};
+  const supplier = data.supplier || {};
+  const productJson = product.product_json || {};
+  const fallbacks = product.fallbacks || {};
+  const supplierSqlite = supplier.sqlite || {};
+  const supplierJson = supplier.json_export || {};
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  setText(
+    'catalog-product-json-state',
+    `account1 ${catalogCountText(productJson.account1)} / account2 ${catalogCountText(productJson.account2)}`
+  );
+  setText(
+    'catalog-product-sqlite-state',
+    catalogBoolText(product.sqlite_master_table_ready, '已启用', '暂未启用')
+  );
+  setText(
+    'catalog-product-fallback-state',
+    `销售明细 ${catalogCountText(fallbacks.sales_details)} / 库存 ${catalogCountText(fallbacks.sales_product_quantities)} / 辅料 ${catalogCountText(fallbacks.accessory_products)}`
+  );
+  setText(
+    'catalog-supplier-sqlite-state',
+    `${catalogBoolText(supplier.primary_cache_ready, '已就绪', '未就绪')} ${Number(supplierSqlite.count || 0)} 条`
+  );
+  setText(
+    'catalog-supplier-json-state',
+    `account1 ${catalogCountText(supplierJson.account1)} / account2 ${catalogCountText(supplierJson.account2)}`
+  );
+  setText(
+    'catalog-safety-state',
+    data.local_only && !data.live_lookup && !data.called_jdy ? 'local-only' : '需复核'
+  );
+
+  const box = document.getElementById('catalog-cache-status-box');
+  if (!box) return;
+  const impact = (product.impact || []).map(x => `<li>${webhookHtml(x)}</li>`).join('');
+  const recs = (data.recommendations || []).map(x => `<li>${webhookHtml(x)}</li>`).join('');
+  const supplierPerAccount = supplierSqlite.per_account || {};
+  const supplierPerAccountText = Object.keys(supplierPerAccount).length
+    ? Object.entries(supplierPerAccount).map(([name, count]) => `${webhookHtml(name)} ${Number(count || 0)} 条`).join('；')
+    : '暂无分账套统计';
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">
+      <div>
+        <b>商品缓存</b>
+        <div class="tip" style="line-height:1.7;margin-top:4px;">
+          主档 JSON：account1 ${catalogCountText(productJson.account1)}，account2 ${catalogCountText(productJson.account2)}<br>
+          SQLite 商品主档：${catalogBoolText(product.sqlite_master_table_ready, '已启用', '暂未启用')}<br>
+          可用 fallback：销售明细 ${catalogCountText(fallbacks.sales_details)}；库存数量 ${catalogCountText(fallbacks.sales_product_quantities)}；辅料商品 ${catalogCountText(fallbacks.accessory_products)}
+        </div>
+        <ul class="tip" style="margin:6px 0 0 18px;line-height:1.6;">${impact}</ul>
+      </div>
+      <div>
+        <b>供应商缓存</b>
+        <div class="tip" style="line-height:1.7;margin-top:4px;">
+          主缓存：SQLite jdy_suppliers，${Number(supplierSqlite.count || 0)} 条<br>
+          分账套：${supplierPerAccountText}<br>
+          兼容 JSON：account1 ${catalogCountText(supplierJson.account1)}，account2 ${catalogCountText(supplierJson.account2)}
+        </div>
+        <div class="tip" style="margin-top:6px;line-height:1.6;">${webhookHtml(supplier.note || '')}</div>
+      </div>
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">
+      <b>建议：</b>
+      <ul style="margin:4px 0 0 18px;">${recs}</ul>
+    </div>
+  `;
+}
+
+async function loadCatalogCacheStatus() {
+  const box = document.getElementById('catalog-cache-status-box');
+  if (box) box.innerHTML = '正在读取商品 / 供应商缓存状态...';
+  try {
+    const res = await fetch(`${API}/cache/catalog-status`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    renderCatalogCacheStatus(data);
+    appendSettingsLog('商品 / 供应商缓存状态已刷新');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>商品 / 供应商缓存状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('商品 / 供应商缓存状态读取失败：' + e.message, 'error');
+  }
 }
 
 const WEBHOOK_STATUS_LABELS = {
@@ -7064,6 +7179,7 @@ function showSettingsPane(name) {
   appendSettingsLog(`切换设置分区：${target}`);
   if (target === 'cache') {
     loadWebhookStatus();
+    loadCatalogCacheStatus();
   } else if (target === 'suppliers') {
     loadSupplierCacheStatus();
   } else if (target === 'attachments') {

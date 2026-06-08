@@ -187,6 +187,7 @@ def _admin_path_required():
         '/jdy-webhook/archive-failed-dry-run', '/jdy-webhook/archive-failed',
         '/jdy-webhook/cleanup-old-dry-run', '/jdy-webhook/cleanup-old',
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
+        '/cache/catalog-status',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
@@ -4345,6 +4346,112 @@ def _local_supplier_index(account):
         if number:
             by_number[number] = row
     return {'by_id': by_id, 'by_number': by_number}
+
+
+def _local_json_cache_status(path):
+    info = {'path': path, 'exists': os.path.exists(path), 'count': 0, 'sync_time': '', 'account': '', 'error': ''}
+    if not info['exists']:
+        return info
+    try:
+        data = _load_local_json_cached(path)
+        items = data.get('items') if isinstance(data, dict) else data
+        info['count'] = len(items or [])
+        if isinstance(data, dict):
+            info['sync_time'] = data.get('sync_time') or ''
+            info['account'] = data.get('account') or ''
+    except Exception as e:
+        info['error'] = str(e)
+    return info
+
+
+def _cache_sqlite_table_count(conn, table):
+    result = {'exists': False, 'count': 0}
+    if not conn:
+        return result
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        if not row:
+            return result
+        result['exists'] = True
+        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {table}').fetchone()
+        result['count'] = int(count_row['c'] if isinstance(count_row, sqlite3.Row) else count_row[0])
+    except Exception as e:
+        result['error'] = str(e)
+    return result
+
+
+def _catalog_cache_status_payload():
+    product_json = {
+        'account1': _local_json_cache_status(_local_product_cache_path('account1')),
+        'account2': _local_json_cache_status(_local_product_cache_path('箱包')),
+    }
+    supplier_json = {
+        'account1': _local_json_cache_status(_local_supplier_cache_path('account1')),
+        'account2': _local_json_cache_status(_local_supplier_cache_path('箱包')),
+    }
+    conn = _sales_readonly_conn()
+    try:
+        sales_details = _cache_sqlite_table_count(conn, 'sales_details')
+        sales_product_quantities = _cache_sqlite_table_count(conn, 'sales_product_quantities')
+        accessory_products = _cache_sqlite_table_count(conn, 'accessory_products')
+        jdy_suppliers = _cache_sqlite_table_count(conn, 'jdy_suppliers')
+        supplier_per_account = {}
+        if conn and jdy_suppliers.get('exists'):
+            try:
+                rows = conn.execute('SELECT account, COUNT(*) AS c FROM jdy_suppliers GROUP BY account').fetchall()
+                supplier_per_account = {
+                    str(row['account'] or '未识别账套'): int(row['c'])
+                    for row in rows
+                }
+            except Exception as e:
+                jdy_suppliers['per_account_error'] = str(e)
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    jdy_suppliers['per_account'] = supplier_per_account if 'supplier_per_account' in locals() else {}
+    product_json_ready = any(row.get('exists') and row.get('count', 0) > 0 for row in product_json.values())
+    supplier_sqlite_ready = bool(jdy_suppliers.get('exists') and jdy_suppliers.get('count', 0) > 0)
+    return {
+        'success': True,
+        'local_only': True,
+        'live_lookup': False,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'product': {
+            'primary_cache': 'product_json',
+            'primary_cache_ready': product_json_ready,
+            'sqlite_master_table_ready': False,
+            'sqlite_master_table': {'exists': False, 'count': 0, 'message': '通用 SQLite 商品主档暂未启用'},
+            'product_json': product_json,
+            'fallbacks': {
+                'sales_details': sales_details,
+                'sales_product_quantities': sales_product_quantities,
+                'accessory_products': accessory_products,
+            },
+            'impact': [
+                '商品主档缺失时，商品图片、规格、条码、默认供应商补齐可能不完整',
+                '返单导入仍可使用销售明细 payload、库存数量缓存和辅料商品缓存作为 fallback',
+            ],
+        },
+        'supplier': {
+            'primary_cache': 'jdy_suppliers',
+            'primary_cache_ready': supplier_sqlite_ready,
+            'sqlite': jdy_suppliers,
+            'json_export': supplier_json,
+            'note': 'SQLite jdy_suppliers 是供应商主缓存；JSON 是兼容导出/启用子集，数量不一致不一定是错误',
+        },
+        'recommendations': [
+            '暂不自动全量刷新商品',
+            '下一步可设计管理员手动商品缓存 dry-run/刷新',
+            '后续建议新增 SQLite 商品主数据表',
+        ],
+    }
 
 
 def _product_image_url_from_cache(product):
@@ -10444,6 +10551,22 @@ def sales_order_detail(order_no):
 def sales_cache_status():
     """查看销货单本地缓存状态。"""
     return jsonify({'success': True, 'stats': _sales_cache_stats()})
+
+
+@app.route('/cache/catalog-status', methods=['GET'])
+def cache_catalog_status():
+    """只读查看商品/供应商缓存口径状态，不调用 JDY，不写本地库。"""
+    try:
+        return jsonify(_catalog_cache_status_payload())
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': str(e),
+        }), 500
 
 
 @app.route('/sales-cache-refresh', methods=['POST'])
