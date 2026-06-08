@@ -4742,7 +4742,7 @@ def _catalog_cache_status_payload():
         },
         'recommendations': [
             '普通业务页面继续默认 local-only，不自动刷新商品主档',
-            '管理员可在设置页手动 dry-run 预览 JDY product/list 读取结果',
+            '管理员可在设置页手动只读预览 JDY 启用商品数量',
             '确认刷新后仅写入本地 SQLite jdy_products，不调用 JDY 商品写接口',
         ],
     }
@@ -10857,22 +10857,46 @@ def sales_cache_status():
     return jsonify({'success': True, 'stats': _sales_cache_stats()})
 
 
+def _product_status_label(status):
+    status = str(status or '').strip()
+    if status == '0':
+        return 'enabled'
+    if status == '1':
+        return 'disabled'
+    if status in ('', 'all'):
+        return 'all'
+    return status
+
+
 def _normalize_product_refresh_request(payload):
     payload = payload or {}
     account = str(payload.get('account') or 'all').strip() or 'all'
-    status = str(payload.get('status') or 'all').strip()
-    if status in ('enabled', '启用'):
+    status = str(payload.get('status') or 'enabled').strip()
+    if status in ('enabled', '启用', '仅启用'):
         status = '0'
-    elif status in ('disabled', '禁用'):
+    elif status in ('disabled', '禁用', '仅禁用'):
         status = '1'
     elif status in ('all', '全部', ''):
         status = 'all'
-    page_size = max(1, min(int(payload.get('page_size') or 50), 500))
-    limit = max(1, min(int(payload.get('limit') or 100), 10000))
-    sleep_ms = max(0, min(int(payload.get('sleep_ms') or 0), 5000))
+
+    def _bounded_int(value, default, min_value, max_value):
+        try:
+            value = int(value)
+        except Exception:
+            value = default
+        return max(min_value, min(value, max_value))
+
+    page_size = _bounded_int(payload.get('page_size'), 100, 1, 500)
+    try:
+        limit = int(payload.get('limit') if payload.get('limit') not in (None, '') else 0)
+    except Exception:
+        limit = 0
+    limit = max(0, min(limit, 1000000))
+    sleep_ms = _bounded_int(payload.get('sleep_ms'), 300, 0, 5000)
     return {
         'account': account,
         'status': status,
+        'status_filter': _product_status_label(status),
         'upd_time_begin': str(payload.get('updTimeBegin') or payload.get('begin') or payload.get('begin_date') or '').strip(),
         'upd_time_end': str(payload.get('updTimeEnd') or payload.get('end') or payload.get('end_date') or '').strip(),
         'page_size': page_size,
@@ -10885,9 +10909,34 @@ def _product_refresh_sources(account):
     return _sales_sources_for_account(account or 'all')
 
 
+def _jdy_product_existing_numbers():
+    result = {'total': 0, 'by_account': {}}
+    conn = _sales_readonly_conn()
+    if not conn:
+        return result
+    try:
+        if not _cache_sqlite_table_count(conn, 'jdy_products').get('exists'):
+            return result
+        rows = conn.execute('SELECT account, product_number FROM jdy_products').fetchall()
+        result['total'] = len(rows)
+        for row in rows:
+            account = str(row['account'] or '')
+            code = str(row['product_number'] or '').strip()
+            bucket = result['by_account'].setdefault(account, set())
+            if code:
+                bucket.add(code)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return result
+
+
 def _run_product_cache_refresh(payload, dry_run=True):
     opts = _normalize_product_refresh_request(payload)
     started_at = datetime.now()
+    existing = _jdy_product_existing_numbers()
     result = {
         'success': True,
         'dry_run': bool(dry_run),
@@ -10898,6 +10947,17 @@ def _run_product_cache_refresh(payload, dry_run=True):
         'would_write': not dry_run,
         'would_download': False,
         'options': opts,
+        'status_filter': opts['status_filter'],
+        'written_table': 'jdy_products' if not dry_run else '',
+        'remote_total': 0,
+        'jdy_enabled_total': 0,
+        'local_total': existing['total'],
+        'local_total_before': existing['total'],
+        'local_total_after': existing['total'],
+        'estimated_insert': 0,
+        'estimated_update': 0,
+        'estimated_skip': 0,
+        'account_summary': {},
         'scanned': 0,
         'valid': 0,
         'inserted': 0,
@@ -10928,16 +10988,30 @@ def _run_product_cache_refresh(payload, dry_run=True):
         conn = _sales_cache_conn()
     try:
         remaining = opts['limit']
+        unlimited = remaining <= 0
         for cli_fn, account_name in sources:
-            if remaining <= 0:
+            if not unlimited and remaining <= 0:
                 break
+            summary = result['account_summary'].setdefault(account_name, {
+                'remote_total': 0,
+                'local_total': len(existing['by_account'].get(account_name, set())),
+                'scanned': 0,
+                'valid': 0,
+                'estimated_insert': 0,
+                'estimated_update': 0,
+                'estimated_skip': 0,
+                'inserted': 0,
+                'updated': 0,
+                'skipped': 0,
+            })
             cli = cli_fn()
             if not cli:
                 result['errors'].append(f'{account_name}: 请先配置 JDY API')
                 continue
             page = 1
-            while remaining > 0:
-                page_size = min(opts['page_size'], remaining)
+            seen_total = False
+            while unlimited or remaining > 0:
+                page_size = opts['page_size'] if unlimited else min(opts['page_size'], remaining)
                 try:
                     resp = cli.get_products(
                         page=page,
@@ -10951,17 +11025,33 @@ def _run_product_cache_refresh(payload, dry_run=True):
                     break
                 rows = resp.get('list') or []
                 total = int(resp.get('total') or len(rows) or 0)
+                if not seen_total:
+                    summary['remote_total'] = total
+                    result['remote_total'] += total
+                    seen_total = True
                 if total and opts['page_size']:
                     result['estimated_pages'] = max(result['estimated_pages'], int(math.ceil(total / opts['page_size'])))
                 if not rows:
                     break
                 for product in rows:
                     result['scanned'] += 1
+                    summary['scanned'] += 1
                     item = _normalize_product_cache_item(product, account_name, 'jdy_products')
                     if not item:
                         result['skipped'] += 1
+                        result['estimated_skip'] += 1
+                        summary['skipped'] += 1
+                        summary['estimated_skip'] += 1
                         continue
                     result['valid'] += 1
+                    summary['valid'] += 1
+                    is_existing = item['code'] in existing['by_account'].get(account_name, set())
+                    if is_existing:
+                        result['estimated_update'] += 1
+                        summary['estimated_update'] += 1
+                    else:
+                        result['estimated_insert'] += 1
+                        summary['estimated_insert'] += 1
                     if len(result['sample_products']) < 10:
                         result['sample_products'].append({
                             'account': account_name,
@@ -10977,11 +11067,15 @@ def _run_product_cache_refresh(payload, dry_run=True):
                         _, action = _cache_upsert_jdy_product(conn, account_name, product, now=now)
                         if action == 'inserted':
                             result['inserted'] += 1
+                            summary['inserted'] += 1
                         elif action == 'updated':
                             result['updated'] += 1
+                            summary['updated'] += 1
                         else:
                             result['skipped'] += 1
-                remaining -= len(rows)
+                            summary['skipped'] += 1
+                if not unlimited:
+                    remaining -= len(rows)
                 if len(rows) < page_size:
                     break
                 page += 1
@@ -10989,6 +11083,8 @@ def _run_product_cache_refresh(payload, dry_run=True):
                     time.sleep(opts['sleep_ms'] / 1000.0)
         if conn:
             conn.commit()
+            local_after = conn.execute('SELECT COUNT(*) AS c FROM jdy_products').fetchone()
+            result['local_total_after'] = int(local_after['c'] if isinstance(local_after, sqlite3.Row) else local_after[0])
     finally:
         try:
             if conn:
@@ -10997,6 +11093,8 @@ def _run_product_cache_refresh(payload, dry_run=True):
             pass
     result['duration_seconds'] = round((datetime.now() - started_at).total_seconds(), 2)
     result['success'] = not bool(result['errors'])
+    if opts['status_filter'] == 'enabled':
+        result['jdy_enabled_total'] = result['remote_total']
     return result
 
 
@@ -11052,8 +11150,10 @@ def cache_product_refresh():
             'would_call_jdy': False,
             'would_write': True,
             'would_download': False,
+            'status_filter': 'enabled',
+            'written_table': 'jdy_products',
             'error': 'missing confirm token REFRESH_PRODUCT_CACHE',
-            'message': '请先 dry-run 预览，再输入确认码后刷新商品缓存。',
+            'message': '请先预览商品数量，再确认拉取启用商品到本地。',
         }), 400
     if not _product_cache_refresh_lock.acquire(blocking=False):
         return jsonify({
