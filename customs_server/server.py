@@ -190,7 +190,7 @@ def _admin_path_required():
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/cache/catalog-status', '/cache/product-refresh-dry-run', '/cache/product-refresh',
         '/cache/product-refresh/status', '/cache/product-refresh/cancel',
-        '/sync/coverage-status', '/sync/realtime-health',
+        '/sync/coverage-status', '/sync/realtime-health', '/sync/dirty-status',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
@@ -3644,6 +3644,7 @@ def _sales_cache_conn():
             updated_at TEXT NOT NULL
         )
     ''')
+    _ensure_jdy_dirty_events_schema(conn)
     conn.execute('''
         CREATE TABLE IF NOT EXISTS reorder_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3863,6 +3864,68 @@ def _ensure_jdy_product_columns(conn):
         if key not in cols:
             conn.execute(f'ALTER TABLE jdy_products ADD COLUMN {name} {ddl}')
             cols.add(key)
+
+
+def _ensure_jdy_dirty_events_schema(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS jdy_dirty_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT,
+            account TEXT,
+            resource TEXT NOT NULL,
+            action TEXT,
+            dirty_key TEXT,
+            dirty_key_type TEXT,
+            payload_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT,
+            next_attempt_at TEXT,
+            resolved_at TEXT,
+            message TEXT,
+            error TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
+    cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(jdy_dirty_events)').fetchall()}
+    additions = [
+        ('event_id', 'TEXT'),
+        ('account', 'TEXT'),
+        ('resource', 'TEXT'),
+        ('action', 'TEXT'),
+        ('dirty_key', 'TEXT'),
+        ('dirty_key_type', 'TEXT'),
+        ('payload_json', 'TEXT'),
+        ('status', "TEXT NOT NULL DEFAULT 'pending'"),
+        ('attempt_count', 'INTEGER NOT NULL DEFAULT 0'),
+        ('last_attempt_at', 'TEXT'),
+        ('next_attempt_at', 'TEXT'),
+        ('resolved_at', 'TEXT'),
+        ('message', 'TEXT'),
+        ('error', 'TEXT'),
+        ('created_at', 'TEXT'),
+        ('updated_at', 'TEXT'),
+    ]
+    for name, ddl in additions:
+        key = name.lower()
+        if key not in cols:
+            conn.execute(f'ALTER TABLE jdy_dirty_events ADD COLUMN {name} {ddl}')
+            cols.add(key)
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_dirty_events_status_next ON jdy_dirty_events(resource, status, next_attempt_at)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_dirty_events_account_key ON jdy_dirty_events(account, resource, dirty_key)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_dirty_events_event_id ON jdy_dirty_events(event_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_dirty_events_created ON jdy_dirty_events(created_at)')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_jdy_dirty_events_event_key_unique
+        ON jdy_dirty_events(event_id, resource, dirty_key)
+        WHERE event_id IS NOT NULL AND event_id != ''
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_jdy_dirty_events_account_key_action_unique
+        ON jdy_dirty_events(account, resource, dirty_key, action)
+        WHERE dirty_key IS NOT NULL AND dirty_key != ''
+    ''')
 
 
 def _cache_upsert_sales_order(conn, order):
@@ -5014,6 +5077,7 @@ SYNC_COVERAGE_TABLES = [
     'purchase_attachment_items',
     'webhook_events',
     'webhook_runtime_settings',
+    'jdy_dirty_events',
     'reorder_items',
 ]
 
@@ -5718,6 +5782,151 @@ def _sync_realtime_health_payload():
             pass
 
 
+DIRTY_STATUS_VALUES = ('pending', 'processing', 'done', 'skipped', 'failed', 'ignored')
+
+
+def _empty_dirty_summary():
+    return {key: 0 for key in DIRTY_STATUS_VALUES}
+
+
+def _dirty_status_table_info(conn):
+    info = {
+        'name': 'jdy_dirty_events',
+        'exists': False,
+        'count': 0,
+        'max_updated_at': '',
+        'columns': [],
+    }
+    if conn is None:
+        return info
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jdy_dirty_events'"
+        ).fetchone()
+        if not row:
+            return info
+        cols = [str(r['name']) for r in conn.execute('PRAGMA table_info(jdy_dirty_events)').fetchall()]
+        info['exists'] = True
+        info['columns'] = cols
+        count_row = conn.execute('SELECT COUNT(*) AS c FROM jdy_dirty_events').fetchone()
+        info['count'] = int(count_row['c'] if count_row else 0)
+        if 'updated_at' in cols:
+            max_row = conn.execute('SELECT MAX(updated_at) AS v FROM jdy_dirty_events').fetchone()
+            info['max_updated_at'] = str(max_row['v'] or '') if max_row else ''
+        return info
+    except Exception as e:
+        info['error'] = str(e)
+        return info
+
+
+def _dirty_status_summary(conn):
+    summary = _empty_dirty_summary()
+    by_resource_map = {}
+    if conn is None:
+        return summary, []
+    try:
+        for row in conn.execute('''
+            SELECT status, COUNT(*) AS c
+            FROM jdy_dirty_events
+            GROUP BY status
+        ''').fetchall():
+            status = str(row['status'] or 'unknown')
+            summary[status] = int(row['c'] or 0)
+        for row in conn.execute('''
+            SELECT resource, status, COUNT(*) AS c
+            FROM jdy_dirty_events
+            GROUP BY resource, status
+            ORDER BY resource, status
+        ''').fetchall():
+            resource = str(row['resource'] or 'unknown')
+            status = str(row['status'] or 'unknown')
+            bucket = by_resource_map.setdefault(resource, {'resource': resource, **_empty_dirty_summary(), 'total': 0})
+            count = int(row['c'] or 0)
+            bucket[status] = count
+            bucket['total'] += count
+        return summary, list(by_resource_map.values())
+    except sqlite3.OperationalError:
+        return summary, []
+
+
+def _dirty_recent_events(conn, resource='', status='', limit=50):
+    if conn is None:
+        return []
+    allowed_statuses = set(DIRTY_STATUS_VALUES)
+    clauses = []
+    params = []
+    resource = str(resource or '').strip().lower()
+    status = str(status or '').strip().lower()
+    if resource:
+        clauses.append('resource = ?')
+        params.append(resource)
+    if status:
+        if status not in allowed_statuses:
+            return []
+        clauses.append('status = ?')
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+    rows = conn.execute(f'''
+        SELECT id, event_id, account, resource, action, dirty_key, dirty_key_type,
+               status, attempt_count, last_attempt_at, next_attempt_at, resolved_at,
+               message, error, created_at, updated_at
+        FROM jdy_dirty_events
+        {where}
+        ORDER BY id DESC
+        LIMIT ?
+    ''', [*params, limit]).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _sync_dirty_status_payload(resource='', status='', limit=50):
+    try:
+        limit = int(limit or 50)
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 200))
+    conn = _sales_readonly_conn()
+    try:
+        table = _dirty_status_table_info(conn)
+        summary = _empty_dirty_summary()
+        by_resource = []
+        recent = []
+        if table.get('exists'):
+            summary, by_resource = _dirty_status_summary(conn)
+            recent = _dirty_recent_events(conn, resource=resource, status=status, limit=limit)
+        return {
+            'success': True,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'db_path': _SALES_CACHE_DB,
+            'table': table,
+            'summary': summary,
+            'by_resource': by_resource,
+            'recent': recent,
+            'supported_resources': sorted(DIRTY_TRACKED_RESOURCES),
+            'unsupported_resources': ['purchase_inbound', 'ar_creditbill', 'bd_customer', 'attachments', 'unknown'],
+            'params': {
+                'resource': str(resource or ''),
+                'status': str(status or ''),
+                'limit': limit,
+            },
+            'note': '本面板只显示待补拉 dirty 队列，不调用 JDY，也不会处理队列。',
+            'notes': [
+                'product、supplier、inventory 的 recorded-only webhook 会进入 dirty 队列，供后续管理员确认后小范围补拉。',
+                'sales、transfer、accessory_purchase 仍走现有安全实时同步链路，不进入 dirty 队列。',
+                '当前接口只读本地 SQLite；表不存在时返回 exists=false，不会为了 GET 创建表。',
+            ],
+        }
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
 def _sync_coverage_status_payload():
     conn = _sales_readonly_conn()
     try:
@@ -5748,6 +5957,7 @@ def _sync_coverage_status_payload():
         'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'db_path': _SALES_CACHE_DB,
         'realtime_health_endpoint': '/sync/realtime-health',
+        'dirty_status_endpoint': '/sync/dirty-status',
         'webhook_mode': webhook_mode,
         'tables': tables,
         'resources': resources,
@@ -5779,6 +5989,25 @@ def sync_coverage_status():
 def sync_realtime_health():
     try:
         return jsonify(_sync_realtime_health_payload())
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': str(e),
+        }), 500
+
+
+@app.route('/sync/dirty-status', methods=['GET'])
+def sync_dirty_status():
+    try:
+        return jsonify(_sync_dirty_status_payload(
+            resource=request.args.get('resource') or '',
+            status=request.args.get('status') or '',
+            limit=request.args.get('limit') or 50,
+        ))
     except Exception as e:
         return jsonify({
             'success': False,
@@ -8554,6 +8783,175 @@ def _webhook_payload_hash(payload):
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()
 
 
+DIRTY_TRACKED_RESOURCES = {'product', 'supplier', 'inventory'}
+DIRTY_KEY_LIMIT_PER_EVENT = 50
+
+
+def _normalize_dirty_resource(resource):
+    raw = str(resource or '').strip().lower()
+    if raw in DIRTY_TRACKED_RESOURCES:
+        return raw
+    if raw in ('bd_material', 'material'):
+        return 'product'
+    if raw in ('bd_supplier',):
+        return 'supplier'
+    if raw in ('inv_inventory_entity', 'inv_inventory'):
+        return 'inventory'
+    return raw
+
+
+def _dirty_values_from_payload(payload, keys):
+    values = []
+    for item in _flatten_webhook_items(payload or {}):
+        for key in keys:
+            val = item.get(key) if isinstance(item, dict) else None
+            if val not in (None, ''):
+                values.append(str(val).strip())
+    return [x for x in dict.fromkeys(values) if x]
+
+
+def _extract_dirty_keys_from_webhook(resource, payload, number=None, event_id=''):
+    resource = _normalize_dirty_resource(resource)
+    payload = payload or {}
+    fallback_number = str(number or '').strip()
+    if resource == 'product':
+        candidates = [
+            ('product_number', _dirty_values_from_payload(payload, ('number', 'productNumber'))),
+            ('product_number', [fallback_number] if fallback_number and not _looks_like_internal_id(fallback_number) else []),
+            ('product_id', _dirty_values_from_payload(payload, ('id', 'productId'))),
+            ('product_id', [fallback_number] if fallback_number and _looks_like_internal_id(fallback_number) else []),
+        ]
+    elif resource == 'supplier':
+        candidates = [
+            ('supplier_number', _dirty_values_from_payload(payload, ('number', 'supplierNumber', 'supplierNo'))),
+            ('supplier_number', [fallback_number] if fallback_number and not _looks_like_internal_id(fallback_number) else []),
+            ('supplier_id', _dirty_values_from_payload(payload, ('id', 'supplierId'))),
+            ('supplier_id', [fallback_number] if fallback_number and _looks_like_internal_id(fallback_number) else []),
+        ]
+    elif resource == 'inventory':
+        candidates = [
+            ('product_number', _dirty_values_from_payload(payload, ('productNumber', 'number'))),
+            ('product_number', [fallback_number] if fallback_number and not _looks_like_internal_id(fallback_number) else []),
+            ('product_id', _dirty_values_from_payload(payload, ('productId', 'id'))),
+            ('product_id', [fallback_number] if fallback_number and _looks_like_internal_id(fallback_number) else []),
+        ]
+    else:
+        candidates = []
+    rows = []
+    for key_type, values in candidates:
+        rows = []
+        seen = set()
+        for value in values or []:
+            value = str(value or '').strip()
+            if not value:
+                continue
+            marker = (key_type, value)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            rows.append({'dirty_key': value, 'dirty_key_type': key_type})
+            if len(rows) >= DIRTY_KEY_LIMIT_PER_EVENT:
+                return rows, True
+        if rows:
+            return rows, False
+    if event_id:
+        rows.append({'dirty_key': str(event_id).strip(), 'dirty_key_type': 'event_id'})
+    return rows, False
+
+
+def _record_jdy_dirty_event(conn, account, resource, action, payload, number='', event_id='', now=None):
+    resource = _normalize_dirty_resource(resource)
+    if resource not in DIRTY_TRACKED_RESOURCES:
+        return {'inserted': 0, 'updated': 0, 'skipped': 0, 'limited': False}
+    _ensure_jdy_dirty_events_schema(conn)
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    payload = payload or {}
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    rows, limited = _extract_dirty_keys_from_webhook(resource, payload, number=number, event_id=event_id)
+    if limited:
+        rows = [{
+            'dirty_key': str(event_id or number or _webhook_payload_hash(payload) or '').strip(),
+            'dirty_key_type': 'skipped_large_payload',
+        }]
+    inserted = updated = skipped = 0
+    message = 'queued for manual dirty pull; no JDY call'
+    if limited:
+        message = f'inventory dirty payload has more than {DIRTY_KEY_LIMIT_PER_EVENT} keys; manual review required'
+    event_exists_before = False
+    if event_id:
+        event_exists_before = bool(conn.execute('''
+            SELECT id FROM jdy_dirty_events
+            WHERE event_id = ?
+              AND resource = ?
+            LIMIT 1
+        ''', (str(event_id), resource)).fetchone())
+    for item in rows:
+        dirty_key = str(item.get('dirty_key') or '').strip()
+        dirty_key_type = str(item.get('dirty_key_type') or '').strip()
+        if not dirty_key:
+            skipped += 1
+            continue
+        existing = None
+        if event_id:
+            existing = conn.execute('''
+                SELECT id FROM jdy_dirty_events
+                WHERE event_id = ?
+                  AND resource = ?
+                  AND COALESCE(dirty_key, '') = ?
+                LIMIT 1
+            ''', (str(event_id), resource, dirty_key)).fetchone()
+            if existing is None and event_exists_before:
+                existing = conn.execute('''
+                    SELECT id FROM jdy_dirty_events
+                    WHERE event_id = ?
+                      AND resource = ?
+                    ORDER BY id ASC
+                    LIMIT 1
+                ''', (str(event_id), resource)).fetchone()
+        if existing is None:
+            existing = conn.execute('''
+                SELECT id FROM jdy_dirty_events
+                WHERE COALESCE(account, '') = ?
+                  AND resource = ?
+                  AND COALESCE(dirty_key, '') = ?
+                  AND COALESCE(action, '') = ?
+                LIMIT 1
+            ''', (account or '', resource, dirty_key, action or '')).fetchone()
+        if existing:
+            conn.execute('''
+                UPDATE jdy_dirty_events
+                   SET event_id = COALESCE(NULLIF(event_id, ''), ?),
+                       dirty_key_type = COALESCE(NULLIF(dirty_key_type, ''), ?),
+                       payload_json = ?,
+                       message = ?,
+                       updated_at = ?
+                 WHERE id = ?
+            ''', (str(event_id or ''), dirty_key_type, payload_json, message, now, existing['id']))
+            updated += 1
+        else:
+            conn.execute('''
+                INSERT INTO jdy_dirty_events
+                (event_id, account, resource, action, dirty_key, dirty_key_type, payload_json,
+                 status, attempt_count, last_attempt_at, next_attempt_at, resolved_at,
+                 message, error, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, '', ?, '', ?, '', ?, ?)
+            ''', (
+                str(event_id or ''),
+                account or '',
+                resource,
+                action or '',
+                dirty_key,
+                dirty_key_type,
+                payload_json,
+                now,
+                message,
+                now,
+                now,
+            ))
+            inserted += 1
+    return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'limited': limited}
+
+
 def _webhook_duplicate_exists(conn, event_id, payload_hash, account, resource, bill_no):
     if event_id:
         row = conn.execute('''
@@ -8594,6 +8992,8 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
     initial_error = '' if safe_resource else f'recorded only unsafe resource: {resource or "unknown"}'
     processed_at = '' if safe_resource else now
     inserted = 0
+    dirty_inserted = 0
+    dirty_updated = 0
     with _sales_cache_conn() as conn:
         for number in numbers:
             number = str(number or '').strip()
@@ -8609,8 +9009,19 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
                 initial_status, payload_json, initial_error, now, processed_at, event_id, payload_hash, now,
             ))
             inserted += 1
+            if not safe_resource:
+                try:
+                    dirty_result = _record_jdy_dirty_event(
+                        conn, account, resource, action, payload, number=number, event_id=event_id, now=now
+                    )
+                    dirty_inserted += int(dirty_result.get('inserted') or 0)
+                    dirty_updated += int(dirty_result.get('updated') or 0)
+                except Exception as e:
+                    _log_event('JDY_DIRTY_EVENTS_ERROR', f'record dirty failed: resource={resource or "unknown"} account={account or "-"} number={number}: {_short_sync_error(e)}')
         conn.commit()
     message = f'queued {inserted} event(s)' if safe_resource else f'recorded only {inserted} unsafe event(s)'
+    if not safe_resource and (dirty_inserted or dirty_updated):
+        message += f'; dirty queued {dirty_inserted}, updated {dirty_updated}'
     _webhook_state.update({'last_event_at': now, 'pending': _webhook_pending_count(), 'message': message})
     if safe_resource:
         _start_webhook_worker()
