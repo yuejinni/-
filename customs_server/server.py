@@ -4668,6 +4668,186 @@ def _cache_sqlite_table_count(conn, table):
     return result
 
 
+def _bounded_query_int(value, default, min_value, max_value):
+    try:
+        value = int(value)
+    except Exception:
+        value = default
+    return max(min_value, min(value, max_value))
+
+
+def _local_products_response():
+    page = _bounded_query_int(request.args.get('page'), 1, 1, 1000000)
+    page_size = _bounded_query_int(
+        request.args.get('page_size') or request.args.get('limit'),
+        50,
+        1,
+        200,
+    )
+    offset = (page - 1) * page_size
+    account = str(request.args.get('account') or 'all').strip() or 'all'
+    q = str(request.args.get('q') or request.args.get('search') or '').strip().lower()
+    has_image = str(request.args.get('has_image') or '').strip().lower()
+    supplier = str(request.args.get('supplier') or '').strip().lower()
+    category = str(request.args.get('category') or '').strip().lower()
+
+    base = {
+        'success': True,
+        'local_only': True,
+        'live_lookup': False,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'source': 'jdy_products',
+        'total': 0,
+        'page': page,
+        'page_size': page_size,
+        'items': [],
+    }
+    conn = _sales_readonly_conn()
+    if not conn:
+        return {
+            **base,
+            'success': False,
+            'error': '本地销售缓存数据库不存在',
+            'message': '本地商品主档为空，请先在设置页补齐商品缓存。',
+        }, 200
+    try:
+        products_state = _cache_sqlite_table_count(conn, 'jdy_products')
+        if not products_state.get('exists'):
+            return {
+                **base,
+                'success': False,
+                'error': '本地表 jdy_products 不存在',
+                'message': '本地商品主档为空，请先在设置页补齐商品缓存。',
+            }, 200
+        qty_state = _cache_sqlite_table_count(conn, 'sales_product_quantities')
+        joins = ''
+        select_qty = '''
+            0 AS stock_new, 0 AS stock_transit, 0 AS stock_local,
+            0 AS stock_factory, 0 AS factory_qty
+        '''
+        if qty_state.get('exists'):
+            joins = '''
+                LEFT JOIN sales_product_quantities q
+                  ON q.account = p.account AND q.code = p.product_number
+            '''
+            select_qty = '''
+                COALESCE(q.stock_new, 0) AS stock_new,
+                COALESCE(q.stock_transit, 0) AS stock_transit,
+                COALESCE(q.stock_local, 0) AS stock_local,
+                COALESCE(q.stock_factory, 0) AS stock_factory,
+                COALESCE(q.factory_qty, 0) AS factory_qty
+            '''
+        clauses = ['COALESCE(p.product_number, "") != ""']
+        params = []
+        if account and account != 'all':
+            clauses.append('p.account = ?')
+            params.append(account)
+        if q:
+            clauses.append('''
+                (
+                    LOWER(COALESCE(p.product_number, '')) LIKE ?
+                    OR LOWER(COALESCE(p.product_name, '')) LIKE ?
+                    OR LOWER(COALESCE(p.spec, '')) LIKE ?
+                    OR LOWER(COALESCE(p.barcode, '')) LIKE ?
+                    OR LOWER(COALESCE(p.default_supplier_name, '')) LIKE ?
+                )
+            ''')
+            kw = f'%{q}%'
+            params.extend([kw, kw, kw, kw, kw])
+        if supplier:
+            clauses.append('''
+                (
+                    LOWER(COALESCE(p.default_supplier_number, '')) LIKE ?
+                    OR LOWER(COALESCE(p.default_supplier_name, '')) LIKE ?
+                )
+            ''')
+            kw = f'%{supplier}%'
+            params.extend([kw, kw])
+        if category and category != 'all':
+            clauses.append('LOWER(COALESCE(p.category_name, "")) LIKE ?')
+            params.append(f'%{category}%')
+        if has_image in ('1', 'true', 'yes', 'y', 'has'):
+            clauses.append("COALESCE(p.image_url, '') != ''")
+        elif has_image in ('0', 'false', 'no', 'n', 'none', 'missing'):
+            clauses.append("COALESCE(p.image_url, '') = ''")
+        where = ' AND '.join(clauses)
+        total_row = conn.execute(f'''
+            SELECT COUNT(*) AS c
+            FROM jdy_products p
+            {joins}
+            WHERE {where}
+        ''', params).fetchone()
+        total = int(total_row['c'] if total_row else 0)
+        rows = conn.execute(f'''
+            SELECT
+                p.id, p.account, p.product_number, p.product_name, p.spec, p.barcode,
+                p.unit_name, p.category_name, p.default_supplier_number,
+                p.default_supplier_name, p.image_url, p.status,
+                {select_qty},
+                p.data_json
+            FROM jdy_products p
+            {joins}
+            WHERE {where}
+            ORDER BY p.account ASC, p.product_number ASC, p.id ASC
+            LIMIT ? OFFSET ?
+        ''', [*params, page_size, offset]).fetchall()
+        items = []
+        for row in rows:
+            item = {
+                'id': row['id'],
+                'account': row['account'] or '',
+                'product_number': row['product_number'] or '',
+                'product_name': row['product_name'] or '',
+                'spec': row['spec'] or '',
+                'barcode': row['barcode'] or '',
+                'unit_name': row['unit_name'] or '',
+                'category_name': row['category_name'] or '',
+                'default_supplier_number': row['default_supplier_number'] or '',
+                'default_supplier_name': row['default_supplier_name'] or '',
+                'image_url': row['image_url'] or '',
+                'status': row['status'] or '',
+                'stock_new': _num(row['stock_new']),
+                'stock_transit': _num(row['stock_transit']),
+                'stock_local': _num(row['stock_local']),
+                'stock_factory': _num(row['stock_factory']),
+                'factory_qty': _num(row['factory_qty']),
+                'data_source': 'jdy_products',
+            }
+            item.update({
+                'code': item['product_number'],
+                'name': item['product_name'],
+                'unit': item['unit_name'],
+                'supplier_number': item['default_supplier_number'],
+                'supplier_name': item['default_supplier_name'],
+                'imageUrl': item['image_url'],
+                'warehouses': [
+                    {'name': '新大仓库', 'qty': item['stock_new']},
+                    {'name': '在途', 'qty': item['stock_transit']},
+                    {'name': '金华/本地', 'qty': item['stock_local']},
+                    {'name': '工厂', 'qty': item['factory_qty'] or item['stock_factory']},
+                ],
+            })
+            items.append(item)
+        message = ''
+        if products_state.get('count', 0) <= 0:
+            message = '本地商品主档为空，请先在设置页补齐商品缓存。'
+        return {
+            **base,
+            'success': True,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'items': items,
+            'message': message,
+        }, 200
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _catalog_cache_status_payload():
     product_json = {
         'account1': _local_json_cache_status(_local_product_cache_path('account1')),
@@ -6730,6 +6910,43 @@ def _reorder_item_payload_from_entry(entry, account='', source=None, local_ctx=N
     source = source or {}
     account = entry.get('account') or account or ''
     code = _reorder_entry_identity(entry)
+    if str(source.get('type') or '').strip() == 'product_catalog':
+        stock_new = entry.get('stock_new', entry.get('stockNew', 0))
+        stock_transit = entry.get('stock_transit', entry.get('stockTransit', 0))
+        stock_local = entry.get('stock_local', entry.get('stockLocal', 0))
+        stock_factory = entry.get('stock_factory', entry.get('stockFactory', 0))
+        factory_qty = entry.get('factory_qty', entry.get('factoryQty', stock_factory))
+        return {
+            'account': account or '',
+            'supplierNumber': entry.get('supplier_number') or entry.get('supplierNumber') or entry.get('default_supplier_number') or '',
+            'supplierName': entry.get('supplier_name') or entry.get('supplierName') or entry.get('default_supplier_name') or '未识别供应商',
+            'code': code,
+            'name': _reorder_entry_name(entry) or entry.get('product_name') or '',
+            'spec': entry.get('spec') or entry.get('specification') or '',
+            'barcode': entry.get('barcode') or entry.get('barCode') or '',
+            'unit': entry.get('unit') or entry.get('unitName') or entry.get('unit_name') or '',
+            'imageUrl': entry.get('imageUrl') or entry.get('image_url') or '',
+            'sourceType': 'product_catalog',
+            'sourceNumber': source.get('number') or 'product_catalog',
+            'sourceDate': source.get('date') or '',
+            'sourceCustomer': source.get('customer') or '本地商品',
+            'sourceUser': source.get('user') or '',
+            'salesQty60': 0,
+            'stockNew': _num(stock_new),
+            'stockTransit': _num(stock_transit),
+            'stockLocal': _num(stock_local),
+            'stockFactory': _num(stock_factory),
+            'factoryQty': _num(factory_qty),
+            'suggestedQty': 0,
+            'confirmedQty': 0,
+            'reorderPrice': _num(entry.get('reorder_price') or entry.get('reorderPrice') or 0),
+            'createdBy': created_by or '',
+            'createdByName': created_by_name or '未知添加人',
+            'raw': entry,
+            'supplierSource': {'source': 'product_catalog_payload'},
+            'localOnly': True,
+            'liveLookup': False,
+        }
     warehouses = entry.get('warehouses') or []
     stock = {str(w.get('name') or ''): _num(w.get('qty')) for w in warehouses if isinstance(w, dict)}
     local_ctx = local_ctx or _reorder_batch_local_context([entry], account)
@@ -10696,6 +10913,31 @@ def sales_orders_list():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/local-products', methods=['GET'])
+def local_products():
+    """Local product catalog. Reads only jdy_products and local quantity cache."""
+    try:
+        payload, status = _local_products_response()
+        return jsonify(payload), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] local_products: {tb}')
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'source': 'jdy_products',
+            'total': 0,
+            'page': _bounded_query_int(request.args.get('page'), 1, 1, 1000000),
+            'page_size': _bounded_query_int(request.args.get('page_size'), 50, 1, 200),
+            'items': [],
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
 @app.route('/sales-summary-products', methods=['GET'])
 def sales_summary_products():
     """销售汇总按商品：只读取本地 SQLite/JSON 缓存，不调用 JDY。"""
@@ -12674,8 +12916,12 @@ def reorder_items_import():
         if not items:
             return jsonify({'success': False, 'error': '请选择需要返单的商品'}), 400
 
+        source_type = str(source.get('type') or '').strip()
         load_started = time.perf_counter()
-        local_ctx = _reorder_batch_local_context(items, account)
+        if source_type == 'product_catalog':
+            local_ctx = {'quantities': {}, 'products': {}, 'suppliers': {}, 'supplier_by_product': {}}
+        else:
+            local_ctx = _reorder_batch_local_context(items, account)
         load_ms = int((time.perf_counter() - load_started) * 1000)
         build_ms = 0
         inserted = 0
