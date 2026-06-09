@@ -2630,6 +2630,23 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <div>
+          <b>商品/供应商/库存变更待补拉</b>
+          <div class="tip" style="margin-top:2px;line-height:1.6;">
+            JDY 推送商品、供应商、库存变更时，系统先记录为待补拉；本面板只读本地 dirty 队列，不调用 JDY，不处理队列。
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="loadDirtyStatus()">刷新待补拉状态</button>
+      </div>
+      <div class="settings-info-grid" style="margin-top:10px;">
+        <div class="settings-info-card"><span>pending / failed</span><b id="dirty-status-pending">待读取</b></div>
+        <div class="settings-info-card"><span>done / skipped</span><b id="dirty-status-done">待读取</b></div>
+        <div class="settings-info-card"><span>表状态</span><b id="dirty-status-table">待读取</b></div>
+      </div>
+      <div id="dirty-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取商品/供应商/库存待补拉状态</div>
+    </div>
+    <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
           <b>商品 / 供应商缓存状态</b>
           <div class="tip" style="margin-top:2px;">本页只读取本地缓存状态，不调用 JDY。</div>
         </div>
@@ -7743,6 +7760,118 @@ async function loadRealtimeHealthStatus() {
   }
 }
 
+function dirtyStatusLabel(status) {
+  return ({
+    pending: '待补拉',
+    processing: '处理中',
+    done: '已完成',
+    skipped: '已跳过',
+    failed: '失败',
+    ignored: '已忽略',
+  })[status] || status || '未知';
+}
+
+function dirtyStatusClass(status) {
+  return ({
+    pending: 'sync-coverage-manual',
+    processing: 'sync-coverage-partial',
+    done: 'sync-coverage-realtime',
+    skipped: 'sync-coverage-record',
+    failed: 'sync-coverage-none',
+    ignored: 'sync-coverage-local',
+  })[status] || 'sync-coverage-record';
+}
+
+function dirtyResourceLabel(resource) {
+  return ({
+    product: '商品',
+    supplier: '供应商',
+    inventory: '库存',
+  })[resource] || translateWebhookResource(resource || 'unknown');
+}
+
+function renderDirtyStatus(data = {}) {
+  const summary = data.summary || {};
+  const table = data.table || {};
+  const byResource = data.by_resource || [];
+  const recent = data.recent || [];
+  const setText = (id, text, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (color) el.style.color = color;
+  };
+  const pending = Number(summary.pending || 0);
+  const failed = Number(summary.failed || 0);
+  const done = Number(summary.done || 0);
+  const skipped = Number(summary.skipped || 0);
+  setText('dirty-status-pending', `${pending} / ${failed}`, pending || failed ? '#a16207' : '#137333');
+  setText('dirty-status-done', `${done} / ${skipped}`);
+  setText('dirty-status-table', table.exists ? `${Number(table.count || 0)} 条` : '尚未创建', table.exists ? '#137333' : '#64748b');
+
+  const box = document.getElementById('dirty-status-box');
+  if (!box) return;
+  const resourceRows = byResource.map(row => `<tr>
+    <td><b>${webhookHtml(dirtyResourceLabel(row.resource || ''))}</b><br><span class="tip">${webhookHtml(row.resource || '')}</span></td>
+    <td>${Number(row.pending || 0)}</td>
+    <td>${Number(row.done || 0)}</td>
+    <td>${Number(row.skipped || 0)}</td>
+    <td>${Number(row.failed || 0)}</td>
+    <td>${Number(row.total || 0)}</td>
+  </tr>`).join('');
+  const recentRows = recent.map(row => {
+    const status = row.status || '';
+    const pill = `<span class="sync-coverage-pill ${dirtyStatusClass(status)}">${webhookHtml(dirtyStatusLabel(status))}</span>`;
+    return `<tr>
+      <td>#${Number(row.id || 0)}<br><span class="tip">${webhookHtml(row.updated_at || row.created_at || '')}</span></td>
+      <td>${webhookHtml(row.account || '')}</td>
+      <td>${webhookHtml(dirtyResourceLabel(row.resource || ''))}<br><span class="tip">${webhookHtml(row.action || '')}</span></td>
+      <td><b>${webhookHtml(row.dirty_key || '')}</b><br><span class="tip">${webhookHtml(row.dirty_key_type || '')}</span></td>
+      <td>${pill}<br><span class="tip">attempt ${Number(row.attempt_count || 0)}</span></td>
+      <td>${webhookHtml(row.message || row.error || '')}</td>
+    </tr>`;
+  }).join('');
+  const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
+  box.innerHTML = `
+    <div class="tip" style="line-height:1.6;margin-bottom:8px;">
+      生成时间：${webhookHtml(data.generated_at || '')}；接口口径：local-only，called_jdy=false，would_call_jdy=false。<br>
+      ${webhookHtml(data.note || '本面板只显示待补拉 dirty 队列，不会处理队列。')}
+    </div>
+    ${table.exists ? '' : '<div class="tip" style="margin-bottom:8px;">dirty 队列表尚未创建；收到新的商品/供应商/库存 recorded-only webhook 后会自动建立并记录。</div>'}
+    <div class="settings-scroll-window" style="max-height:160px;">
+      <table class="sync-coverage-table">
+        <thead><tr><th>资源</th><th>pending</th><th>done</th><th>skipped</th><th>failed</th><th>total</th></tr></thead>
+        <tbody>${resourceRows || '<tr><td colspan="6" class="tip">暂无 dirty 分组数据</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;">
+      <b>最近待补拉记录</b>
+      <div class="settings-scroll-window" style="max-height:220px;margin-top:6px;">
+        <table class="sync-coverage-table">
+          <thead><tr><th>事件</th><th>账套</th><th>类型</th><th>key</th><th>状态</th><th>message</th></tr></thead>
+          <tbody>${recentRows || '<tr><td colspan="6" class="tip">暂无 dirty 记录</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
+  `;
+}
+
+async function loadDirtyStatus() {
+  const box = document.getElementById('dirty-status-box');
+  if (box) box.innerHTML = '正在读取商品/供应商/库存待补拉状态...';
+  try {
+    const res = await fetch(`${API}/sync/dirty-status`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    renderDirtyStatus(data);
+    appendSettingsLog('商品/供应商/库存待补拉状态已刷新');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>待补拉状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('待补拉状态读取失败：' + (e.message || String(e)), 'error');
+  }
+}
+
 function updateProductCacheAccountOptions(name1 = '饰品', name2 = '箱包') {
   const sel = document.getElementById('product-cache-account');
   if (!sel) return;
@@ -8163,6 +8292,7 @@ function showSettingsPane(name) {
   if (target === 'cache') {
     loadSyncCoverageStatus();
     loadRealtimeHealthStatus();
+    loadDirtyStatus();
     loadWebhookStatus();
     loadCatalogCacheStatus();
   } else if (target === 'suppliers') {
