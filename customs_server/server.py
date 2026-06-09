@@ -3955,6 +3955,7 @@ def _sales_order_list_projection(order):
         'totalQty': order.get('totalQty') or 0,
         'totalAmount': order.get('totalAmount') or 0,
         'checkStatusName': order.get('checkStatusName') or '',
+        'updatedAt': order.get('updatedAt') or order.get('updated_at') or '',
     }
 
 
@@ -3970,11 +3971,54 @@ def _read_cached_sales_orders(date_str, account='all', search=''):
             kw = f'%{search.lower()}%'
             params.extend([kw, kw, kw])
         rows = conn.execute(f'''
-            SELECT data_json FROM sales_orders
+            SELECT data_json, updated_at FROM sales_orders
             WHERE {' AND '.join(clauses)}
             ORDER BY number DESC
         ''', params).fetchall()
-    return [_sales_order_list_projection(json.loads(r['data_json'])) for r in rows]
+    items = []
+    for row in rows:
+        order = json.loads(row['data_json'])
+        order.setdefault('updatedAt', row['updated_at'] if 'updated_at' in row.keys() else '')
+        items.append(_sales_order_list_projection(order))
+    return items
+
+
+def _read_cached_sales_orders_by_updated(account='all', search='', updated_from='', updated_to='', limit=100):
+    limit = max(1, min(int(limit or 100), 500))
+    conn = _sales_readonly_conn()
+    if not conn:
+        return []
+    try:
+        clauses = ['1 = 1']
+        params = []
+        if account and account != 'all':
+            clauses.append('account = ?')
+            params.append(account)
+        if updated_from:
+            clauses.append('updated_at >= ?')
+            params.append(str(updated_from)[:19])
+        if updated_to:
+            clauses.append('updated_at <= ?')
+            params.append(str(updated_to)[:19])
+        if search:
+            clauses.append('(LOWER(number) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(data_json) LIKE ?)')
+            kw = f'%{search.lower()}%'
+            params.extend([kw, kw, kw])
+        rows = conn.execute(f'''
+            SELECT data_json, updated_at
+            FROM sales_orders
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, number DESC
+            LIMIT ?
+        ''', [*params, limit]).fetchall()
+    finally:
+        conn.close()
+    items = []
+    for row in rows:
+        order = json.loads(row['data_json'])
+        order['updatedAt'] = row['updated_at'] or ''
+        items.append(_sales_order_list_projection(order))
+    return items
 
 
 def _read_cached_sales_detail(order_no, account=''):
@@ -11189,9 +11233,29 @@ def sales_orders_list():
         account = request.args.get('account', 'all')
         search = request.args.get('search', '').strip().lower()
         source = request.args.get('source', 'cache')
+        date_mode = (request.args.get('date_mode') or 'bill_date').strip().lower()
+        if date_mode not in ('bill_date', 'updated'):
+            date_mode = 'bill_date'
+        if date_mode == 'updated':
+            source = 'cache'
         errors = []
         if source == 'cache':
-            items = _read_cached_sales_orders(date_str, account, search)
+            if date_mode == 'updated':
+                updated_from = (request.args.get('updated_from') or '').strip()
+                updated_to = (request.args.get('updated_to') or '').strip()
+                try:
+                    limit = int(request.args.get('limit') or request.args.get('page_size') or 100)
+                except Exception:
+                    limit = 100
+                items = _read_cached_sales_orders_by_updated(
+                    account=account,
+                    search=search,
+                    updated_from=updated_from,
+                    updated_to=updated_to,
+                    limit=limit,
+                )
+            else:
+                items = _read_cached_sales_orders(date_str, account, search)
         elif source == 'live':
             items, errors = _query_live_sales_orders(date_str, account, search)
             if not items and errors:
@@ -11215,6 +11279,10 @@ def sales_orders_list():
             },
             'mock': source == 'mock',
             'cache': source == 'cache',
+            'source': source,
+            'date_mode': date_mode,
+            'local_only': source == 'cache',
+            'called_jdy': source == 'live',
             'errors': errors,
             'cache_stats': _sales_cache_stats() if source == 'cache' else None,
         })

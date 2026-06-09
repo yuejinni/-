@@ -1400,6 +1400,11 @@ td.code { font-family: monospace; color: #1a2c5b; }
   max-width: 360px;
   word-break: break-all;
 }
+.webhook-recorded {
+  color: #777;
+  max-width: 360px;
+  word-break: break-all;
+}
 .webhook-ok {
   color: #18a058;
 }
@@ -2179,6 +2184,11 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <button type="button" class="sales-account-pill active" data-sales-account="all" onclick="setSalesAccount('all', this)">全部</button>
           <button type="button" class="sales-account-pill" data-sales-account="祺航箱包" onclick="setSalesAccount('祺航箱包', this)">祺航箱包</button>
           <button type="button" class="sales-account-pill" data-sales-account="祺航饰品" onclick="setSalesAccount('祺航饰品', this)">祺航饰品</button>
+        </div>
+        <div class="sales-filter-line">
+          <button type="button" class="sales-account-pill active" data-sales-date-mode="bill_date" onclick="setSalesDateMode('bill_date', this)">按单据日期</button>
+          <button type="button" class="sales-account-pill" data-sales-date-mode="updated" onclick="setSalesDateMode('updated', this)">最近同步</button>
+          <span class="tip" id="sales-date-mode-help">单据日期：按销售单日期筛选</span>
         </div>
       </div>
       <div class="sales-list" id="sales-list-wrap">
@@ -3291,6 +3301,7 @@ let genHistory      = {};      // 生成历史 {"账套::单号": {count, last_a
 let salesAccount    = 'all';
 let salesSource     = 'cache';
 let salesView       = 'mobile';
+let salesDateMode   = 'bill_date';
 let localProductAccount = 'all';
 let salesDetailHistoryPushed = false;
 let salesTouchStartX = 0;
@@ -4164,8 +4175,25 @@ function setSalesToday() {
 
 function setSalesAccount(account, btn) {
   salesAccount = account || 'all';
-  document.querySelectorAll('.sales-account-pill').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.sales-account-pill[data-sales-account]').forEach(p => p.classList.remove('active'));
   if (btn) btn.classList.add('active');
+  loadSalesOrders();
+}
+
+function setSalesDateMode(mode, btn) {
+  salesDateMode = mode === 'updated' ? 'updated' : 'bill_date';
+  document.querySelectorAll('.sales-account-pill[data-sales-date-mode]').forEach(p => {
+    p.classList.toggle('active', p.dataset.salesDateMode === salesDateMode);
+  });
+  if (btn) btn.classList.add('active');
+  const dateEl = document.getElementById('sales-date');
+  const helpEl = document.getElementById('sales-date-mode-help');
+  if (dateEl) dateEl.disabled = salesDateMode === 'updated';
+  if (helpEl) {
+    helpEl.textContent = salesDateMode === 'updated'
+      ? '最近同步：按进入本地缓存的时间排序，用于查看 Webhook 刚同步进来的单据'
+      : '单据日期：按销售单日期筛选';
+  }
   loadSalesOrders();
 }
 
@@ -4272,9 +4300,17 @@ function bindSalesProductImages() {
 function resetSalesFilters() {
   document.getElementById('sales-search').value = '';
   salesAccount = 'all';
-  document.querySelectorAll('.sales-account-pill').forEach(p => {
+  salesDateMode = 'bill_date';
+  document.querySelectorAll('.sales-account-pill[data-sales-account]').forEach(p => {
     p.classList.toggle('active', p.dataset.salesAccount === 'all');
   });
+  document.querySelectorAll('.sales-account-pill[data-sales-date-mode]').forEach(p => {
+    p.classList.toggle('active', p.dataset.salesDateMode === 'bill_date');
+  });
+  const dateEl = document.getElementById('sales-date');
+  if (dateEl) dateEl.disabled = false;
+  const helpEl = document.getElementById('sales-date-mode-help');
+  if (helpEl) helpEl.textContent = '单据日期：按销售单日期筛选';
   setSalesToday();
   loadSalesOrders();
 }
@@ -4289,7 +4325,18 @@ async function loadSalesOrders() {
   showSalesListLevel();
   try {
     salesSource = 'cache';
-    const url = `${API}/sales-orders?date=${encodeURIComponent(date)}&account=${encodeURIComponent(salesAccount)}&search=${encodeURIComponent(search)}&source=cache`;
+    const params = new URLSearchParams({
+      account: salesAccount,
+      search,
+      source: 'cache',
+      date_mode: salesDateMode,
+    });
+    if (salesDateMode === 'updated') {
+      params.set('limit', '100');
+    } else {
+      params.set('date', date);
+    }
+    const url = `${API}/sales-orders?${params.toString()}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
@@ -4343,7 +4390,7 @@ function renderSalesOrders(list, summary) {
     <div class="sales-order-row" onclick="openSalesOrder('${String(row.number).replace(/'/g, "\\'")}', '${String(row.account).replace(/'/g, "\\'")}')">
       <div>
         <h3>${row.customerName || '—'}</h3>
-        <p>${row.number || '—'}</p>
+        <p>${row.number || '—'}${salesDateMode === 'updated' && row.updatedAt ? ` · 同步 ${row.updatedAt}` : ''}</p>
       </div>
       <div class="sales-order-qty">数量:${row.totalQty || 0}</div>
       <div class="sales-order-money">
@@ -7672,7 +7719,7 @@ function translateWebhookError(error) {
   const raw = String(error || '').trim();
   const lower = raw.toLowerCase();
   if (!raw) return '';
-  if (lower.includes('recorded only')) return `仅记录，未处理（${raw}）`;
+  if (isWebhookRecordedOnly(raw)) return `已记录，无需处理：${webhookRecordedOnlyResource(raw)}`;
   if (lower.includes('covered by daily full compare')) return `已归档，由每日整体比对兜底（${raw}）`;
   if (lower.includes('historical account mapping failure')) return `历史账套识别失败（${raw}）`;
   if (lower.includes('account not configured')) return `账套未配置（${raw}）`;
@@ -7682,6 +7729,29 @@ function translateWebhookError(error) {
   if (lower.includes('missing resource')) return `缺少类型（${raw}）`;
   if (lower.includes('unsupported resource')) return `暂不支持的类型（${raw}）`;
   return raw;
+}
+
+function isWebhookRecordedOnly(error) {
+  const lower = String(error || '').toLowerCase();
+  return lower.includes('recorded only') || lower.includes('仅记录，未处理');
+}
+
+function webhookRecordedOnlyResource(error) {
+  const raw = String(error || '').trim();
+  const match = raw.match(/recorded only unsafe resource:\s*([A-Za-z0-9_/-]+)/i);
+  const resource = match ? match[1] : '';
+  if (!resource) return '无需自动处理的事件';
+  const label = translateWebhookResource(resource || 'unknown');
+  if (resource === 'inventory') return '库存事件';
+  if (resource === 'product') return '商品事件';
+  if (resource === 'supplier') return '供应商事件';
+  return label;
+}
+
+function webhookErrorClass(error, status) {
+  if (isWebhookRecordedOnly(error)) return 'webhook-recorded';
+  if (status === 'failed') return 'webhook-error';
+  return error ? 'webhook-warn' : '';
 }
 
 function webhookStatusClass(status) {
@@ -8231,13 +8301,14 @@ async function loadWebhookStatus() {
       if (recent.length) {
         bodyEl.innerHTML = recent.map(row => {
           const cls = webhookStatusClass(row.status || '');
+          const errCls = webhookErrorClass(row.error || '', row.status || '');
           return '<tr>' +
             '<td>' + Number(row.id || 0) + '</td>' +
             '<td>' + webhookHtml(translateWebhookResource(row.resource || 'unknown')) + '</td>' +
             '<td>' + webhookHtml(row.bill_no || '') + '</td>' +
             '<td class="' + cls + '">' + webhookHtml(translateWebhookStatus(row.status || '')) + '</td>' +
             '<td>' + Number(row.attempts || 0) + '</td>' +
-            '<td class="webhook-error">' + webhookHtml(translateWebhookError(row.error || '')) + '</td>' +
+            '<td class="' + errCls + '">' + webhookHtml(translateWebhookError(row.error || '')) + '</td>' +
             '<td>' + webhookHtml(row.created_at || '') + '</td>' +
             '<td>' + webhookHtml(row.processed_at || '') + '</td>' +
             '</tr>';
