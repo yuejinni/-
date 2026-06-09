@@ -3635,6 +3635,15 @@ def _sales_cache_conn():
         )
     ''')
     conn.execute('''
+        CREATE TABLE IF NOT EXISTS webhook_runtime_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            processing_mode TEXT NOT NULL DEFAULT 'manual',
+            auto_enabled INTEGER NOT NULL DEFAULT 0,
+            paused INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS reorder_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account TEXT,
@@ -3737,8 +3746,21 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_category ON jdy_products(account, category_name)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_updated ON jdy_products(account, updated_at)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_seen ON jdy_products(account, last_seen_at)')
+    webhook_cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(webhook_events)').fetchall()}
+    webhook_additions = [
+        ('event_id', 'TEXT'),
+        ('payload_hash', 'TEXT'),
+        ('updated_at', 'TEXT'),
+    ]
+    for name, ddl in webhook_additions:
+        key = name.lower()
+        if key not in webhook_cols:
+            conn.execute(f'ALTER TABLE webhook_events ADD COLUMN {name} {ddl}')
+            webhook_cols.add(key)
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_status ON webhook_events(status, id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_bill ON webhook_events(account, bill_no, resource)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_event_id ON webhook_events(event_id, account, resource, bill_no)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_webhook_events_payload_hash ON webhook_events(payload_hash)')
     _ensure_reorder_item_columns(conn)
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_supplier ON reorder_items(status, supplier_name, supplier_number)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reorder_items_code ON reorder_items(account, code, status)')
@@ -4310,6 +4332,7 @@ def _webhook_status_snapshot(limit=20):
     processing_mode = str(_webhook_state.get('processing_mode') or 'manual').strip().lower()
     estimate = _webhook_backlog_estimate(pending_total)
     retry_estimate = _webhook_backlog_estimate(retry_pending_total)
+    runtime_settings = _load_webhook_runtime_settings() or {}
     notes = [
         'inventory/product/supplier/purchase_inbound 当前只轻记录',
         '请在 JDY 后台确认消息订阅地址是否配置为 http://gongdashuai.top:5008/jdy-webhook',
@@ -4338,6 +4361,7 @@ def _webhook_status_snapshot(limit=20):
         'current_rate_limit': policy.get('current_rate_per_min') or 0,
         'estimated_minutes_300': estimate.get('eta_minutes_normal') or 0,
         'estimated_minutes_450': estimate.get('eta_minutes_boost') or 0,
+        'runtime_settings': runtime_settings,
         **_webhook_worker_status_fields(pending_total),
         'notes': notes,
     }
@@ -7286,22 +7310,27 @@ def _cache_upsert_transfer_order(conn, order):
 
 def _cache_one_sales_order_from_jdy(cli, account, number, include_quantities=True):
     if not cli or not number:
-        return False
+        return _webhook_process_result(
+            failed=True,
+            reason='missing_bill_no',
+            message='sales cache failed: missing JDY client or bill number',
+        )
     detail = cli.get_sales_order_detail(number)
-    order = _normalize_sales_order(detail, account)
-    if not (order.get('number') or order.get('entries')):
-        return False
-    orders = _enrich_sales_orders_batch(
-        cli, [order], include_quantities=include_quantities, account=account
+    result = _cache_sales_rows_from_jdy_rows(
+        cli, account, [detail], include_quantities=include_quantities, source='webhook_exact'
     )
-    order = orders[0] if orders else order
-    order['cacheHash'] = _sales_order_signature(order)
-    order['cacheHashVersion'] = _SALES_ORDER_HASH_VERSION
-    with _sales_cache_conn() as conn:
-        _cache_upsert_sales_order(conn, order)
-        _cache_upsert_sales_detail(conn, order)
-        conn.commit()
-    return True
+    if result.get('cached'):
+        return _webhook_process_result(
+            ok=True,
+            cached=True,
+            reason='cached_exact_sales_order',
+            message=f'cached exact sales order: {number}; orders={result.get("cached")}, quantities={result.get("quantity_codes")}',
+        )
+    return _webhook_process_result(
+        failed=True,
+        reason='sales_order_not_found',
+        message=f'sales order not found or empty: {number}',
+    )
 
 
 def _cache_one_transfer_order_from_jdy(cli, account, number):
@@ -7673,6 +7702,45 @@ def _jdy_resource_from_event(biz_type, payload):
     return str(payload.get('resource') or biz_type or 'unknown')
 
 
+def _webhook_event_id_from_payload(payload):
+    payload = payload or {}
+    for key in ('msgId', 'msg_id', 'eventId', 'event_id', 'id'):
+        val = payload.get(key)
+        if val not in (None, ''):
+            return str(val).strip()
+    return ''
+
+
+def _webhook_payload_hash(payload):
+    raw = json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+
+def _webhook_duplicate_exists(conn, event_id, payload_hash, account, resource, bill_no):
+    if event_id:
+        row = conn.execute('''
+            SELECT id FROM webhook_events
+            WHERE event_id = ?
+              AND COALESCE(account, '') = ?
+              AND COALESCE(resource, '') = ?
+              AND COALESCE(bill_no, '') = ?
+            LIMIT 1
+        ''', (event_id, account or '', resource or '', bill_no or '')).fetchone()
+        if row:
+            return True
+    if payload_hash:
+        row = conn.execute('''
+            SELECT id FROM webhook_events
+            WHERE payload_hash = ?
+              AND COALESCE(account, '') = ?
+              AND COALESCE(resource, '') = ?
+              AND COALESCE(bill_no, '') = ?
+            LIMIT 1
+        ''', (payload_hash, account or '', resource or '', bill_no or '')).fetchone()
+        return bool(row)
+    return False
+
+
 def _enqueue_jdy_webhook_events(biz_type, payload):
     payload = payload or {}
     account = _jdy_account_from_payload(payload)
@@ -7680,21 +7748,34 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
     action = str(payload.get('operation') or payload.get('action') or payload.get('event') or biz_type or '')
     numbers = _extract_webhook_bill_numbers(payload) or ['']
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    event_id = _webhook_event_id_from_payload(payload)
+    payload_hash = _webhook_payload_hash(payload)
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    safe_resource = _is_webhook_safe_auto_resource(resource)
+    initial_status = 'pending' if safe_resource else 'done'
+    initial_error = '' if safe_resource else f'recorded only unsafe resource: {resource or "unknown"}'
+    processed_at = '' if safe_resource else now
     inserted = 0
     with _sales_cache_conn() as conn:
         for number in numbers:
+            number = str(number or '').strip()
+            if _webhook_duplicate_exists(conn, event_id, payload_hash, account, resource, number):
+                continue
             conn.execute('''
                 INSERT INTO webhook_events
-                (account, biz_type, resource, bill_no, action, status, attempts, payload_json, error, created_at, processed_at)
-                VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, '', ?, '')
+                (account, biz_type, resource, bill_no, action, status, attempts,
+                 payload_json, error, created_at, processed_at, event_id, payload_hash, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 account, str(biz_type or ''), resource, number, action,
-                json.dumps(payload, ensure_ascii=False), now,
+                initial_status, payload_json, initial_error, now, processed_at, event_id, payload_hash, now,
             ))
             inserted += 1
         conn.commit()
-    _webhook_state.update({'last_event_at': now, 'pending': _webhook_pending_count(), 'message': f'queued {inserted} event(s)'})
-    _start_webhook_worker()
+    message = f'queued {inserted} event(s)' if safe_resource else f'recorded only {inserted} unsafe event(s)'
+    _webhook_state.update({'last_event_at': now, 'pending': _webhook_pending_count(), 'message': message})
+    if safe_resource:
+        _start_webhook_worker()
     return inserted
 
 
@@ -7705,6 +7786,18 @@ def _webhook_queue_name(queue='normal'):
 
 def _webhook_status_for_queue(queue='normal'):
     return 'retry_pending' if _webhook_queue_name(queue) == 'retry' else 'pending'
+
+
+def _is_webhook_safe_auto_resource(resource):
+    resource = str(resource or '').strip().lower()
+    return (
+        resource in WEBHOOK_SAFE_AUTO_RESOURCES
+        or 'sal_bill' in resource
+        or 'delivery' in resource
+        or 'transfer' in resource
+        or 'pur_bill_order' in resource
+        or 'purchaseorder' in resource
+    )
 
 
 def _webhook_pending_count(queue='normal'):
@@ -7723,6 +7816,8 @@ def _claim_webhook_event(queue='normal'):
             resource_filter = str(_webhook_state.get('resource_filter') or '').strip()
             queue_name = _webhook_queue_name(queue)
             status = _webhook_status_for_queue(queue_name)
+            processing_mode = _normalize_webhook_processing_mode(_webhook_state.get('processing_mode') or 'manual')
+            safe_auto_only = processing_mode == 'auto'
             if resource_filter:
                 row = conn.execute('''
                     SELECT * FROM webhook_events
@@ -7730,6 +7825,21 @@ def _claim_webhook_event(queue='normal'):
                     ORDER BY id ASC
                     LIMIT 1
                 ''', (status, resource_filter)).fetchone()
+            elif safe_auto_only:
+                row = conn.execute('''
+                    SELECT * FROM webhook_events
+                    WHERE status = ?
+                      AND (
+                        resource IN ('sales', 'sales_order', 'sal_bill', 'sal_bill_outbound', 'delivery', 'transfer', 'purchase_order', 'accessory_purchase')
+                        OR resource LIKE '%sal_bill%'
+                        OR resource LIKE '%delivery%'
+                        OR resource LIKE '%transfer%'
+                        OR resource LIKE '%pur_bill_order%'
+                        OR resource LIKE '%purchaseorder%'
+                      )
+                    ORDER BY id ASC
+                    LIMIT 1
+                ''', (status,)).fetchone()
             else:
                 row = conn.execute('''
                     SELECT * FROM webhook_events
@@ -7754,8 +7864,8 @@ def _finish_webhook_event(event_id, success=True, error=''):
     status = 'done' if success else 'failed'
     with _sales_cache_conn() as conn:
         conn.execute(
-            "UPDATE webhook_events SET status = ?, error = ?, processed_at = ? WHERE id = ?",
-            (status, str(error or '')[:500], now, event_id),
+            "UPDATE webhook_events SET status = ?, error = ?, processed_at = ?, updated_at = ? WHERE id = ?",
+            (status, str(error or '')[:500], now, now, event_id),
         )
         conn.commit()
     _webhook_state.update({
@@ -7809,20 +7919,24 @@ def _refresh_sales_for_webhook_window(cli, account_name, event):
                 event_dt = datetime.now()
         else:
             event_dt = datetime.now()
-        window_start = (event_dt - timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
-        window_end = (event_dt + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+        window_minutes = max(1, min(int(WEBHOOK_SALES_WINDOW_MINUTES), 30))
+        window_start = (event_dt - timedelta(minutes=window_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+        window_end = (event_dt + timedelta(minutes=window_minutes)).strftime('%Y-%m-%d %H:%M:%S')
 
         _log_event('JDY_WEBHOOK', f'sales window refresh: {account_name} updTime=[{window_start} ~ {window_end}] reason=internal_id_only bill_no={number}')
         orders = []
         page = 1
-        page_size = 100
-        while page <= 10:
+        page_size = max(1, min(int(WEBHOOK_SALES_WINDOW_PAGE_SIZE), 100))
+        max_pages = max(1, min(int(WEBHOOK_SALES_WINDOW_MAX_PAGES), 5))
+        max_rows = max(1, min(int(WEBHOOK_SALES_WINDOW_MAX_ROWS), 500))
+        while page <= max_pages and len(orders) < max_rows:
             result = cli.get_sales_orders(
                 page=page, page_size=page_size,
                 upd_time_begin=window_start, upd_time_end=window_end,
             )
             batch = result.get('list') or []
-            orders.extend(batch)
+            if batch:
+                orders.extend(batch[:max(0, max_rows - len(orders))])
             total = result.get('total') or 0
             if not batch or len(batch) < page_size or (total and len(orders) >= total):
                 break
@@ -7830,18 +7944,33 @@ def _refresh_sales_for_webhook_window(cli, account_name, event):
             time.sleep(0.5)
 
         if orders:
-            normalized = [_normalize_sales_order(row, account_name) for row in orders]
-            with _sales_cache_conn() as conn:
-                for order in normalized:
-                    order['cacheHash'] = _sales_order_signature(order)
-                    order['cacheHashVersion'] = _SALES_ORDER_HASH_VERSION
-                    _cache_upsert_sales_order(conn, order)
-                    _cache_upsert_sales_detail(conn, order)
-                conn.commit()
+            target_ids = _webhook_sales_internal_ids(payload, number)
+            matched = [row for row in orders if _sales_row_matches_internal_id(row, target_ids)]
+            if matched:
+                result = _cache_sales_rows_from_jdy_rows(
+                    cli, account_name, matched, include_quantities=True, source='webhook_window_exact'
+                )
+                return _webhook_process_result(
+                    ok=True,
+                    cached=bool(result.get('cached')),
+                    reason='sales_window_exact_match',
+                    message=(
+                        f'sales window refresh exact match: {result.get("cached")} order(s) cached; '
+                        f'quantities={result.get("quantity_codes")}; internal_id={number}'
+                    ),
+                )
+            cache_limit = max(1, min(int(WEBHOOK_SALES_WINDOW_MAX_CACHE), len(orders)))
+            result = _cache_sales_rows_from_jdy_rows(
+                cli, account_name, orders[:cache_limit], include_quantities=True, source='webhook_window_no_exact_match'
+            )
             return _webhook_process_result(
                 ok=True,
-                reason='sales_window_refresh',
-                message=f'sales window refresh: {len(orders)} order(s) cached via updTime window; webhook only provided internal id (bill_no={number})',
+                cached=bool(result.get('cached')),
+                reason='sales_window_no_exact_match',
+                message=(
+                    f'sales window refresh no exact match: cached {result.get("cached")} of {len(orders)} returned order(s); '
+                    f'quantities={result.get("quantity_codes")}; internal_id={number}; window_no_exact_match'
+                ),
             )
         else:
             return _webhook_process_result(
@@ -7865,6 +7994,21 @@ def _process_webhook_event(event):
     if not account:
         payload = json.loads(event.get('payload_json') or '{}')
         account = _jdy_account_from_payload(payload)
+    is_sales_resource = resource in ('sales', 'sales_order') or 'sal_bill' in resource or 'delivery' in resource
+    is_transfer_resource = resource == 'transfer' or 'transfer' in resource
+    is_purchase_resource = (
+        resource in ('accessory_purchase', 'purchase_order')
+        or 'pur_bill_order' in resource
+        or 'purchaseorder' in resource
+    )
+    is_safe_resource = is_sales_resource or is_transfer_resource or is_purchase_resource
+    if not is_safe_resource:
+        _log_event('JDY_WEBHOOK', f'recorded only unsafe resource: resource={resource or "unknown"} account={account or "-"} number={number}')
+        return _webhook_process_result(
+            ok=True,
+            reason='recorded_only_unsafe_resource',
+            message=f'recorded only unsafe resource: {resource or "unknown"}',
+        )
     cli, account_name = _sales_client_for_account(account)
     if not cli:
         raise RuntimeError(f'account not configured: {account or "-"}')
@@ -7875,7 +8019,7 @@ def _process_webhook_event(event):
             message=f'recorded only: missing bill_no, daily compare covers',
         )
 
-    if resource in ('sales', 'sales_order') or 'sal_bill' in resource or 'delivery' in resource:
+    if is_sales_resource:
         payload = json.loads(event.get('payload_json') or '{}')
         biz_type = str(event.get('biz_type') or '').lower()
         action = str(payload.get('operation') or payload.get('action') or event.get('action') or '').lower()
@@ -7899,22 +8043,14 @@ def _process_webhook_event(event):
             return _refresh_sales_for_webhook_window(cli, account_name, event)
 
         return _cache_one_sales_order_from_jdy(cli, account_name, visible_number)
-    if resource == 'transfer' or 'transfer' in resource:
+    if is_transfer_resource:
         return _cache_one_transfer_order_from_jdy(cli, account_name, number)
-    if resource in ('accessory_purchase', 'purchase_order') or 'pur_bill_order' in resource or 'purchaseorder' in resource:
+    if is_purchase_resource:
         return _cache_one_accessory_purchase_order_from_jdy(cli, account_name, number)
-    if resource in ('inventory', 'product', 'supplier', 'purchase_inbound'):
-        _log_event('JDY_WEBHOOK', f'light event recorded: resource={resource} account={account_name} number={number}')
-        return _webhook_process_result(
-            ok=True,
-            reason='recorded_only',
-            message='recorded only: light event recorded',
-        )
-    _log_event('JDY_WEBHOOK', f'unknown event recorded: resource={resource} account={account_name} number={number}')
     return _webhook_process_result(
         ok=True,
-        reason='unsupported_resource',
-        message=f'skipped: unsupported resource {resource or "unknown"}',
+        reason='recorded_only_unsafe_resource',
+        message=f'recorded only unsafe resource: {resource or "unknown"}',
     )
 
 
@@ -8228,6 +8364,29 @@ _webhook_queue_lock = threading.Lock()
 _webhook_worker_thread = None
 _webhook_worker_stop = threading.Event()
 _webhook_last_claim_at = 0.0
+WEBHOOK_SAFE_AUTO_RESOURCES = {
+    'sales',
+    'sales_order',
+    'sal_bill',
+    'sal_bill_outbound',
+    'delivery',
+    'transfer',
+    'purchase_order',
+    'accessory_purchase',
+}
+WEBHOOK_RECORDED_ONLY_RESOURCES = {
+    'product',
+    'supplier',
+    'inventory',
+    'purchase_inbound',
+    'ar_creditbill',
+    'unknown',
+}
+WEBHOOK_SALES_WINDOW_MINUTES = 10
+WEBHOOK_SALES_WINDOW_PAGE_SIZE = 100
+WEBHOOK_SALES_WINDOW_MAX_PAGES = 3
+WEBHOOK_SALES_WINDOW_MAX_ROWS = 200
+WEBHOOK_SALES_WINDOW_MAX_CACHE = 20
 _webhook_state = {
     'running': False,
     'paused': True,
@@ -8262,6 +8421,88 @@ _daily_compare_state = {
     'last_finished_at': '',
     'last_error': '',
 }
+
+
+def _normalize_webhook_processing_mode(mode):
+    mode = str(mode or 'manual').strip().lower()
+    return mode if mode in ('paused', 'manual', 'auto') else 'manual'
+
+
+def _webhook_runtime_settings_from_state():
+    mode = _normalize_webhook_processing_mode(_webhook_state.get('processing_mode') or 'manual')
+    paused = bool(_webhook_state.get('paused'))
+    return {
+        'processing_mode': mode,
+        'auto_enabled': bool(mode == 'auto' and not paused),
+        'paused': paused,
+    }
+
+
+def _save_webhook_runtime_settings():
+    settings = _webhook_runtime_settings_from_state()
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with _sales_cache_conn() as conn:
+        conn.execute('''
+            INSERT INTO webhook_runtime_settings
+            (id, processing_mode, auto_enabled, paused, updated_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                processing_mode = excluded.processing_mode,
+                auto_enabled = excluded.auto_enabled,
+                paused = excluded.paused,
+                updated_at = excluded.updated_at
+        ''', (
+            settings['processing_mode'],
+            1 if settings['auto_enabled'] else 0,
+            1 if settings['paused'] else 0,
+            now,
+        ))
+        conn.commit()
+    return settings
+
+
+def _load_webhook_runtime_settings():
+    conn = _sales_readonly_conn()
+    if conn is None:
+        return None
+    try:
+        try:
+            row = conn.execute('''
+                SELECT processing_mode, auto_enabled, paused, updated_at
+                FROM webhook_runtime_settings
+                WHERE id = 1
+            ''').fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return dict(row) if row else None
+    except Exception as e:
+        _log_event('JDY_WEBHOOK_SETTINGS_ERROR', f'load runtime settings failed: {_short_sync_error(e)}')
+        return None
+    finally:
+        conn.close()
+
+
+def _apply_webhook_runtime_settings(settings):
+    if not settings:
+        return False
+    mode = _normalize_webhook_processing_mode(settings.get('processing_mode') or 'manual')
+    paused = bool(int(settings.get('paused') or 0))
+    if mode == 'paused':
+        paused = True
+    if mode == 'manual':
+        paused = True
+    _webhook_state.update({
+        'processing_mode': mode,
+        'paused': paused,
+        'pause_reason': '' if mode == 'auto' and not paused else ('manual pause' if mode == 'paused' else 'manual processing required'),
+        'mode': 'auto' if mode == 'auto' and not paused else ('paused' if mode == 'paused' else 'manual'),
+        'message': f'webhook runtime mode restored: {mode}',
+    })
+    return True
+
+
+def _restore_webhook_runtime_settings():
+    return _apply_webhook_runtime_settings(_load_webhook_runtime_settings())
 
 
 def _sales_sync_config():
@@ -8770,6 +9011,7 @@ def _start_sales_sync_worker():
     global _sales_sync_thread
     if _sales_sync_thread and _sales_sync_thread.is_alive():
         return
+    _restore_webhook_runtime_settings()
     _sales_sync_thread = threading.Thread(target=_sales_sync_worker, daemon=True, name='sales-sync-worker')
     _sales_sync_thread.start()
 
@@ -10718,6 +10960,73 @@ def _enrich_sales_orders_batch(cli, orders, include_quantities=False, account=''
     return orders
 
 
+def _cache_sales_rows_from_jdy_rows(cli, account, rows, include_quantities=True, source='webhook'):
+    raw_rows = [row for row in (rows or []) if isinstance(row, dict)]
+    normalized = []
+    for row in raw_rows:
+        order = _normalize_sales_order(row, account)
+        if order.get('number') or order.get('entries'):
+            normalized.append(order)
+    if not normalized:
+        return {'seen': len(raw_rows), 'cached': 0, 'orders': [], 'quantity_codes': 0, 'source': source}
+    enriched = _enrich_sales_orders_batch(
+        cli, normalized, include_quantities=include_quantities, account=account
+    )
+    quantity_codes = set()
+    with _sales_cache_conn() as conn:
+        for order in enriched:
+            order['cacheHash'] = _sales_order_signature(order)
+            order['cacheHashVersion'] = _SALES_ORDER_HASH_VERSION
+            _cache_upsert_sales_order(conn, order)
+            _cache_upsert_sales_detail(conn, order)
+            if include_quantities:
+                for entry in (order.get('entries') or []):
+                    code = str(entry.get('code') or '').strip()
+                    if code:
+                        quantity_codes.add(code)
+        conn.commit()
+    return {
+        'seen': len(raw_rows),
+        'cached': len(enriched),
+        'orders': enriched,
+        'numbers': [order.get('number') or '' for order in enriched],
+        'quantity_codes': len(quantity_codes),
+        'source': source,
+    }
+
+
+def _webhook_sales_internal_ids(payload, event_number=''):
+    values = []
+    for item in _flatten_webhook_items(payload or {}):
+        for key in ('id', 'billId', 'billID', 'dataId', 'invoiceId'):
+            val = item.get(key)
+            if val not in (None, ''):
+                values.append(str(val).strip())
+    if event_number:
+        values.append(str(event_number).strip())
+    return [x for x in dict.fromkeys(values) if x]
+
+
+def _sales_row_internal_id_values(row):
+    values = []
+    if isinstance(row, dict):
+        for key in ('id', 'billId', 'billID', 'dataId', 'invoiceId'):
+            val = row.get(key)
+            if val not in (None, ''):
+                values.append(str(val).strip())
+        raw = row.get('_raw')
+        if isinstance(raw, dict):
+            values.extend(_sales_row_internal_id_values(raw))
+    return [x for x in dict.fromkeys(values) if x]
+
+
+def _sales_row_matches_internal_id(row, target_ids):
+    targets = {str(x).strip() for x in (target_ids or []) if str(x or '').strip()}
+    if not targets:
+        return False
+    return bool(targets.intersection(_sales_row_internal_id_values(row)))
+
+
 def _sales_client_for_account(account):
     cfg1 = _load_jdy_config();  name1 = cfg1.get('name', '饰品')
     cfg2 = _load_jdy_config2(); name2 = cfg2.get('name', '箱包')
@@ -12402,6 +12711,7 @@ def jdy_webhook_worker_control():
                     'queue': 'normal',
                     'message': 'webhook processing mode set to paused',
                 })
+                _save_webhook_runtime_settings()
             elif requested_mode == 'manual':
                 _webhook_state.update({
                     'paused': True,
@@ -12412,6 +12722,7 @@ def jdy_webhook_worker_control():
                     'queue': 'normal',
                     'message': 'webhook processing mode set to manual',
                 })
+                _save_webhook_runtime_settings()
             else:
                 _webhook_state.update({
                     'paused': False,
@@ -12423,6 +12734,7 @@ def jdy_webhook_worker_control():
                     'queue': 'normal',
                     'message': 'webhook processing mode set to auto',
                 })
+                _save_webhook_runtime_settings()
                 _start_webhook_worker()
 
         if action in ('start', 'resume'):
@@ -12440,6 +12752,7 @@ def jdy_webhook_worker_control():
                 'queue': requested_queue,
                 'message': f'manual webhook processing enabled ({requested_queue})',
             })
+            _save_webhook_runtime_settings()
             _start_webhook_worker()
         elif action == 'pause':
             _webhook_state.update({
@@ -12448,6 +12761,7 @@ def jdy_webhook_worker_control():
                 'pause_reason': 'manual pause',
                 'message': 'manual pause',
             })
+            _save_webhook_runtime_settings()
         elif action == 'stop_after_current':
             _webhook_state.update({
                 'stop_after_current': True,
