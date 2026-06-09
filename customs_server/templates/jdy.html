@@ -218,6 +218,35 @@ body {
   border-top: 1px solid #e8edf3;
   background: #fff;
 }
+.local-product-card {
+  grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
+}
+.local-products-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-top: 1px solid #e8edf3;
+  background: #fff;
+}
+.local-products-toolbar select,
+.local-products-toolbar input {
+  border: 1px solid #d9e1e8;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.local-products-toolbar input {
+  width: 190px;
+}
+.local-products-pager {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* ── 页面内容区 ───────────────────────────────────── */
 .page { display: none; flex: 1; overflow: auto; padding: 16px; }
@@ -1800,6 +1829,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <span class="secondary-label">销售</span>
   <button class="subtab-btn active" data-sub-page="sales-list" onclick="showPage('sales-list')">销售单</button>
   <button class="subtab-btn" data-sub-page="sales-summary" onclick="showPage('sales-summary')">销售汇总</button>
+  <button class="subtab-btn" data-sub-page="sales-products" onclick="showPage('sales-products')">商品</button>
   <button class="subtab-btn" data-sub-page="reorder-list" onclick="showPage('reorder-list')">返单</button>
 </div>
 <div class="secondary-nav" data-subnav="customs">
@@ -2214,6 +2244,58 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="empty">点击「查询」读取本地销售汇总</div>
       </div>
       <div class="sales-total-bar" id="sales-summary-total-bar">共 <b>0</b> 款，数量 <b>0</b>，金额 <b>0.00</b></div>
+    </div>
+  </div>
+</div>
+
+<div class="page" id="page-sales-products">
+  <div class="sales-shell table-mode" id="local-products-shell">
+    <div class="sales-phone" style="width:min(1080px,100%);height:calc(100vh - 92px);border-radius:8px;">
+      <div class="sales-phone-header">
+        <div class="sales-header-actions">
+          <button type="button" class="sales-icon-btn" onclick="showPage('sales-list')" title="返回销货单" aria-label="返回销货单">←</button>
+        </div>
+        <div class="sales-phone-title">本地商品</div>
+        <div class="sales-header-actions right">
+          <button type="button" class="sales-icon-btn" onclick="loadLocalProducts()" title="刷新本地商品" aria-label="刷新本地商品">↻</button>
+        </div>
+      </div>
+      <div class="sales-filter">
+        <input id="local-product-search" placeholder="搜索商品编号 / 名称 / 规格 / 条码 / 供应商" onkeydown="if(event.key==='Enter') loadLocalProducts(1)">
+        <div class="summary-filter-actions">
+          <button type="button" class="sales-account-pill active" data-local-product-account="all" onclick="setLocalProductAccount('all', this)">全部账套</button>
+          <button type="button" class="sales-account-pill" data-local-product-account="祺航饰品" onclick="setLocalProductAccount('祺航饰品', this)">祺航饰品</button>
+          <button type="button" class="sales-account-pill" data-local-product-account="祺航箱包" onclick="setLocalProductAccount('祺航箱包', this)">祺航箱包</button>
+        </div>
+      </div>
+      <div class="summary-import-bar">
+        <span class="tip">本页读取本地商品主档 jdy_products，不调用精斗云。可勾选商品加入返单池。</span>
+      </div>
+      <div class="local-products-toolbar">
+        <select id="local-product-page-size" onchange="loadLocalProducts(1)">
+          <option value="50">每页 50</option>
+          <option value="100">每页 100</option>
+          <option value="200">每页 200</option>
+        </select>
+        <select id="local-product-image-filter" onchange="loadLocalProducts(1)">
+          <option value="">全部图片状态</option>
+          <option value="1">只看有图片</option>
+          <option value="0">只看无图片</option>
+        </select>
+        <input id="local-product-supplier" placeholder="供应商筛选" onkeydown="if(event.key==='Enter') loadLocalProducts(1)">
+        <button type="button" class="btn btn-primary btn-sm" onclick="loadLocalProducts(1)">刷新</button>
+        <button type="button" class="btn btn-success btn-sm" onclick="importSelectedLocalProductsToReorder()">导入返单池</button>
+        <span class="tip" id="local-product-status">默认分页读取本地商品。</span>
+        <div class="local-products-pager">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="loadLocalProducts((window._localProductPage || 1) - 1)">上一页</button>
+          <span class="tip" id="local-product-page-info">第 1 页</span>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="loadLocalProducts((window._localProductPage || 1) + 1)">下一页</button>
+        </div>
+      </div>
+      <div class="sales-product-list" id="local-product-list-wrap">
+        <div class="empty">正在读取本地商品……</div>
+      </div>
+      <div class="sales-total-bar" id="local-product-total-bar">共 <b>0</b> 款</div>
     </div>
   </div>
 </div>
@@ -3209,6 +3291,7 @@ let genHistory      = {};      // 生成历史 {"账套::单号": {count, last_a
 let salesAccount    = 'all';
 let salesSource     = 'cache';
 let salesView       = 'mobile';
+let localProductAccount = 'all';
 let salesDetailHistoryPushed = false;
 let salesTouchStartX = 0;
 let salesTouchStartY = 0;
@@ -3333,6 +3416,7 @@ document.addEventListener('click', () => {
 const PAGE_MAIN_GROUP = {
   'sales-list': 'sales',
   'sales-summary': 'sales',
+  'sales-products': 'sales',
   'reorder-list': 'sales',
   'accessory-list': 'accessory',
   'accessory-product-search': 'accessory',
@@ -3397,6 +3481,9 @@ function showPage(name) {
   if (name === 'sales-summary' && !window._salesSummaryLoaded) {
     setSalesSummaryDefaultDates();
     loadSalesSummaryProducts();
+  }
+  if (name === 'sales-products' && !window._localProductsLoaded) {
+    loadLocalProducts(1);
   }
 }
 
@@ -3557,6 +3644,185 @@ async function importSelectedSalesSummaryToReorder() {
     document.querySelectorAll('.sales-summary-cb:checked').forEach(cb => { cb.checked = false; });
     window._reorderSuppliersLoaded = false;
     showPage('reorder-list');
+  } catch (e) {
+    alert('导入失败：' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 本地商品主档
+// ════════════════════════════════════════════════════════════════
+window._localProductRawList = [];
+window._localProductsLoaded = false;
+window._localProductPage = 1;
+window._localProductTotal = 0;
+
+function setLocalProductAccount(account, btn) {
+  localProductAccount = account || 'all';
+  document.querySelectorAll('[data-local-product-account]').forEach(p => {
+    p.classList.toggle('active', p === btn || p.dataset.localProductAccount === localProductAccount);
+  });
+  loadLocalProducts(1);
+}
+
+async function fetchLocalProductsJson(url) {
+  const res = await fetch(url);
+  const contentType = res.headers.get('content-type') || '';
+  const text = await res.text();
+  let data = null;
+  if (contentType.includes('application/json')) {
+    try { data = JSON.parse(text); } catch (_) {}
+  }
+  if (!res.ok || !data || data.success === false) {
+    const preview = text.slice(0, 200) || data?.error || data?.message || '接口错误';
+    throw new Error(`HTTP ${res.status} ${contentType || '无 Content-Type'}：${preview}`);
+  }
+  return data;
+}
+
+async function loadLocalProducts(page) {
+  const wrap = document.getElementById('local-product-list-wrap');
+  const status = document.getElementById('local-product-status');
+  const pageSize = Number(document.getElementById('local-product-page-size')?.value || 50);
+  const q = document.getElementById('local-product-search')?.value.trim() || '';
+  const hasImage = document.getElementById('local-product-image-filter')?.value || '';
+  const supplier = document.getElementById('local-product-supplier')?.value.trim() || '';
+  const maxPage = Math.max(1, Math.ceil((window._localProductTotal || 0) / pageSize));
+  const nextPage = Math.max(1, Number(page || window._localProductPage || 1));
+  if (page && window._localProductTotal && nextPage > maxPage) return;
+  window._localProductPage = nextPage;
+  if (wrap) wrap.innerHTML = '<div class="empty">正在读取本地商品……</div>';
+  if (status) status.textContent = '仅读取本地商品主档，不调用精斗云。';
+  try {
+    const params = new URLSearchParams({
+      account: localProductAccount || 'all',
+      q,
+      page: String(window._localProductPage),
+      page_size: String(pageSize),
+      has_image: hasImage,
+      supplier,
+    });
+    const data = await fetchLocalProductsJson(`${API}/local-products?${params.toString()}`);
+    window._localProductRawList = data.items || [];
+    window._localProductsLoaded = true;
+    window._localProductPage = Number(data.page || window._localProductPage || 1);
+    window._localProductTotal = Number(data.total || 0);
+    renderLocalProducts(window._localProductRawList, data);
+    if (status) {
+      status.textContent = `本地商品 ${data.total || 0} 款，当前第 ${data.page || 1} 页，每页 ${data.page_size || pageSize}`;
+    }
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<div class="empty log-err">读取失败：${salesAttr(e.message)}</div>`;
+    document.getElementById('local-product-total-bar').innerHTML = '共 <b>0</b> 款';
+    document.getElementById('local-product-page-info').textContent = '读取失败';
+    if (status) status.textContent = '读取失败：' + e.message;
+  }
+}
+
+function renderLocalProducts(list, data) {
+  const wrap = document.getElementById('local-product-list-wrap');
+  const totalBar = document.getElementById('local-product-total-bar');
+  const pageInfo = document.getElementById('local-product-page-info');
+  if (!wrap) return;
+  const total = Number(data?.total || 0);
+  const page = Number(data?.page || 1);
+  const pageSize = Number(data?.page_size || 50);
+  const maxPage = Math.max(1, Math.ceil(total / pageSize));
+  if (pageInfo) pageInfo.textContent = `第 ${page} / ${maxPage} 页`;
+  if (!list || !list.length) {
+    wrap.innerHTML = `<div class="empty">${total ? '当前页暂无商品' : '本地商品主档为空，请先在设置页补齐商品缓存。'}</div>`;
+    if (totalBar) totalBar.innerHTML = '共 <b>0</b> 款';
+    return;
+  }
+  wrap.innerHTML = list.map(item => {
+    const key = `${item.account || ''}|${item.product_number || ''}`;
+    const supplier = item.default_supplier_name || item.default_supplier_number || '未缓存';
+    return `
+      <div class="sales-product-card local-product-card">
+        <div class="sales-product-image-cell">
+          ${item.image_url
+            ? `<img class="sales-product-img" src="${salesAttr(item.image_url)}" data-full-img="${salesAttr(item.image_url)}" alt="${salesAttr(item.product_name || item.product_number || '商品图片')}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'sales-product-img sales-product-img-empty', textContent:'无图'}))">`
+            : '<div class="sales-product-img sales-product-img-empty">无图</div>'}
+          <label class="sales-reorder-check" title="加入返单池">
+            <input type="checkbox" class="local-product-cb" value="${salesAttr(key)}" onclick="event.stopPropagation()">
+          </label>
+        </div>
+        <div>
+          <h4>${salesAttr(item.product_name || '—')}</h4>
+          <p>商品编号：${salesAttr(item.product_number || '—')}</p>
+          <p>规格：${salesAttr(item.spec || '—')}</p>
+          <p>条码：${salesAttr(item.barcode || '—')}</p>
+          <p>默认供应商：${salesAttr(supplier)}</p>
+          <p>单位：${salesAttr(item.unit_name || '—')}</p>
+          <p>分类：${salesAttr(item.category_name || '—')}</p>
+        </div>
+        <div class="sales-side-mini">
+          <div class="sales-stock-mini">
+            <span>新大仓库<b>${salesAttr(item.stock_new || 0)}</b></span>
+            <span>在途<b>${salesAttr(item.stock_transit || 0)}</b></span>
+            <span>金华/本地<b>${salesAttr(item.stock_local || 0)}</b></span>
+            <span>工厂<b>${salesAttr(item.factory_qty || item.stock_factory || 0)}</b></span>
+          </div>
+          <div class="sales-price-mini">
+            <span>账套<b>${salesAttr(item.account || '—')}</b></span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  if (totalBar) totalBar.innerHTML =
+    `共 <b>${salesAttr(total)}</b> 款，当前页 <b>${salesAttr(list.length)}</b> 款`;
+  bindSalesProductImages();
+}
+
+async function importSelectedLocalProductsToReorder() {
+  const checked = Array.from(document.querySelectorAll('.local-product-cb:checked')).map(cb => cb.value);
+  if (!checked.length) {
+    alert('请先勾选需要加入返单池的商品');
+    return;
+  }
+  const selected = (window._localProductRawList || []).filter(item =>
+    checked.includes(`${item.account || ''}|${item.product_number || ''}`)
+  );
+  if (!selected.length) {
+    alert('没有找到勾选的商品');
+    return;
+  }
+  const today = _fmtDate(new Date());
+  const payloadItems = selected.map(item => ({
+    account: item.account || '',
+    code: item.product_number || '',
+    name: item.product_name || '',
+    spec: item.spec || '',
+    barcode: item.barcode || '',
+    unit: item.unit_name || '',
+    image_url: item.image_url || '',
+    supplier_number: item.default_supplier_number || '',
+    supplier_name: item.default_supplier_name || '',
+    stock_new: item.stock_new || 0,
+    stock_transit: item.stock_transit || 0,
+    stock_local: item.stock_local || 0,
+    stock_factory: item.stock_factory || 0,
+    factory_qty: item.factory_qty || item.stock_factory || 0
+  }));
+  try {
+    const res = await fetch(`${API}/reorder-items/import`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        source: {
+          type: 'product_catalog',
+          number: 'product_catalog',
+          date: today,
+          customer: '本地商品'
+        },
+        items: payloadItems
+      })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '导入失败');
+    alert(`已加入返单池：新增 ${data.inserted || 0} 款，更新 ${data.updated || 0} 款`);
+    document.querySelectorAll('.local-product-cb:checked').forEach(cb => { cb.checked = false; });
+    window._reorderSuppliersLoaded = false;
   } catch (e) {
     alert('导入失败：' + e.message);
   }
@@ -4195,7 +4461,7 @@ function reorderStatusLabel(status) {
 }
 
 function reorderSourceLabel(type) {
-  return ({sales:'销售单', sales_summary:'销售汇总', supplier_recent:'近期款式'})[type] || type || '其他';
+  return ({sales:'销售单', sales_summary:'销售汇总', product_catalog:'商品', supplier_recent:'近期款式'})[type] || type || '其他';
 }
 
 function reorderSyncStatusLabel(status) {
