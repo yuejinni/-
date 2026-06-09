@@ -2613,6 +2613,23 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <div>
+          <b>实时同步健康</b>
+          <div class="tip" style="margin-top:2px;line-height:1.6;">
+            本面板只读取本地 webhook_events 与缓存表，用于判断实时同步是否健康；不会调用 JDY，也不会触发同步。
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="loadRealtimeHealthStatus()">刷新实时同步健康</button>
+      </div>
+      <div class="settings-info-grid" style="margin-top:10px;">
+        <div class="settings-info-card"><span>Webhook 模式</span><b id="realtime-health-webhook-mode">待读取</b></div>
+        <div class="settings-info-card"><span>pending / processing</span><b id="realtime-health-queue">待读取</b></div>
+        <div class="settings-info-card"><span>failed / 可疑</span><b id="realtime-health-warnings">待读取</b></div>
+      </div>
+      <div id="realtime-health-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取实时同步健康</div>
+    </div>
+    <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
           <b>商品 / 供应商缓存状态</b>
           <div class="tip" style="margin-top:2px;">本页只读取本地缓存状态，不调用 JDY。</div>
         </div>
@@ -7566,6 +7583,166 @@ async function loadSyncCoverageStatus() {
   }
 }
 
+function realtimeHealthStatusLabel(status) {
+  return ({
+    ok: '正常',
+    warning: '注意',
+    needs_attention: '需处理',
+    unknown: '未知',
+  })[status] || status || '未知';
+}
+
+function realtimeHealthStatusClass(status) {
+  return ({
+    ok: 'sync-coverage-realtime',
+    warning: 'sync-coverage-manual',
+    needs_attention: 'sync-coverage-none',
+    unknown: 'sync-coverage-record',
+  })[status] || 'sync-coverage-record';
+}
+
+function realtimeHealthModeText(mode = {}) {
+  const raw = mode.processing_mode || 'manual';
+  if (mode.paused || raw === 'paused') return '暂停';
+  if (mode.auto_enabled || raw === 'auto') return '自动';
+  return '手动';
+}
+
+function realtimeHealthCountText(counts = {}, keys = []) {
+  return keys.map(k => Number(counts[k] || 0)).join(' / ');
+}
+
+function realtimeHealthTableSummary(stats = {}, names = []) {
+  if (!names || !names.length) return '无本地表';
+  return names.map(name => {
+    const row = stats[name] || {};
+    if (!row.exists) return `${name}: 缺失`;
+    const updated = row.last_updated_at ? `，最近 ${row.last_updated_at}` : '';
+    return `${name}: ${Number(row.count || 0)} 条${updated}`;
+  }).join('；');
+}
+
+function renderRealtimeHealthStatus(data = {}) {
+  const mode = data.webhook_mode || {};
+  const summary = data.summary || {};
+  const cards = data.safe_resources || [];
+  const warnings = data.warnings || [];
+  const setText = (id, text, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (color) el.style.color = color;
+  };
+  const modeText = realtimeHealthModeText(mode);
+  setText('realtime-health-webhook-mode', modeText, modeText === '自动' ? '#137333' : '#a16207');
+  setText('realtime-health-queue', realtimeHealthCountText(summary, ['pending', 'processing']));
+  const suspiciousTotal = cards.reduce((sum, card) => sum + Number(card.possible_done_without_landing_count || 0), 0);
+  const failedTotal = Number(summary.failed || 0);
+  setText(
+    'realtime-health-warnings',
+    `${failedTotal} / ${suspiciousTotal}`,
+    failedTotal || suspiciousTotal ? '#b42318' : '#137333'
+  );
+
+  const box = document.getElementById('realtime-health-status-box');
+  if (!box) return;
+  const cardRows = cards.map(card => {
+    const status = card.health_status || 'unknown';
+    const pill = `<span class="sync-coverage-pill ${realtimeHealthStatusClass(status)}">${webhookHtml(realtimeHealthStatusLabel(status))}</span>`;
+    const counts = card.recent_status_counts || {};
+    const messages = (card.done_message_samples || []).slice(0, 3).map(x => `<div>${webhookHtml(x)}</div>`).join('');
+    return `<tr>
+      <td><b>${webhookHtml(card.name || '')}</b><br><span class="tip">${webhookHtml((card.resource_keys || []).join(' / '))}</span></td>
+      <td>${pill}<br><span class="tip">${webhookHtml(card.note || '')}</span></td>
+      <td>${webhookHtml(card.last_webhook_at || '暂无')}</td>
+      <td>${webhookHtml(card.last_cache_updated_at || '暂无')}</td>
+      <td>${webhookHtml(realtimeHealthCountText(counts, ['done', 'pending', 'processing', 'failed']))}</td>
+      <td>${webhookHtml(String(card.possible_done_without_landing_count || 0))}</td>
+      <td>${webhookHtml(realtimeHealthTableSummary(card.cache_table_stats || {}, card.cache_tables || []))}</td>
+      <td>${messages || '<span class="tip">暂无 done message</span>'}</td>
+    </tr>`;
+  }).join('');
+  const suspiciousRows = cards.flatMap(card => (
+    (card.suspicious_events || []).map(event => ({...event, group_name: card.name || card.key || ''}))
+  )).slice(0, 12).map(event => `<tr>
+    <td>${webhookHtml(event.group_name || '')}</td>
+    <td>#${webhookHtml(event.id || '')}<br><span class="tip">${webhookHtml(event.event_time || '')}</span></td>
+    <td>${webhookHtml(event.resource || '')}<br><span class="tip">${webhookHtml(event.bill_no || '')}</span></td>
+    <td>${webhookHtml(event.reason || '')}</td>
+    <td>${webhookHtml(event.message || '')}</td>
+  </tr>`).join('');
+  const recentRows = (data.recent_events || []).slice(0, 12).map(event => `<tr>
+    <td>${webhookHtml(event.group || '')}</td>
+    <td>#${webhookHtml(event.id || '')}<br><span class="tip">${webhookHtml(event.event_time || '')}</span></td>
+    <td>${webhookHtml(event.resource || '')}<br><span class="tip">${webhookHtml(event.bill_no || '')}</span></td>
+    <td>${webhookHtml(event.status || '')}</td>
+    <td>${webhookHtml(event.landing_status || '')}</td>
+    <td>${webhookHtml(event.message || '')}</td>
+  </tr>`).join('');
+  const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
+  const warningList = warnings.map(item => (
+    `<li><b>${webhookHtml(item.name || item.resource || '')}</b>：${webhookHtml(item.note || '')}</li>`
+  )).join('');
+  box.innerHTML = `
+    <div class="tip" style="line-height:1.6;margin-bottom:8px;">
+      生成时间：${webhookHtml(data.generated_at || '')}；接口口径：local-only，called_jdy=false，would_call_jdy=false。<br>
+      Webhook 收到消息不等于一定自动拉取；商品、供应商、库存事件当前仅记录，不作为失败。
+    </div>
+    ${warningList ? `<div style="margin-bottom:8px;"><b>需要关注</b><ul class="sync-coverage-risk-list">${warningList}</ul></div>` : ''}
+    <div class="settings-scroll-window" style="max-height:260px;">
+      <table class="sync-coverage-table">
+        <thead>
+          <tr>
+            <th>安全资源</th>
+            <th>状态</th>
+            <th>最近收到</th>
+            <th>最近落库</th>
+            <th>done / pending / processing / failed</th>
+            <th>done 但未确认落库</th>
+            <th>缓存表</th>
+            <th>最近 done message</th>
+          </tr>
+        </thead>
+        <tbody>${cardRows || '<tr><td colspan="8" class="tip">暂无实时同步健康数据</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;">
+      <b>done 但未确认落库样本</b>
+      <div class="settings-scroll-window" style="max-height:180px;margin-top:6px;">
+        <table class="sync-coverage-table">
+          <thead><tr><th>资源</th><th>事件</th><th>resource / 单号</th><th>原因</th><th>message</th></tr></thead>
+          <tbody>${suspiciousRows || '<tr><td colspan="5" class="tip">暂无可疑样本</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <b>最近安全资源事件</b>
+      <div class="settings-scroll-window" style="max-height:180px;margin-top:6px;">
+        <table class="sync-coverage-table">
+          <thead><tr><th>分组</th><th>事件</th><th>resource / 单号</th><th>状态</th><th>落库判断</th><th>message</th></tr></thead>
+          <tbody>${recentRows || '<tr><td colspan="6" class="tip">暂无最近事件</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
+  `;
+}
+
+async function loadRealtimeHealthStatus() {
+  const box = document.getElementById('realtime-health-status-box');
+  if (box) box.innerHTML = '正在读取实时同步健康...';
+  try {
+    const res = await fetch(`${API}/sync/realtime-health`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    renderRealtimeHealthStatus(data);
+    appendSettingsLog('实时同步健康已刷新');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>实时同步健康读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('实时同步健康读取失败：' + (e.message || String(e)), 'error');
+  }
+}
+
 function updateProductCacheAccountOptions(name1 = '饰品', name2 = '箱包') {
   const sel = document.getElementById('product-cache-account');
   if (!sel) return;
@@ -7985,6 +8162,7 @@ function showSettingsPane(name) {
   appendSettingsLog(`切换设置分区：${target}`);
   if (target === 'cache') {
     loadSyncCoverageStatus();
+    loadRealtimeHealthStatus();
     loadWebhookStatus();
     loadCatalogCacheStatus();
   } else if (target === 'suppliers') {

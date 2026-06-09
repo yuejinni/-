@@ -190,7 +190,7 @@ def _admin_path_required():
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/cache/catalog-status', '/cache/product-refresh-dry-run', '/cache/product-refresh',
         '/cache/product-refresh/status', '/cache/product-refresh/cancel',
-        '/sync/coverage-status',
+        '/sync/coverage-status', '/sync/realtime-health',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
@@ -5326,6 +5326,398 @@ def _sync_coverage_risk_endpoints():
     ]
 
 
+REALTIME_HEALTH_SAFE_GROUPS = [
+    {
+        'key': 'sales',
+        'name': '销售单',
+        'resource_keys': ['sales', 'sales_order', 'sal_bill', 'sal_bill_outbound', 'delivery'],
+        'cache_tables': ['sales_orders', 'sales_details', 'sales_product_quantities'],
+        'landing_table': 'sales_orders',
+        'note_ok': 'Webhook done 后销售缓存已有本地更新时间。',
+    },
+    {
+        'key': 'transfer',
+        'name': '调拨单',
+        'resource_keys': ['transfer'],
+        'cache_tables': ['transfer_orders', 'transfer_details'],
+        'landing_table': 'transfer_orders',
+        'note_ok': 'Webhook done 后调拨缓存已有本地更新时间。',
+    },
+    {
+        'key': 'accessory_purchase',
+        'name': '辅料采购订单',
+        'resource_keys': ['purchase_order', 'accessory_purchase', 'pur_bill_order'],
+        'cache_tables': ['accessory_purchase_orders'],
+        'landing_table': 'accessory_purchase_orders',
+        'note_ok': '命中辅料条件的采购订单会落到辅料采购订单缓存。',
+    },
+]
+
+REALTIME_HEALTH_SUSPICIOUS_TERMS = [
+    '未落库',
+    '未写入',
+    '没有落库',
+    'recorded only',
+    '仅记录',
+    'no match',
+    'no exact match',
+    'window_no_exact_match',
+    'not found',
+    'skipped',
+    'unsupported',
+]
+
+
+def _realtime_health_table_exists(conn, table):
+    if conn is None:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def _realtime_health_table_columns(conn, table):
+    if conn is None:
+        return []
+    try:
+        if not _realtime_health_table_exists(conn, table):
+            return []
+        return [str(row['name']) for row in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+    except Exception:
+        return []
+
+
+def _realtime_health_parse_ts(value):
+    text = str(value or '').strip()
+    if not text:
+        return None
+    text = text.replace('T', ' ').replace('Z', '').strip()
+    if '.' in text:
+        text = text.split('.', 1)[0]
+    try:
+        return datetime.fromisoformat(text)
+    except Exception:
+        pass
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(text[:len(fmt)], fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _realtime_health_event_time(row):
+    for key in ('updated_at', 'processed_at', 'created_at'):
+        value = str(row.get(key) or '').strip()
+        if value:
+            return value
+    return ''
+
+
+def _realtime_health_message(row):
+    return str(row.get('message') or row.get('error') or '').strip()
+
+
+def _realtime_health_suspicious_message(message):
+    lower = str(message or '').lower()
+    return any(term.lower() in lower for term in REALTIME_HEALTH_SUSPICIOUS_TERMS)
+
+
+def _realtime_health_webhook_summary(conn):
+    counts = {'pending': 0, 'retry_pending': 0, 'processing': 0, 'done': 0, 'failed': 0, 'ignored': 0}
+    if conn is None or not _realtime_health_table_exists(conn, 'webhook_events'):
+        return counts
+    try:
+        for row in conn.execute('SELECT status, COUNT(*) AS c FROM webhook_events GROUP BY status'):
+            status = str(row['status'] or '')
+            counts[status] = int(row['c'] or 0)
+    except Exception as e:
+        counts['error'] = str(e)
+    return counts
+
+
+def _realtime_health_recent_events(conn, resource_keys, limit=50):
+    resource_keys = [str(x or '').strip().lower() for x in (resource_keys or []) if str(x or '').strip()]
+    if conn is None or not resource_keys or not _realtime_health_table_exists(conn, 'webhook_events'):
+        return []
+    cols = _realtime_health_table_columns(conn, 'webhook_events')
+    wanted = [
+        'id', 'event_id', 'account', 'biz_type', 'resource', 'bill_no', 'number',
+        'action', 'status', 'attempts', 'error', 'message',
+        'created_at', 'processed_at', 'updated_at',
+    ]
+    select_cols = [col for col in wanted if col in cols]
+    if 'id' not in select_cols:
+        return []
+    marks = ','.join('?' for _ in resource_keys)
+    try:
+        rows = conn.execute(f'''
+            SELECT {', '.join(select_cols)}
+            FROM webhook_events
+            WHERE LOWER(COALESCE(resource, '')) IN ({marks})
+            ORDER BY id DESC
+            LIMIT ?
+        ''', [*resource_keys, max(1, min(int(limit or 50), 200))]).fetchall()
+    except Exception:
+        return []
+    events = []
+    for row in rows:
+        item = {col: row[col] for col in select_cols}
+        item['resource'] = str(item.get('resource') or '')
+        item['status'] = str(item.get('status') or '')
+        item['bill_no'] = str(item.get('bill_no') or item.get('number') or '')
+        item['message'] = _realtime_health_message(item)
+        item['event_time'] = _realtime_health_event_time(item)
+        events.append(item)
+    return events
+
+
+def _realtime_health_status_counts(events):
+    counts = {'pending': 0, 'retry_pending': 0, 'processing': 0, 'done': 0, 'failed': 0, 'ignored': 0}
+    for event in events or []:
+        status = str(event.get('status') or '')
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _realtime_health_table_max_updated(conn, table):
+    info = {
+        'exists': False,
+        'count': 0,
+        'last_updated_at': '',
+        'columns': [],
+    }
+    if conn is None:
+        return info
+    try:
+        if not _realtime_health_table_exists(conn, table):
+            return info
+        cols = _realtime_health_table_columns(conn, table)
+        info['exists'] = True
+        info['columns'] = cols
+        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {table}').fetchone()
+        info['count'] = int(count_row['c'] or 0) if count_row else 0
+        for col in ('updated_at', 'last_seen_at', 'processed_at', 'created_at', 'synced_at'):
+            if col not in cols:
+                continue
+            row = conn.execute(f'SELECT MAX({col}) AS v FROM {table}').fetchone()
+            value = str(row['v'] or '') if row else ''
+            if value:
+                info.setdefault('max_fields', {})[col] = value
+                if not info['last_updated_at'] or value > info['last_updated_at']:
+                    info['last_updated_at'] = value
+        return info
+    except Exception as e:
+        info['error'] = str(e)
+        return info
+
+
+def _realtime_health_cache_snapshot(conn, table_names):
+    return {name: _realtime_health_table_max_updated(conn, name) for name in (table_names or [])}
+
+
+def _realtime_health_latest_cache_time(cache_tables):
+    values = [
+        str(row.get('last_updated_at') or '')
+        for row in (cache_tables or {}).values()
+        if str(row.get('last_updated_at') or '')
+    ]
+    return max(values) if values else ''
+
+
+def _realtime_health_landing_exists(conn, table, account, bill_no):
+    if conn is None or not table or not _realtime_health_table_exists(conn, table):
+        return None
+    bill_no = str(bill_no or '').strip()
+    if not bill_no or _webhook_bill_no_kind(bill_no) != 'visible_number':
+        return None
+    cols = _realtime_health_table_columns(conn, table)
+    if 'number' not in cols:
+        return None
+    account = str(account or '').strip()
+    try:
+        if account and 'account' in cols:
+            row = conn.execute(
+                f'SELECT 1 FROM {table} WHERE account = ? AND number = ? LIMIT 1',
+                (account, bill_no),
+            ).fetchone()
+            if row:
+                return True
+        row = conn.execute(f'SELECT 1 FROM {table} WHERE number = ? LIMIT 1', (bill_no,)).fetchone()
+        return bool(row)
+    except Exception:
+        return None
+
+
+def _realtime_health_event_public(event):
+    return {
+        'id': event.get('id'),
+        'event_id': event.get('event_id') or '',
+        'account': event.get('account') or '',
+        'resource': event.get('resource') or '',
+        'bill_no': event.get('bill_no') or '',
+        'action': event.get('action') or '',
+        'status': event.get('status') or '',
+        'event_time': event.get('event_time') or '',
+        'message': event.get('message') or '',
+        'landing_status': event.get('landing_status') or '',
+    }
+
+
+def _realtime_health_resource_card(conn, group):
+    events = _realtime_health_recent_events(conn, group.get('resource_keys') or [], 50)
+    status_counts = _realtime_health_status_counts(events)
+    cache_tables = _realtime_health_cache_snapshot(conn, group.get('cache_tables') or [])
+    last_cache_updated_at = _realtime_health_latest_cache_time(cache_tables)
+    last_webhook_at = ''
+    for event in events:
+        ts = str(event.get('event_time') or '')
+        if ts and ts > last_webhook_at:
+            last_webhook_at = ts
+
+    done_messages = []
+    suspicious = []
+    possible_done_without_landing = 0
+    for event in events:
+        if event.get('status') != 'done':
+            continue
+        message = str(event.get('message') or '')
+        if message and message not in done_messages:
+            done_messages.append(message)
+        event_suspicious = False
+        landed = _realtime_health_landing_exists(
+            conn,
+            group.get('landing_table') or '',
+            event.get('account') or '',
+            event.get('bill_no') or '',
+        )
+        if landed is True:
+            event['landing_status'] = 'landed'
+        elif landed is False:
+            event['landing_status'] = 'visible_bill_not_found'
+            event_suspicious = True
+            suspicious.append({
+                **_realtime_health_event_public(event),
+                'reason': 'done 但本地主表未找到该单号',
+            })
+        else:
+            event['landing_status'] = 'not_verifiable'
+        if _realtime_health_suspicious_message(message):
+            event_suspicious = True
+            suspicious.append({
+                **_realtime_health_event_public(event),
+                'reason': 'done message 含未确认落库语义',
+            })
+        if event_suspicious:
+            possible_done_without_landing += 1
+
+    warning_reasons = []
+    if status_counts.get('pending') or status_counts.get('processing') or status_counts.get('retry_pending'):
+        warning_reasons.append('存在待处理或处理中事件')
+    if status_counts.get('failed'):
+        warning_reasons.append('存在失败事件')
+    if possible_done_without_landing:
+        warning_reasons.append('存在 done 但未确认落库的可疑事件')
+    if last_webhook_at and last_cache_updated_at:
+        webhook_dt = _realtime_health_parse_ts(last_webhook_at)
+        cache_dt = _realtime_health_parse_ts(last_cache_updated_at)
+        if webhook_dt and cache_dt and webhook_dt > cache_dt + timedelta(minutes=1):
+            warning_reasons.append('最近 webhook 时间晚于本地缓存更新时间')
+    elif last_webhook_at and not last_cache_updated_at:
+        warning_reasons.append('已有 webhook 但本地缓存表暂无更新时间')
+
+    if not events and not last_cache_updated_at:
+        health_status = 'unknown'
+        note = '尚未看到该类 webhook 或本地缓存更新时间。'
+    elif status_counts.get('failed') or possible_done_without_landing:
+        health_status = 'needs_attention'
+        note = '；'.join(warning_reasons) or '存在需要处理的异常。'
+    elif warning_reasons:
+        health_status = 'warning'
+        note = '；'.join(warning_reasons)
+    else:
+        health_status = 'ok'
+        note = group.get('note_ok') or '最近实时同步健康。'
+
+    recent_done_count = status_counts.get('done', 0)
+    return {
+        'key': group.get('key') or '',
+        'name': group.get('name') or '',
+        'resource_keys': group.get('resource_keys') or [],
+        'health_status': health_status,
+        'last_webhook_at': last_webhook_at,
+        'last_cache_updated_at': last_cache_updated_at,
+        'cache_tables': group.get('cache_tables') or [],
+        'cache_table_stats': cache_tables,
+        'recent_status_counts': status_counts,
+        'recent_done_count': recent_done_count,
+        'recent_failed_count': status_counts.get('failed', 0),
+        'possible_done_without_landing_count': possible_done_without_landing,
+        'done_message_samples': done_messages[:5],
+        'suspicious_events': suspicious[:10],
+        'recent_events': [_realtime_health_event_public(event) for event in events[:10]],
+        'note': note,
+    }
+
+
+def _sync_realtime_health_payload():
+    conn = _sales_readonly_conn()
+    try:
+        tables = {}
+        webhook_mode = _sync_coverage_webhook_mode(conn)
+        summary = _realtime_health_webhook_summary(conn)
+        safe_resources = [_realtime_health_resource_card(conn, group) for group in REALTIME_HEALTH_SAFE_GROUPS]
+        for card in safe_resources:
+            for name, info in (card.get('cache_table_stats') or {}).items():
+                tables[name] = info
+        warnings = []
+        for card in safe_resources:
+            if card.get('health_status') in ('warning', 'needs_attention'):
+                warnings.append({
+                    'resource': card.get('key'),
+                    'name': card.get('name'),
+                    'status': card.get('health_status'),
+                    'note': card.get('note'),
+                    'possible_done_without_landing_count': card.get('possible_done_without_landing_count') or 0,
+                })
+        recent_events = []
+        for card in safe_resources:
+            for event in card.get('recent_events') or []:
+                recent_events.append({**event, 'group': card.get('key')})
+        recent_events.sort(key=lambda x: (str(x.get('event_time') or ''), int(x.get('id') or 0)), reverse=True)
+        return {
+            'success': True,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'db_path': _SALES_CACHE_DB,
+            'webhook_mode': webhook_mode,
+            'summary': summary,
+            'safe_resources': safe_resources,
+            'cache_tables': tables,
+            'warnings': warnings,
+            'recent_events': recent_events[:20],
+            'notes': [
+                '本面板只读取本地 webhook_events 与缓存表，用于判断实时同步是否健康；不会调用 JDY，也不会触发同步。',
+                'Webhook 收到消息不等于一定自动拉取；销售单、调拨单、辅料采购订单属于安全实时同步资源。',
+                '商品、供应商、库存目前仅记录事件，不作为失败；后续 dirty 队列与限速补拉另行实现。',
+            ],
+        }
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
 def _sync_coverage_status_payload():
     conn = _sales_readonly_conn()
     try:
@@ -5355,6 +5747,7 @@ def _sync_coverage_status_payload():
         'would_call_jdy': False,
         'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'db_path': _SALES_CACHE_DB,
+        'realtime_health_endpoint': '/sync/realtime-health',
         'webhook_mode': webhook_mode,
         'tables': tables,
         'resources': resources,
@@ -5371,6 +5764,21 @@ def _sync_coverage_status_payload():
 def sync_coverage_status():
     try:
         return jsonify(_sync_coverage_status_payload())
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': str(e),
+        }), 500
+
+
+@app.route('/sync/realtime-health', methods=['GET'])
+def sync_realtime_health():
+    try:
+        return jsonify(_sync_realtime_health_payload())
     except Exception as e:
         return jsonify({
             'success': False,
