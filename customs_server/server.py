@@ -8194,17 +8194,204 @@ def _webhook_process_result(ok=False, cached=False, reason='', message='', faile
     }
 
 
-def _cache_one_accessory_purchase_order_from_jdy(cli, account, number):
+def _accessory_webhook_payload(event):
+    if not isinstance(event, dict):
+        return {}
+    try:
+        payload = json.loads(event.get('payload_json') or '{}')
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _accessory_webhook_visible_numbers(payload):
+    return _extract_webhook_values(payload or {}, [
+        'number', 'billNo', 'billNumber', 'bill_no',
+        'orderNo', 'orderNumber', 'sourceBillNo', 'srcBillNo',
+    ])
+
+
+def _accessory_webhook_internal_ids(payload, fallback_number=''):
+    values = _extract_webhook_values(payload or {}, ['id', 'billId', 'bill_id', 'billID', 'dataId'])
+    fallback_number = str(fallback_number or '').strip()
+    if fallback_number and _webhook_bill_no_kind(fallback_number) == 'internal_id':
+        values.append(fallback_number)
+    return [x for x in dict.fromkeys(str(v).strip() for v in values if str(v or '').strip()) if x]
+
+
+def _accessory_webhook_should_try_window(event, number):
+    payload = _accessory_webhook_payload(event)
+    return bool(_accessory_webhook_internal_ids(payload, number)) and not _accessory_webhook_visible_numbers(payload)
+
+
+def _parse_webhook_window_time(value):
+    text = str(value or '').strip()
+    if not text:
+        return None
+    text = text.replace('T', ' ').replace('/', '-')
+    if '+' in text:
+        text = text.split('+', 1)[0].strip()
+    if text.endswith('Z'):
+        text = text[:-1].strip()
+    text = text[:19]
+    formats = (
+        ('%Y-%m-%d %H:%M:%S', 19),
+        ('%Y-%m-%d %H:%M', 16),
+        ('%Y-%m-%d', 10),
+    )
+    for fmt, size in formats:
+        try:
+            return datetime.strptime(text[:size], fmt)
+        except Exception:
+            pass
+    return None
+
+
+def _accessory_purchase_row_internal_ids(row):
+    values = []
+    if isinstance(row, dict):
+        for key in ('id', 'billId', 'bill_id', 'billID', 'dataId'):
+            val = row.get(key)
+            if val not in (None, ''):
+                values.append(str(val).strip())
+        raw = row.get('_raw')
+        if isinstance(raw, dict):
+            values.extend(_accessory_purchase_row_internal_ids(raw))
+    return [x for x in dict.fromkeys(values) if x]
+
+
+def _accessory_purchase_row_time(row):
+    if not isinstance(row, dict):
+        return None
+    for key in ('updTime', 'updateTime', 'updatedAt', 'modifyTime', 'createTime', 'createdAt', 'billDate', 'date'):
+        parsed = _parse_webhook_window_time(row.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _cache_accessory_purchase_window_candidate(cli, account, row, internal_id):
+    number = str(_first_value(row or {}, ['number', 'billNo', 'billNumber', 'id'], '')).strip()
+    try:
+        with _sales_cache_conn() as conn:
+            supplier_no = str(_first_value(row, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')).strip()
+            supplier = _read_cached_jdy_supplier(conn, account, supplier_no) if supplier_no else {}
+            if supplier_no and supplier is None:
+                supplier = cli.get_supplier_by_number(supplier_no, status=2) or {}
+                if supplier:
+                    _cache_upsert_jdy_supplier(conn, account, supplier)
+            order = _normalize_accessory_purchase_order(row, account, supplier or {})
+            if not _supplier_matches_accessory(supplier or {}, row):
+                supplier_name = order.get('supplierName') or supplier_no or '未知供应商'
+                return _webhook_process_result(
+                    reason='accessory_supplier_not_matched',
+                    message=f'已收到精斗云推送，但对应采购订单不是辅料供应商，未保存：{supplier_name}（精斗云内部编号：{internal_id}）',
+                )
+            if not order.get('entries'):
+                return _webhook_process_result(
+                    reason='accessory_order_empty_entries',
+                    message=f'已收到精斗云推送，但对应采购订单没有商品明细，未保存：{order.get("number") or number or "未知单号"}（精斗云内部编号：{internal_id}）',
+                )
+            order = _enrich_accessory_purchase_order(order)
+            _cache_upsert_accessory_purchase_order(conn, order)
+            conn.commit()
+            return _webhook_process_result(
+                ok=True,
+                cached=True,
+                reason='accessory_window_cached',
+                message=f'已通过小时间窗口匹配并保存辅料采购订单：{order.get("number") or number}（精斗云内部编号：{internal_id}）',
+            )
+    except Exception as e:
+        return _webhook_process_result(
+            failed=True,
+            reason='accessory_window_save_error',
+            message=f'已收到精斗云推送，但保存辅料采购订单失败，未写入空数据：{_short_sync_error(e)}（精斗云内部编号：{internal_id}）',
+        )
+
+
+def _cache_accessory_purchase_order_for_webhook_window(cli, account, payload, internal_id, event_timestamp):
+    internal_id = str(internal_id or '').strip()
+    if not cli or not account or not internal_id:
+        return _webhook_process_result(
+            reason='accessory_window_missing_context',
+            message=f'已收到精斗云推送，但推送内容只有内部编号，暂无法确认采购订单（精斗云内部编号：{internal_id or "空"}）',
+        )
+    event_dt = _parse_webhook_window_time(event_timestamp) or datetime.now()
+    window_minutes = 10
+    window_start = event_dt - timedelta(minutes=window_minutes)
+    window_end = event_dt + timedelta(minutes=window_minutes)
+    page_size = 25
+    max_pages = 2
+    max_rows = 50
+    rows = []
+    try:
+        for page in range(1, max_pages + 1):
+            result = cli.get_purchase_order_requests(
+                page=page,
+                page_size=page_size,
+                bill_status=None,
+                check_status=2,
+                begin_date=window_start.strftime('%Y-%m-%d'),
+                end_date=window_end.strftime('%Y-%m-%d'),
+            )
+            batch = result.get('list') or []
+            rows.extend(batch[:max(0, max_rows - len(rows))])
+            total = result.get('total') or 0
+            if not batch or len(batch) < page_size or len(rows) >= max_rows or (total and len(rows) >= int(total)):
+                break
+        exact_matches = [
+            row for row in rows
+            if internal_id in _accessory_purchase_row_internal_ids(row)
+        ]
+        if len(exact_matches) == 1:
+            return _cache_accessory_purchase_window_candidate(cli, account, exact_matches[0], internal_id)
+        if len(exact_matches) > 1:
+            return _webhook_process_result(
+                reason='accessory_window_multiple_exact',
+                message=f'已收到精斗云推送，但窗口内匹配到多条候选，未自动保存，避免误写（精斗云内部编号：{internal_id}）',
+            )
+        window_rows = []
+        for row in rows:
+            row_time = _accessory_purchase_row_time(row)
+            if row_time and window_start <= row_time <= window_end:
+                window_rows.append(row)
+        if len(window_rows) == 1:
+            return _cache_accessory_purchase_window_candidate(cli, account, window_rows[0], internal_id)
+        if len(window_rows) > 1:
+            return _webhook_process_result(
+                reason='accessory_window_multiple_candidates',
+                message=f'已收到精斗云推送，但窗口内匹配到多条候选，未自动保存，避免误写（精斗云内部编号：{internal_id}）',
+            )
+        return _webhook_process_result(
+            reason='accessory_window_not_found',
+            message=f'已收到精斗云推送，但推送内容只有内部编号，窗口内未匹配到辅料采购订单（精斗云内部编号：{internal_id}）',
+        )
+    except Exception as e:
+        return _webhook_process_result(
+            failed=True,
+            reason='accessory_window_query_error',
+            message=f'已收到精斗云推送，但小时间窗口查询采购订单失败，未保存：{_short_sync_error(e)}（精斗云内部编号：{internal_id}）',
+        )
+
+
+def _cache_one_accessory_purchase_order_from_jdy(cli, account, number, event=None):
     if not cli or not number:
         return _webhook_process_result(
             reason='missing_bill_no',
             message='缺少采购订单单号，无法更新辅料页面',
         )
+    payload = _accessory_webhook_payload(event)
+    internal_ids = _accessory_webhook_internal_ids(payload, number)
+    should_try_window = _accessory_webhook_should_try_window(event, number)
     result = cli.get_purchase_order_requests(
         page=1, page_size=1, search=number, bill_status=0
     )
     rows = result.get('list') or []
     if not rows:
+        if should_try_window:
+            return _cache_accessory_purchase_order_for_webhook_window(
+                cli, account, payload, internal_ids[0] if internal_ids else number, (event or {}).get('created_at')
+            )
         return _webhook_process_result(
             reason='purchase_order_not_found',
             message='采购订单未查到，可能 webhook 传的是内部 ID，或 bill_status=0 状态过滤导致未命中',
@@ -8249,6 +8436,10 @@ def _cache_one_accessory_purchase_order_from_jdy(cli, account, number):
                 message=f'已缓存辅料采购订单：{order.get("number") or number}',
             )
     if exact_mismatch:
+        if should_try_window:
+            return _cache_accessory_purchase_order_for_webhook_window(
+                cli, account, payload, internal_ids[0] if internal_ids else number, (event or {}).get('created_at')
+            )
         return _webhook_process_result(
             reason='purchase_order_not_exact_match',
             message=f'采购订单未精确匹配：webhook 单号 {number} 与查询结果单号不一致',
@@ -8884,7 +9075,7 @@ def _process_webhook_event(event):
     if is_transfer_resource:
         return _cache_one_transfer_order_from_jdy(cli, account_name, number)
     if is_purchase_resource:
-        return _cache_one_accessory_purchase_order_from_jdy(cli, account_name, number)
+        return _cache_one_accessory_purchase_order_from_jdy(cli, account_name, number, event=event)
     return _webhook_process_result(
         ok=True,
         reason='recorded_only_unsafe_resource',
