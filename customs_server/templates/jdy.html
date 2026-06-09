@@ -2598,7 +2598,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div>
           <b>JDY 同步覆盖状态</b>
           <div class="tip" style="margin-top:2px;line-height:1.6;">
-            系统收到精斗云消息后，会按业务类型决定是否实时保存、每日兜底或由管理员确认处理。
+            Webhook 接收到不代表一定会自动拉取；不同资源按安全等级进入实时同步、每日兜底、手动确认或仅记录。
           </div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadSyncCoverageStatus()">刷新覆盖状态</button>
@@ -2606,7 +2606,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <div class="settings-info-grid" style="margin-top:10px;">
         <div class="settings-info-card"><span>Webhook 模式</span><b id="sync-coverage-webhook-mode">待读取</b></div>
         <div class="settings-info-card"><span>实时覆盖</span><b id="sync-coverage-realtime-count">待读取</b></div>
-        <div class="settings-info-card"><span>需管理员确认</span><b id="sync-coverage-record-count">待读取</b></div>
+        <div class="settings-info-card"><span>仅记录 / 暂无落库</span><b id="sync-coverage-record-count">待读取</b></div>
       </div>
       <div id="sync-coverage-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取 JDY 同步覆盖状态</div>
     </div>
@@ -2615,36 +2615,17 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div>
           <b>实时同步健康</b>
           <div class="tip" style="margin-top:2px;line-height:1.6;">
-            查看销售单、调拨单、辅料采购订单是否从“收到消息”顺利保存到本地；本区域只读本地记录，不会调用 JDY。
+            本面板只读取本地 webhook_events 与缓存表，用于判断实时同步是否健康；不会调用 JDY，也不会触发同步。
           </div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" onclick="loadRealtimeHealthStatus()">刷新实时同步健康</button>
       </div>
       <div class="settings-info-grid" style="margin-top:10px;">
         <div class="settings-info-card"><span>Webhook 模式</span><b id="realtime-health-webhook-mode">待读取</b></div>
-        <div class="settings-info-card"><span>等待保存</span><b id="realtime-health-queue">待读取</b></div>
-        <div class="settings-info-card"><span>需要关注</span><b id="realtime-health-warnings">待读取</b></div>
+        <div class="settings-info-card"><span>pending / processing</span><b id="realtime-health-queue">待读取</b></div>
+        <div class="settings-info-card"><span>failed / 可疑</span><b id="realtime-health-warnings">待读取</b></div>
       </div>
       <div id="realtime-health-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取实时同步健康</div>
-    </div>
-    <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <div>
-          <b>商品/供应商/库存变更待补拉</b>
-          <div class="tip" style="margin-top:2px;line-height:1.6;">
-            系统收到商品、供应商、库存变更后，会先记录为“待补拉”。当前不会自动调用 JDY，也不会刷新数据。后续会在管理员确认后按小批量补拉。
-          </div>
-        </div>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="loadDirtyStatus()">刷新待补拉状态</button>
-      </div>
-      <div class="settings-info-grid" style="margin-top:10px;">
-        <div class="settings-info-card"><span>商品资料</span><b id="dirty-product-count">待读取</b></div>
-        <div class="settings-info-card"><span>供应商资料</span><b id="dirty-supplier-count">待读取</b></div>
-        <div class="settings-info-card"><span>库存变更</span><b id="dirty-inventory-count">待读取</b></div>
-        <div class="settings-info-card"><span>最近收到时间</span><b id="dirty-recent-time">待读取</b></div>
-        <div class="settings-info-card"><span>最近处理状态</span><b id="dirty-latest-state">待读取</b></div>
-      </div>
-      <div id="dirty-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取商品/供应商/库存待补拉状态</div>
     </div>
     <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
@@ -2921,8 +2902,8 @@ td.code { font-family: monospace; color: #1a2c5b; }
             <button class="btn btn-warn btn-sm" type="button" onclick="reclassifyRetryPending(false)">移动到重试队列</button>
           </div>
           <div class="webhook-control-row" style="margin:4px 0;">
-            <b>仅记录事件归档</b>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">预览不执行</button>
+            <b>recorded only 归档</b>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="resolveRecordedOnly(true)">dry-run</button>
             <button class="btn btn-warn btn-sm" type="button" onclick="resolveRecordedOnly(false)">确认归档</button>
           </div>
           <div style="display:none;" id="webhook-status-counts-legacy"></div>
@@ -7514,104 +7495,6 @@ function syncCoverageTableText(tables, names) {
   }).join('；');
 }
 
-function syncCoverageBusinessTableText(tables, names) {
-  if (!names || !names.length) return '暂无本地保存';
-  let total = 0;
-  let exists = false;
-  names.forEach(name => {
-    const row = (tables || {})[name] || {};
-    if (row.exists) {
-      exists = true;
-      total += Number(row.count || 0);
-    }
-  });
-  if (!exists) return '暂未保存本地';
-  return `本地记录 ${total} 条`;
-}
-
-function syncBusinessLabel(value) {
-  const raw = String(value || '').trim();
-  const key = raw.toLowerCase();
-  const labels = {
-    sales: '销售单',
-    sales_order: '销售单',
-    sal_bill: '销售单',
-    sal_bill_outbound: '销售单',
-    delivery: '销售单',
-    transfer: '调拨单',
-    inv_transfer: '调拨单',
-    accessory_purchase: '辅料采购订单',
-    purchase_order: '辅料采购订单',
-    pur_bill_order: '辅料采购订单',
-    product: '商品资料',
-    bd_material: '商品资料',
-    material: '商品资料',
-    supplier: '供应商资料',
-    bd_supplier: '供应商资料',
-    inventory: '库存变更',
-    bd_inventory: '库存变更',
-  };
-  if (labels[key]) return labels[key];
-  if (raw && !/[A-Za-z_/-]/.test(raw)) return raw;
-  return raw ? '其他业务' : '未知业务';
-}
-
-function syncBusinessLabelFromItem(item = {}) {
-  return syncBusinessLabel(item.key || item.resource || item.name || item.business_name || '');
-}
-
-function syncStatusBusinessLabel(status) {
-  return ({
-    realtime: '实时保存',
-    partial_realtime: '部分实时保存',
-    record_only: '已收到，暂不自动处理',
-    daily_fallback: '每日兜底',
-    manual_confirm: '需要管理员确认',
-    not_supported: '暂未保存本地',
-    local_only: '纯本地记录',
-    ok: '已保存本地',
-    warning: '需要关注',
-    needs_attention: '需要管理员处理',
-    unknown: '暂无最近消息',
-  })[status] || status || '未知状态';
-}
-
-function syncStatusBusinessClass(status) {
-  if (['realtime', 'partial_realtime', 'ok'].includes(status)) return 'sync-coverage-realtime';
-  if (['warning', 'manual_confirm', 'daily_fallback'].includes(status)) return 'sync-coverage-manual';
-  if (['needs_attention', 'not_supported'].includes(status)) return 'sync-coverage-none';
-  return 'sync-coverage-record';
-}
-
-function syncAdvancedDetails(title, html) {
-  return `
-    <details class="sync-advanced-details" style="margin-top:10px;">
-      <summary style="cursor:pointer;font-weight:700;color:#475569;">${webhookHtml(title || '高级诊断')}</summary>
-      <div style="margin-top:8px;">${html || '<span class="tip">暂无</span>'}</div>
-    </details>
-  `;
-}
-
-function syncLooksLikeInternalId(value) {
-  return /^\d{8,}$/.test(String(value || '').trim());
-}
-
-function syncBusinessNumberText(event = {}, groupKey = '') {
-  const value = String(event.bill_no || event.number || '').trim();
-  if (!value) {
-    if (groupKey === 'accessory_purchase') return '暂未匹配到采购订单号';
-    return '暂未匹配到业务单号';
-  }
-  if (syncLooksLikeInternalId(value)) {
-    const tail = groupKey === 'accessory_purchase' ? '；暂未匹配到采购订单号' : '';
-    return `精斗云内部编号：${value}${tail}`;
-  }
-  if (groupKey === 'accessory_purchase') return `采购订单号：${value}`;
-  if (groupKey === 'sales') return `销售单号：${value}`;
-  if (groupKey === 'transfer') return `调拨单号：${value}`;
-  return `业务单号：${value}`;
-}
-
 function renderSyncCoverageStatus(data = {}) {
   const resources = data.resources || [];
   const tables = data.tables || {};
@@ -7635,12 +7518,12 @@ function renderSyncCoverageStatus(data = {}) {
   if (!box) return;
   const rows = resources.map(item => {
     const status = item.status || '';
-    const pill = `<span class="sync-coverage-pill ${syncStatusBusinessClass(status)}">${webhookHtml(syncStatusBusinessLabel(status))}</span>`;
-    const tablesText = syncCoverageBusinessTableText(tables, item.local_tables || []);
+    const pill = `<span class="sync-coverage-pill ${syncCoverageStatusClass(status)}">${webhookHtml(syncCoverageStatusLabel(status))}</span>`;
+    const tablesText = syncCoverageTableText(tables, item.local_tables || []);
     const updated = item.last_updated_at || '暂无';
     return `<tr>
-      <td><b>${webhookHtml(item.business_name || syncBusinessLabelFromItem(item))}</b></td>
-      <td>${pill}</td>
+      <td><b>${webhookHtml(item.business_name || '')}</b><br><span class="tip">${webhookHtml(item.resource || '')}</span></td>
+      <td>${pill}<br><span class="tip">${webhookHtml(item.webhook_behavior || '')}</span></td>
       <td>${syncCoverageYesNo(item.webhook_auto)}</td>
       <td>${syncCoverageYesNo(item.daily_compare)}</td>
       <td>${syncCoverageYesNo(item.manual_sync)}</td>
@@ -7650,26 +7533,20 @@ function renderSyncCoverageStatus(data = {}) {
       <td>${webhookHtml(item.note || '')}</td>
     </tr>`;
   }).join('');
-  const advancedResourceRows = resources.map(item => `<tr>
-    <td>${webhookHtml(item.business_name || syncBusinessLabelFromItem(item))}</td>
-    <td>${webhookHtml(item.resource || '')}</td>
-    <td>${webhookHtml(item.status || '')}</td>
-    <td>${webhookHtml(item.webhook_behavior || '')}</td>
-    <td>${webhookHtml((item.local_tables || []).join(' / '))}</td>
-  </tr>`).join('');
   const riskItems = (data.risk_endpoints || []).map(item => (
     `<li><b>${webhookHtml(item.method || '')} ${webhookHtml(item.endpoint || '')}</b>：${webhookHtml(item.risk || '')}</li>`
   )).join('');
   const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
   box.innerHTML = `
     <div class="tip" style="line-height:1.6;margin-bottom:8px;">
-      生成时间：${webhookHtml(data.generated_at || '')}；本区域只读取本地记录，不会调用精斗云。
+      生成时间：${webhookHtml(data.generated_at || '')}；接口口径：local-only，called_jdy=false，would_call_jdy=false。<br>
+      recorded-only 表示已接收，只记录，暂不自动拉取，不等同于失败。
     </div>
     <div class="settings-scroll-window" style="max-height:300px;">
       <table class="sync-coverage-table">
         <thead>
           <tr>
-            <th>业务</th>
+            <th>业务 / resource</th>
             <th>同步方式</th>
             <th>实时</th>
             <th>每日兜底</th>
@@ -7683,16 +7560,11 @@ function renderSyncCoverageStatus(data = {}) {
         <tbody>${rows || '<tr><td colspan="9" class="tip">暂无覆盖状态</td></tr>'}</tbody>
       </table>
     </div>
-    ${syncAdvancedDetails('高级诊断', `
-      <div class="settings-scroll-window" style="max-height:180px;">
-        <table class="sync-coverage-table">
-          <thead><tr><th>业务</th><th>resource</th><th>status</th><th>webhook_behavior</th><th>local_tables</th></tr></thead>
-          <tbody>${advancedResourceRows || '<tr><td colspan="5" class="tip">暂无</td></tr>'}</tbody>
-        </table>
-      </div>
-      <div style="margin-top:8px;"><b>高风险入口</b><ul class="sync-coverage-risk-list">${riskItems || '<li>暂无</li>'}</ul></div>
-      <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
-    `)}
+    <div style="margin-top:10px;">
+      <b>高风险入口</b>
+      <ul class="sync-coverage-risk-list">${riskItems || '<li>暂无</li>'}</ul>
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
   `;
 }
 
@@ -7750,37 +7622,6 @@ function realtimeHealthTableSummary(stats = {}, names = []) {
   }).join('；');
 }
 
-function realtimeHealthReceivedCount(card = {}) {
-  const counts = card.recent_status_counts || {};
-  return ['done', 'pending', 'retry_pending', 'processing', 'failed', 'ignored']
-    .reduce((sum, key) => sum + Number(counts[key] || 0), 0);
-}
-
-function realtimeHealthBusinessSummary(card = {}) {
-  const key = String(card.key || '').trim();
-  const label = syncBusinessLabel(key || card.name || '');
-  const total = realtimeHealthReceivedCount(card);
-  const possible = Number(card.possible_done_without_landing_count || 0);
-  const failed = Number(card.recent_failed_count || 0);
-  const sample = (card.suspicious_events || [])[0] || (card.recent_events || [])[0] || {};
-  if (possible && key === 'accessory_purchase') {
-    return `${label}：收到 ${possible} 条精斗云推送，但暂未确认已保存到本地。原因：精斗云推送内容只有内部编号，系统未匹配到采购订单号。${syncBusinessNumberText(sample, key)}。可等待每日兜底同步或后续手动补拉。`;
-  }
-  if (possible) {
-    return `${label}：收到 ${possible} 条精斗云推送，但暂未确认已保存到本地。请管理员在高级诊断中查看原始信息。`;
-  }
-  if (failed) {
-    return `${label}：最近有 ${failed} 条消息需要管理员处理。`;
-  }
-  if (!total && !card.last_cache_updated_at) {
-    return `${label}：暂无最近收到的精斗云消息。`;
-  }
-  if (card.health_status === 'ok') {
-    return `${label}：最近收到的消息已保存到本地。`;
-  }
-  return `${label}：已收到 ${total} 条精斗云消息，当前需要关注保存状态。`;
-}
-
 function renderRealtimeHealthStatus(data = {}) {
   const mode = data.webhook_mode || {};
   const summary = data.summary || {};
@@ -7807,39 +7648,31 @@ function renderRealtimeHealthStatus(data = {}) {
   if (!box) return;
   const cardRows = cards.map(card => {
     const status = card.health_status || 'unknown';
-    const pill = `<span class="sync-coverage-pill ${syncStatusBusinessClass(status)}">${webhookHtml(syncStatusBusinessLabel(status))}</span>`;
-    const label = syncBusinessLabel(card.key || card.name || '');
-    return `<tr>
-      <td><b>${webhookHtml(label)}</b></td>
-      <td>${pill}</td>
-      <td>${webhookHtml(card.last_webhook_at || '暂无')}</td>
-      <td>${webhookHtml(card.last_cache_updated_at || '暂无')}</td>
-      <td>${webhookHtml(realtimeHealthBusinessSummary(card))}</td>
-    </tr>`;
-  }).join('');
-  const advancedCardRows = cards.map(card => {
+    const pill = `<span class="sync-coverage-pill ${realtimeHealthStatusClass(status)}">${webhookHtml(realtimeHealthStatusLabel(status))}</span>`;
     const counts = card.recent_status_counts || {};
     const messages = (card.done_message_samples || []).slice(0, 3).map(x => `<div>${webhookHtml(x)}</div>`).join('');
     return `<tr>
-      <td><b>${webhookHtml(syncBusinessLabel(card.key || card.name || ''))}</b><br><span class="tip">${webhookHtml((card.resource_keys || []).join(' / '))}</span></td>
-      <td>${webhookHtml(card.health_status || '')}<br><span class="tip">${webhookHtml(card.note || '')}</span></td>
+      <td><b>${webhookHtml(card.name || '')}</b><br><span class="tip">${webhookHtml((card.resource_keys || []).join(' / '))}</span></td>
+      <td>${pill}<br><span class="tip">${webhookHtml(card.note || '')}</span></td>
+      <td>${webhookHtml(card.last_webhook_at || '暂无')}</td>
+      <td>${webhookHtml(card.last_cache_updated_at || '暂无')}</td>
       <td>${webhookHtml(realtimeHealthCountText(counts, ['done', 'pending', 'processing', 'failed']))}</td>
       <td>${webhookHtml(String(card.possible_done_without_landing_count || 0))}</td>
       <td>${webhookHtml(realtimeHealthTableSummary(card.cache_table_stats || {}, card.cache_tables || []))}</td>
-      <td>${messages || '<span class="tip">暂无 message</span>'}</td>
+      <td>${messages || '<span class="tip">暂无 done message</span>'}</td>
     </tr>`;
   }).join('');
   const suspiciousRows = cards.flatMap(card => (
     (card.suspicious_events || []).map(event => ({...event, group_name: card.name || card.key || ''}))
   )).slice(0, 12).map(event => `<tr>
-    <td>${webhookHtml(syncBusinessLabel(event.group_name || ''))}</td>
+    <td>${webhookHtml(event.group_name || '')}</td>
     <td>#${webhookHtml(event.id || '')}<br><span class="tip">${webhookHtml(event.event_time || '')}</span></td>
     <td>${webhookHtml(event.resource || '')}<br><span class="tip">${webhookHtml(event.bill_no || '')}</span></td>
     <td>${webhookHtml(event.reason || '')}</td>
     <td>${webhookHtml(event.message || '')}</td>
   </tr>`).join('');
   const recentRows = (data.recent_events || []).slice(0, 12).map(event => `<tr>
-    <td>${webhookHtml(syncBusinessLabel(event.group || ''))}</td>
+    <td>${webhookHtml(event.group || '')}</td>
     <td>#${webhookHtml(event.id || '')}<br><span class="tip">${webhookHtml(event.event_time || '')}</span></td>
     <td>${webhookHtml(event.resource || '')}<br><span class="tip">${webhookHtml(event.bill_no || '')}</span></td>
     <td>${webhookHtml(event.status || '')}</td>
@@ -7847,46 +7680,51 @@ function renderRealtimeHealthStatus(data = {}) {
     <td>${webhookHtml(event.message || '')}</td>
   </tr>`).join('');
   const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
-  void warnings;
+  const warningList = warnings.map(item => (
+    `<li><b>${webhookHtml(item.name || item.resource || '')}</b>：${webhookHtml(item.note || '')}</li>`
+  )).join('');
   box.innerHTML = `
     <div class="tip" style="line-height:1.6;margin-bottom:8px;">
-      生成时间：${webhookHtml(data.generated_at || '')}；本区域只读取本地记录，不会调用精斗云，也不会触发同步。
+      生成时间：${webhookHtml(data.generated_at || '')}；接口口径：local-only，called_jdy=false，would_call_jdy=false。<br>
+      Webhook 收到消息不等于一定自动拉取；商品、供应商、库存事件当前仅记录，不作为失败。
     </div>
+    ${warningList ? `<div style="margin-bottom:8px;"><b>需要关注</b><ul class="sync-coverage-risk-list">${warningList}</ul></div>` : ''}
     <div class="settings-scroll-window" style="max-height:260px;">
       <table class="sync-coverage-table">
         <thead>
           <tr>
-            <th>业务</th>
+            <th>安全资源</th>
             <th>状态</th>
             <th>最近收到</th>
-            <th>最近保存本地</th>
-            <th>说明</th>
+            <th>最近落库</th>
+            <th>done / pending / processing / failed</th>
+            <th>done 但未确认落库</th>
+            <th>缓存表</th>
+            <th>最近 done message</th>
           </tr>
         </thead>
-        <tbody>${cardRows || '<tr><td colspan="5" class="tip">暂无实时同步健康数据</td></tr>'}</tbody>
+        <tbody>${cardRows || '<tr><td colspan="8" class="tip">暂无实时同步健康数据</td></tr>'}</tbody>
       </table>
     </div>
-    ${syncAdvancedDetails('高级诊断', `
-      <div class="settings-scroll-window" style="max-height:180px;">
-        <table class="sync-coverage-table">
-          <thead><tr><th>业务 / resource</th><th>health_status / note</th><th>done / pending / processing / failed</th><th>done 未确认落库</th><th>cache_tables</th><th>message</th></tr></thead>
-          <tbody>${advancedCardRows || '<tr><td colspan="6" class="tip">暂无</td></tr>'}</tbody>
-        </table>
-      </div>
+    <div style="margin-top:10px;">
+      <b>done 但未确认落库样本</b>
       <div class="settings-scroll-window" style="max-height:180px;margin-top:6px;">
         <table class="sync-coverage-table">
-          <thead><tr><th>业务</th><th>event</th><th>resource / 单号</th><th>reason</th><th>message</th></tr></thead>
+          <thead><tr><th>资源</th><th>事件</th><th>resource / 单号</th><th>原因</th><th>message</th></tr></thead>
           <tbody>${suspiciousRows || '<tr><td colspan="5" class="tip">暂无可疑样本</td></tr>'}</tbody>
         </table>
       </div>
+    </div>
+    <div style="margin-top:10px;">
+      <b>最近安全资源事件</b>
       <div class="settings-scroll-window" style="max-height:180px;margin-top:6px;">
         <table class="sync-coverage-table">
-          <thead><tr><th>group</th><th>event</th><th>resource / 单号</th><th>status</th><th>landing_status</th><th>message</th></tr></thead>
+          <thead><tr><th>分组</th><th>事件</th><th>resource / 单号</th><th>状态</th><th>落库判断</th><th>message</th></tr></thead>
           <tbody>${recentRows || '<tr><td colspan="6" class="tip">暂无最近事件</td></tr>'}</tbody>
         </table>
       </div>
-      <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
-    `)}
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
   `;
 }
 
@@ -7902,141 +7740,6 @@ async function loadRealtimeHealthStatus() {
   } catch (e) {
     if (box) box.innerHTML = `<b>实时同步健康读取失败</b>：${webhookHtml(e.message || String(e))}`;
     appendSettingsLog('实时同步健康读取失败：' + (e.message || String(e)), 'error');
-  }
-}
-
-function dirtyStatusLabel(status) {
-  return ({
-    pending: '等待补拉',
-    processing: '处理中',
-    done: '已完成',
-    skipped: '已跳过',
-    failed: '失败',
-    ignored: '已忽略',
-  })[status] || status || '未知';
-}
-
-function dirtyStatusClass(status) {
-  return ({
-    pending: 'sync-coverage-manual',
-    processing: 'sync-coverage-partial',
-    done: 'sync-coverage-realtime',
-    skipped: 'sync-coverage-record',
-    failed: 'sync-coverage-none',
-    ignored: 'sync-coverage-local',
-  })[status] || 'sync-coverage-record';
-}
-
-function dirtyResourceLabel(resource) {
-  return ({
-    product: '商品资料',
-    supplier: '供应商资料',
-    inventory: '库存变更',
-  })[resource] || translateWebhookResource(resource || 'unknown');
-}
-
-function renderDirtyStatus(data = {}) {
-  const summary = data.summary || {};
-  const table = data.table || {};
-  const byResource = data.by_resource || [];
-  const recent = data.recent || [];
-  const resourceMap = {};
-  byResource.forEach(row => { resourceMap[String(row.resource || '')] = row; });
-  const setText = (id, text, color) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = text;
-    if (color) el.style.color = color;
-  };
-  const waitingCount = resource => {
-    const row = resourceMap[resource] || {};
-    return Number(row.pending || 0);
-  };
-  const latest = recent[0] || {};
-  const latestTime = latest.updated_at || latest.created_at || table.max_updated_at || '暂无';
-  const latestStatus = latest.status ? dirtyStatusLabel(latest.status) : (table.exists ? '暂无待处理记录' : '尚未开始记录');
-  setText('dirty-product-count', `待补拉 ${waitingCount('product')} 条`, waitingCount('product') ? '#a16207' : '#137333');
-  setText('dirty-supplier-count', `待补拉 ${waitingCount('supplier')} 条`, waitingCount('supplier') ? '#a16207' : '#137333');
-  setText('dirty-inventory-count', `待补拉 ${waitingCount('inventory')} 条`, waitingCount('inventory') ? '#a16207' : '#137333');
-  setText('dirty-recent-time', latestTime);
-  setText('dirty-latest-state', latestStatus, ['失败', '需要管理员处理'].includes(latestStatus) ? '#b42318' : '#137333');
-
-  const box = document.getElementById('dirty-status-box');
-  if (!box) return;
-  const businessRows = ['product', 'supplier', 'inventory'].map(resource => {
-    const row = resourceMap[resource] || {};
-    const waiting = Number(row.pending || 0);
-    const failed = Number(row.failed || 0);
-    const state = failed ? '需要管理员处理' : (waiting ? '等待补拉' : '暂无待补拉');
-    return `<tr>
-      <td><b>${webhookHtml(dirtyResourceLabel(resource))}</b></td>
-      <td>${webhookHtml(`待补拉 ${waiting} 条`)}</td>
-      <td>${webhookHtml(state)}</td>
-    </tr>`;
-  }).join('');
-  const advancedResourceRows = byResource.map(row => `<tr>
-    <td><b>${webhookHtml(dirtyResourceLabel(row.resource || ''))}</b><br><span class="tip">${webhookHtml(row.resource || '')}</span></td>
-    <td>${Number(row.pending || 0)}</td>
-    <td>${Number(row.processing || 0)}</td>
-    <td>${Number(row.done || 0)}</td>
-    <td>${Number(row.skipped || 0)}</td>
-    <td>${Number(row.failed || 0)}</td>
-    <td>${Number(row.total || 0)}</td>
-  </tr>`).join('');
-  const recentRows = recent.map(row => {
-    const status = row.status || '';
-    const pill = `<span class="sync-coverage-pill ${dirtyStatusClass(status)}">${webhookHtml(dirtyStatusLabel(status))}</span>`;
-    return `<tr>
-      <td>#${Number(row.id || 0)}<br><span class="tip">${webhookHtml(row.updated_at || row.created_at || '')}</span></td>
-      <td>${webhookHtml(row.account || '')}</td>
-      <td>${webhookHtml(dirtyResourceLabel(row.resource || ''))}<br><span class="tip">${webhookHtml(row.action || '')}</span></td>
-      <td><b>${webhookHtml(row.dirty_key || '')}</b><br><span class="tip">${webhookHtml(row.dirty_key_type || '')}</span></td>
-      <td>${pill}<br><span class="tip">attempt ${Number(row.attempt_count || 0)}</span></td>
-      <td>${webhookHtml(row.message || row.error || '')}</td>
-    </tr>`;
-  }).join('');
-  const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
-  box.innerHTML = `
-    <div class="tip" style="line-height:1.6;margin-bottom:8px;">
-      生成时间：${webhookHtml(data.generated_at || '')}；本区域只读取本地记录，不会调用精斗云，也不会刷新数据。
-    </div>
-    ${table.exists ? '' : '<div class="tip" style="margin-bottom:8px;">待补拉记录尚未创建；收到新的商品、供应商、库存变更后会自动记录。</div>'}
-    <div class="settings-scroll-window" style="max-height:160px;">
-      <table class="sync-coverage-table">
-        <thead><tr><th>业务</th><th>待补拉</th><th>最近处理状态</th></tr></thead>
-        <tbody>${businessRows}</tbody>
-      </table>
-    </div>
-    ${syncAdvancedDetails('高级诊断', `
-      <div class="settings-scroll-window" style="max-height:160px;">
-        <table class="sync-coverage-table">
-          <thead><tr><th>resource</th><th>pending</th><th>processing</th><th>done</th><th>skipped</th><th>failed</th><th>total</th></tr></thead>
-          <tbody>${advancedResourceRows || '<tr><td colspan="7" class="tip">暂无 jdy_dirty_events 分组数据</td></tr>'}</tbody>
-        </table>
-      </div>
-      <div class="settings-scroll-window" style="max-height:220px;margin-top:6px;">
-        <table class="sync-coverage-table">
-          <thead><tr><th>internal id</th><th>account</th><th>resource / action</th><th>dirty_key / dirty_key_type</th><th>status</th><th>message</th></tr></thead>
-          <tbody>${recentRows || '<tr><td colspan="6" class="tip">暂无 jdy_dirty_events 记录</td></tr>'}</tbody>
-        </table>
-      </div>
-      <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
-    `)}
-  `;
-}
-
-async function loadDirtyStatus() {
-  const box = document.getElementById('dirty-status-box');
-  if (box) box.innerHTML = '正在读取商品/供应商/库存待补拉状态...';
-  try {
-    const res = await fetch(`${API}/sync/dirty-status`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || '读取失败');
-    renderDirtyStatus(data);
-    appendSettingsLog('商品/供应商/库存待补拉状态已刷新');
-  } catch (e) {
-    if (box) box.innerHTML = `<b>待补拉状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
-    appendSettingsLog('待补拉状态读取失败：' + (e.message || String(e)), 'error');
   }
 }
 
@@ -8460,7 +8163,6 @@ function showSettingsPane(name) {
   if (target === 'cache') {
     loadSyncCoverageStatus();
     loadRealtimeHealthStatus();
-    loadDirtyStatus();
     loadWebhookStatus();
     loadCatalogCacheStatus();
   } else if (target === 'suppliers') {
@@ -8655,7 +8357,7 @@ function renderWebhookCleanupResult(data, params, dryRun) {
       按类型汇总：${byResource}<br>
       按错误汇总：${byError}<br>
       样本 ID：${webhookHtml(sampleIds)}<br>
-      将执行动作：备份本地数据库后删除旧推送运行记录；不删除等待处理、处理中、已完成记录。<br>
+      将执行动作：备份 SQLite 后物理删除旧 webhook_events 记录；不删除 pending / processing / done。<br>
       安全说明：真实执行前会备份数据库；本次 dry-run 不写库、不调用 JDY、不启动 worker、不处理 pending。
     `;
     if (!count) {
@@ -8900,7 +8602,7 @@ async function resolveRecordedOnly(dryRun) {
   const params = webhookFailureParams();
   const endpoint = dryRun ? 'resolve-recorded-only-dry-run' : 'resolve-recorded-only';
   if (!dryRun) {
-    const ok = window.confirm(`确认把最多 ${params.limit} 条“仅记录事件”的历史失败记录归档为已完成吗？这不会调用 JDY。`);
+    const ok = window.confirm(`确认把最多 ${params.limit} 条 recorded only 历史 failed 归档为 done 吗？这不会调用 JDY。`);
     if (!ok) return;
     params.confirm = 'RESOLVE_RECORDED_ONLY';
   }
@@ -8916,17 +8618,17 @@ async function resolveRecordedOnly(dryRun) {
     if (listEl) {
       listEl.style.display = 'block';
       if (dryRun) {
-        listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条仅记录事件：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
+        listEl.innerHTML = `可归档 ${Number(data.count || 0)} 条 recorded only：${(data.items || []).slice(0, 10).map(row => '#' + row.id).join('，') || '无'}`;
       } else {
-        listEl.innerHTML = `已归档 ${Number(data.resolved || 0)} 条仅记录事件。`;
+        listEl.innerHTML = `已归档 ${Number(data.resolved || 0)} 条 recorded only failed 为 done。`;
       }
     }
-    appendSettingsLog(dryRun ? `仅记录事件归档预览：${Number(data.count || 0)} 条` : `仅记录事件已归档：${Number(data.resolved || 0)} 条`);
+    appendSettingsLog(dryRun ? `recorded only 归档 dry-run：${Number(data.count || 0)} 条` : `recorded only 已归档：${Number(data.resolved || 0)} 条`);
     await loadWebhookStatus();
     await loadWebhookFailures();
   } catch (e) {
-    appendSettingsLog('仅记录事件归档失败：' + e.message, 'error');
-    alert('仅记录事件归档失败：' + e.message);
+    appendSettingsLog('recorded only 归档失败：' + e.message, 'error');
+    alert('recorded only 归档失败：' + e.message);
   }
 }
 
