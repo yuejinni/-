@@ -190,6 +190,7 @@ def _admin_path_required():
         '/jdy-webhook/accessory-diagnose', '/jdy-webhook/accessory-diagnose-live',
         '/cache/catalog-status', '/cache/product-refresh-dry-run', '/cache/product-refresh',
         '/cache/product-refresh/status', '/cache/product-refresh/cancel',
+        '/sync/coverage-status',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
         '/clear-supplier-cache', '/admin/users',
@@ -4994,6 +4995,391 @@ def _catalog_cache_status_payload():
             '确认刷新后仅写入本地 SQLite jdy_products，不调用 JDY 商品写接口',
         ],
     }
+
+
+SYNC_COVERAGE_TABLES = [
+    'sales_orders',
+    'sales_details',
+    'sales_product_quantities',
+    'jdy_products',
+    'jdy_suppliers',
+    'transfer_orders',
+    'transfer_details',
+    'accessory_products',
+    'accessory_purchase_orders',
+    'purchase_inbounds',
+    'purchase_order_prices',
+    'purchase_history_items',
+    'bill_attachments',
+    'purchase_attachment_items',
+    'webhook_events',
+    'webhook_runtime_settings',
+    'reorder_items',
+]
+
+
+def _sync_coverage_table_info(conn, table):
+    info = {
+        'exists': False,
+        'count': 0,
+        'columns': [],
+        'last_updated_at': '',
+    }
+    if conn is None:
+        return info
+    table = str(table or '').strip()
+    if table not in SYNC_COVERAGE_TABLES:
+        info['error'] = 'table is not allowed'
+        return info
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        if not row:
+            return info
+        cols = [str(r['name']) for r in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+        info['exists'] = True
+        info['columns'] = cols
+        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {table}').fetchone()
+        info['count'] = int(count_row['c'] if count_row else 0)
+        for col in ('updated_at', 'last_seen_at', 'processed_at', 'created_at', 'synced_at', 'date', 'order_date'):
+            if col in cols:
+                try:
+                    max_row = conn.execute(f'SELECT MAX({col}) AS v FROM {table}').fetchone()
+                    value = str(max_row['v'] or '') if max_row else ''
+                    if value:
+                        info.setdefault('max_fields', {})[col] = value
+                        if not info['last_updated_at']:
+                            info['last_updated_at'] = value
+                except Exception as e:
+                    info.setdefault('stats_errors', []).append(f'{col}: {e}')
+        return info
+    except Exception as e:
+        info['error'] = str(e)
+        return info
+
+
+def _sync_coverage_tables_snapshot(conn):
+    return {table: _sync_coverage_table_info(conn, table) for table in SYNC_COVERAGE_TABLES}
+
+
+def _sync_coverage_counts(tables, names):
+    return {
+        name: int((tables.get(name) or {}).get('count') or 0)
+        for name in names
+    }
+
+
+def _sync_coverage_last_updated(tables, names):
+    values = [
+        str((tables.get(name) or {}).get('last_updated_at') or '')
+        for name in names
+        if str((tables.get(name) or {}).get('last_updated_at') or '')
+    ]
+    return max(values) if values else ''
+
+
+def _sync_coverage_webhook_mode(conn):
+    default = {
+        'processing_mode': str(_webhook_state.get('processing_mode') or 'manual'),
+        'auto_enabled': bool(
+            str(_webhook_state.get('processing_mode') or 'manual').strip().lower() == 'auto'
+            and not _webhook_state.get('paused')
+        ),
+        'paused': bool(_webhook_state.get('paused')),
+        'updated_at': '',
+        'source': 'runtime_state',
+    }
+    if conn is None:
+        return default
+    try:
+        row = conn.execute('''
+            SELECT processing_mode, auto_enabled, paused, updated_at
+            FROM webhook_runtime_settings
+            WHERE id = 1
+        ''').fetchone()
+        if row:
+            mode = _normalize_webhook_processing_mode(row['processing_mode'])
+            return {
+                'processing_mode': mode,
+                'auto_enabled': bool(int(row['auto_enabled'] or 0)),
+                'paused': bool(int(row['paused'] or 0)),
+                'updated_at': row['updated_at'] or '',
+                'source': 'webhook_runtime_settings',
+            }
+    except sqlite3.OperationalError:
+        return default
+    except Exception as e:
+        default['error'] = str(e)
+    return default
+
+
+def _sync_coverage_resource_definitions():
+    return [
+        {
+            'resource': 'sales / sales_order / sal_bill / delivery',
+            'business_name': '销售单',
+            'status': 'realtime',
+            'webhook_behavior': '实时同步',
+            'webhook_auto': True,
+            'daily_compare': True,
+            'manual_sync': True,
+            'local_tables': ['sales_orders', 'sales_details', 'sales_product_quantities'],
+            'risk_level': 'low',
+            'note': '新建/修改销售单已能通过 Webhook 触发本地缓存更新；每日整体比对继续兜底。',
+        },
+        {
+            'resource': 'transfer',
+            'business_name': '调拨单',
+            'status': 'realtime',
+            'webhook_behavior': '实时同步',
+            'webhook_auto': True,
+            'daily_compare': True,
+            'manual_sync': True,
+            'local_tables': ['transfer_orders', 'transfer_details'],
+            'risk_level': 'low',
+            'note': 'Webhook 和每日整体比对均可写入调拨单缓存。',
+        },
+        {
+            'resource': 'purchase_order / accessory_purchase',
+            'business_name': '辅料采购订单',
+            'status': 'partial_realtime',
+            'webhook_behavior': '部分实时',
+            'webhook_auto': True,
+            'daily_compare': True,
+            'manual_sync': True,
+            'local_tables': ['accessory_purchase_orders'],
+            'risk_level': 'medium',
+            'note': '仅满足辅料供应商和单号命中条件时进入辅料采购订单缓存；内部 ID 或非辅料供应商可能只记录。',
+        },
+        {
+            'resource': 'product',
+            'business_name': '商品主档',
+            'status': 'record_only',
+            'webhook_behavior': '仅记录',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['jdy_products'],
+            'risk_level': 'medium',
+            'note': 'Webhook 已接收但暂不自动拉取商品主档；管理员可确认后手动刷新本地商品缓存。',
+        },
+        {
+            'resource': 'supplier',
+            'business_name': '供应商',
+            'status': 'record_only',
+            'webhook_behavior': '仅记录',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['jdy_suppliers'],
+            'risk_level': 'medium',
+            'note': 'Webhook 已接收但暂不自动刷新供应商主档；辅料链路可能按需读取单个供应商。',
+        },
+        {
+            'resource': 'inventory',
+            'business_name': '库存',
+            'status': 'record_only',
+            'webhook_behavior': '仅记录',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['sales_product_quantities', 'accessory_products'],
+            'risk_level': 'high',
+            'note': '库存事件不会直接刷新库存缓存；销售数量和辅料库存仅随销售/辅料相关流程刷新。',
+        },
+        {
+            'resource': 'purchase_inbound',
+            'business_name': '购货入库',
+            'status': 'record_only',
+            'webhook_behavior': '仅记录',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['purchase_inbounds'],
+            'risk_level': 'high',
+            'note': '目前只有单张核验入口可写 purchase_inbounds，且该 GET 入口会调用 JDY 并写库。',
+        },
+        {
+            'resource': 'ar_creditbill / ar_othercreditbill / ap_otherpaybill',
+            'business_name': '应收/收款/其他往来',
+            'status': 'not_supported',
+            'webhook_behavior': '暂无落库',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': False,
+            'local_tables': [],
+            'risk_level': 'high',
+            'note': '当前无本地缓存表和业务落库流程，仅保留 Webhook 事件记录。',
+        },
+        {
+            'resource': 'bd_customer',
+            'business_name': '客户',
+            'status': 'not_supported',
+            'webhook_behavior': '暂无落库',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': False,
+            'local_tables': [],
+            'risk_level': 'high',
+            'note': '当前无客户主档本地缓存方案。',
+        },
+        {
+            'resource': 'attachments',
+            'business_name': '附件',
+            'status': 'manual_confirm',
+            'webhook_behavior': '手动确认',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['bill_attachments', 'purchase_attachment_items'],
+            'risk_level': 'medium',
+            'note': '附件元数据和历史附件库需要管理员确认后低频执行，不进入实时 Webhook 主链路。',
+        },
+        {
+            'resource': 'purchase_history',
+            'business_name': '采购历史',
+            'status': 'manual_confirm',
+            'webhook_behavior': '手动确认',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': True,
+            'local_tables': ['purchase_order_prices', 'purchase_inbounds', 'accessory_purchase_orders', 'purchase_attachment_items'],
+            'risk_level': 'medium',
+            'note': '采购历史主要从辅料采购、购货入库、价格表和历史附件索引拼出，尚无完整独立历史表。',
+        },
+        {
+            'resource': 'reorder_items',
+            'business_name': '返单',
+            'status': 'local_only',
+            'webhook_behavior': '纯本地业务',
+            'webhook_auto': False,
+            'daily_compare': False,
+            'manual_sync': False,
+            'local_tables': ['reorder_items'],
+            'risk_level': 'low',
+            'note': '返单由本地销售/商品缓存导入生成，不是 JDY 入站同步资源；同步到 JDY 功能暂未开放。',
+        },
+        {
+            'resource': 'customs / transfer detail',
+            'business_name': '报关/调拨明细',
+            'status': 'local_only',
+            'webhook_behavior': '本地/缓存读取',
+            'webhook_auto': False,
+            'daily_compare': True,
+            'manual_sync': True,
+            'local_tables': ['transfer_orders', 'transfer_details'],
+            'risk_level': 'medium',
+            'note': '报关流程不由 Webhook 驱动；调拨明细来自调拨缓存，报关文件生成仍是独立手动流程。',
+        },
+    ]
+
+
+def _sync_coverage_risk_endpoints():
+    return [
+        {
+            'endpoint': '/purchase-inbound-verify',
+            'method': 'GET',
+            'risk': '会调用 JDY 并写 purchase_inbounds，不应当作普通只读 GET。',
+        },
+        {
+            'endpoint': '/sales-sync-run',
+            'method': 'POST',
+            'risk': '调用 JDY，写销售缓存，并可能触发保留期 cleanup。',
+        },
+        {
+            'endpoint': '/sales-cache-refresh',
+            'method': 'POST',
+            'risk': '调用 JDY，写销售缓存或 sales_product_quantities。',
+        },
+        {
+            'endpoint': '/accessory-orders-sync-run',
+            'method': 'POST',
+            'risk': '调用 JDY，写入并可能删除 accessory_purchase_orders 中未再命中的旧记录。',
+        },
+        {
+            'endpoint': '/accessory-products-sync-run',
+            'method': 'POST',
+            'risk': '调用 JDY 商品、分类、库存接口，写 accessory_products。',
+        },
+        {
+            'endpoint': '/cache/product-refresh',
+            'method': 'POST',
+            'risk': 'confirm 后调用 JDY product/list 并写 jdy_products。',
+        },
+        {
+            'endpoint': '/supplier-cache/refresh',
+            'method': 'POST',
+            'risk': 'confirm 后调用 JDY supplier/list 并写 jdy_suppliers 和本地 JSON。',
+        },
+        {
+            'endpoint': '/attachments/history-backfill',
+            'method': 'POST',
+            'risk': 'confirm 后低频调用 JDY，可下载附件并写附件索引表。',
+        },
+        {
+            'endpoint': '/attachments/refresh',
+            'method': 'POST',
+            'risk': 'confirm 后调用 JDY，仅写附件元数据，不下载文件。',
+        },
+    ]
+
+
+def _sync_coverage_status_payload():
+    conn = _sales_readonly_conn()
+    try:
+        tables = _sync_coverage_tables_snapshot(conn)
+        webhook_mode = _sync_coverage_webhook_mode(conn)
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+    resources = []
+    for item in _sync_coverage_resource_definitions():
+        local_tables = item.get('local_tables') or []
+        resources.append({
+            **item,
+            'counts': _sync_coverage_counts(tables, local_tables),
+            'last_updated_at': _sync_coverage_last_updated(tables, local_tables),
+        })
+
+    return {
+        'success': True,
+        'local_only': True,
+        'live_lookup': False,
+        'called_jdy': False,
+        'would_call_jdy': False,
+        'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'db_path': _SALES_CACHE_DB,
+        'webhook_mode': webhook_mode,
+        'tables': tables,
+        'resources': resources,
+        'risk_endpoints': _sync_coverage_risk_endpoints(),
+        'notes': [
+            'Webhook 接收到不代表一定会自动拉取；不同资源按安全等级进入实时同步、每日兜底、手动确认或仅记录。',
+            'recorded-only 表示已接收并留痕，暂不自动调用 JDY 拉取，不等同于失败。',
+            '本接口只读取本地 SQLite 统计和静态覆盖配置，不调用 JDY，不写本地库。',
+        ],
+    }
+
+
+@app.route('/sync/coverage-status', methods=['GET'])
+def sync_coverage_status():
+    try:
+        return jsonify(_sync_coverage_status_payload())
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'live_lookup': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': str(e),
+        }), 500
 
 
 def _product_image_url_from_cache(product):

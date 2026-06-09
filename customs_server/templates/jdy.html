@@ -1522,6 +1522,67 @@ td.code { font-family: monospace; color: #1a2c5b; }
   padding: 10px;
   line-height: 1.8;
 }
+.sync-coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.sync-coverage-table th,
+.sync-coverage-table td {
+  border-bottom: 1px solid #edf2f7;
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.sync-coverage-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.sync-coverage-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: #eef2f7;
+  color: #475569;
+}
+.sync-coverage-realtime {
+  background: #e8f7ef;
+  color: #137333;
+}
+.sync-coverage-partial,
+.sync-coverage-daily {
+  background: #e8f1ff;
+  color: #1d4ed8;
+}
+.sync-coverage-record {
+  background: #eef2f7;
+  color: #64748b;
+}
+.sync-coverage-manual {
+  background: #fff7df;
+  color: #a16207;
+}
+.sync-coverage-none {
+  background: #feecec;
+  color: #b42318;
+}
+.sync-coverage-local {
+  background: #f0f9ff;
+  color: #0369a1;
+}
+.sync-coverage-risk-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
 .settings-oplog {
   height: 260px;
   overflow: auto;
@@ -2531,6 +2592,23 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div class="card-title">本地缓存 / 推送同步</div>
     <div class="settings-v2-note" style="margin-bottom:12px;">
       平时由 Webhook 接收 JDY 推送并触发本地缓存更新；每日 3 点整体比对用于兜底校准。Webhook 只负责新事件触发，不作为历史失败无限重试中心。
+    </div>
+    <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
+          <b>JDY 同步覆盖状态</b>
+          <div class="tip" style="margin-top:2px;line-height:1.6;">
+            Webhook 接收到不代表一定会自动拉取；不同资源按安全等级进入实时同步、每日兜底、手动确认或仅记录。
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="loadSyncCoverageStatus()">刷新覆盖状态</button>
+      </div>
+      <div class="settings-info-grid" style="margin-top:10px;">
+        <div class="settings-info-card"><span>Webhook 模式</span><b id="sync-coverage-webhook-mode">待读取</b></div>
+        <div class="settings-info-card"><span>实时覆盖</span><b id="sync-coverage-realtime-count">待读取</b></div>
+        <div class="settings-info-card"><span>仅记录 / 暂无落库</span><b id="sync-coverage-record-count">待读取</b></div>
+      </div>
+      <div id="sync-coverage-status-box" class="settings-result-box" style="margin-top:10px;max-height:420px;">待读取 JDY 同步覆盖状态</div>
     </div>
     <div style="margin-bottom:14px;border-top:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:12px 0;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
@@ -7284,6 +7362,7 @@ async function loadSettings() {
     }
     loadWebhookStatus();
     loadSystemBackups();
+    loadSyncCoverageStatus();
     loadCatalogCacheStatus();
   } catch(e) { console.error(e); }
 }
@@ -7352,6 +7431,139 @@ function catalogCountText(row) {
 
 function catalogBoolText(value, yes = '已就绪', no = '未就绪') {
   return value ? yes : no;
+}
+
+function syncCoverageStatusLabel(status) {
+  return ({
+    realtime: '实时同步',
+    partial_realtime: '部分实时',
+    record_only: '仅记录',
+    daily_fallback: '每日兜底',
+    manual_confirm: '手动确认',
+    not_supported: '暂无落库',
+    local_only: '纯本地',
+  })[status] || status || '未知';
+}
+
+function syncCoverageStatusClass(status) {
+  return ({
+    realtime: 'sync-coverage-realtime',
+    partial_realtime: 'sync-coverage-partial',
+    daily_fallback: 'sync-coverage-daily',
+    record_only: 'sync-coverage-record',
+    manual_confirm: 'sync-coverage-manual',
+    not_supported: 'sync-coverage-none',
+    local_only: 'sync-coverage-local',
+  })[status] || '';
+}
+
+function syncCoverageRiskText(level) {
+  return ({
+    low: '低',
+    medium: '中',
+    high: '高',
+  })[level] || level || '—';
+}
+
+function syncCoverageYesNo(value) {
+  return value ? '是' : '否';
+}
+
+function syncCoverageTableText(tables, names) {
+  if (!names || !names.length) return '无本地表';
+  return names.map(name => {
+    const row = (tables || {})[name] || {};
+    if (!row.exists) return `${name}: 缺失`;
+    return `${name}: ${Number(row.count || 0)} 条`;
+  }).join('；');
+}
+
+function renderSyncCoverageStatus(data = {}) {
+  const resources = data.resources || [];
+  const tables = data.tables || {};
+  const mode = data.webhook_mode || {};
+  const setText = (id, text, color) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (color) el.style.color = color;
+  };
+  const modeText = mode.processing_mode
+    ? `${translateWebhookMode(mode.processing_mode)}${mode.paused ? ' / 暂停' : ''}`
+    : '未持久化';
+  setText('sync-coverage-webhook-mode', modeText, mode.auto_enabled ? '#137333' : '#a16207');
+  const realtimeCount = resources.filter(x => x.status === 'realtime' || x.status === 'partial_realtime').length;
+  const recordCount = resources.filter(x => x.status === 'record_only' || x.status === 'not_supported').length;
+  setText('sync-coverage-realtime-count', `${realtimeCount} 类`);
+  setText('sync-coverage-record-count', `${recordCount} 类`, recordCount ? '#a16207' : '#137333');
+
+  const box = document.getElementById('sync-coverage-status-box');
+  if (!box) return;
+  const rows = resources.map(item => {
+    const status = item.status || '';
+    const pill = `<span class="sync-coverage-pill ${syncCoverageStatusClass(status)}">${webhookHtml(syncCoverageStatusLabel(status))}</span>`;
+    const tablesText = syncCoverageTableText(tables, item.local_tables || []);
+    const updated = item.last_updated_at || '暂无';
+    return `<tr>
+      <td><b>${webhookHtml(item.business_name || '')}</b><br><span class="tip">${webhookHtml(item.resource || '')}</span></td>
+      <td>${pill}<br><span class="tip">${webhookHtml(item.webhook_behavior || '')}</span></td>
+      <td>${syncCoverageYesNo(item.webhook_auto)}</td>
+      <td>${syncCoverageYesNo(item.daily_compare)}</td>
+      <td>${syncCoverageYesNo(item.manual_sync)}</td>
+      <td>${webhookHtml(tablesText)}</td>
+      <td>${webhookHtml(updated)}</td>
+      <td>${webhookHtml(syncCoverageRiskText(item.risk_level))}</td>
+      <td>${webhookHtml(item.note || '')}</td>
+    </tr>`;
+  }).join('');
+  const riskItems = (data.risk_endpoints || []).map(item => (
+    `<li><b>${webhookHtml(item.method || '')} ${webhookHtml(item.endpoint || '')}</b>：${webhookHtml(item.risk || '')}</li>`
+  )).join('');
+  const notes = (data.notes || []).map(x => `<div>${webhookHtml(x)}</div>`).join('');
+  box.innerHTML = `
+    <div class="tip" style="line-height:1.6;margin-bottom:8px;">
+      生成时间：${webhookHtml(data.generated_at || '')}；接口口径：local-only，called_jdy=false，would_call_jdy=false。<br>
+      recorded-only 表示已接收，只记录，暂不自动拉取，不等同于失败。
+    </div>
+    <div class="settings-scroll-window" style="max-height:300px;">
+      <table class="sync-coverage-table">
+        <thead>
+          <tr>
+            <th>业务 / resource</th>
+            <th>同步方式</th>
+            <th>实时</th>
+            <th>每日兜底</th>
+            <th>手动</th>
+            <th>本地表统计</th>
+            <th>最近更新时间</th>
+            <th>风险</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="9" class="tip">暂无覆盖状态</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;">
+      <b>高风险入口</b>
+      <ul class="sync-coverage-risk-list">${riskItems || '<li>暂无</li>'}</ul>
+    </div>
+    <div class="tip" style="margin-top:8px;line-height:1.6;">${notes}</div>
+  `;
+}
+
+async function loadSyncCoverageStatus() {
+  const box = document.getElementById('sync-coverage-status-box');
+  if (box) box.innerHTML = '正在读取 JDY 同步覆盖状态...';
+  try {
+    const res = await fetch(`${API}/sync/coverage-status`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || '读取失败');
+    renderSyncCoverageStatus(data);
+    appendSettingsLog('JDY 同步覆盖状态已刷新');
+  } catch (e) {
+    if (box) box.innerHTML = `<b>JDY 同步覆盖状态读取失败</b>：${webhookHtml(e.message || String(e))}`;
+    appendSettingsLog('JDY 同步覆盖状态读取失败：' + (e.message || String(e)), 'error');
+  }
 }
 
 function updateProductCacheAccountOptions(name1 = '饰品', name2 = '箱包') {
@@ -7772,6 +7984,7 @@ function showSettingsPane(name) {
   });
   appendSettingsLog(`切换设置分区：${target}`);
   if (target === 'cache') {
+    loadSyncCoverageStatus();
     loadWebhookStatus();
     loadCatalogCacheStatus();
   } else if (target === 'suppliers') {
