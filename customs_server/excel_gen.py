@@ -92,18 +92,46 @@ _ITEMS_STORE = os.path.join(_DATA_BASE, '_items_store')
 def _find_tpl(filename):
     """
     模板文件查找顺序：
-      1. exe 同目录的外部文件（放在旁边可随时替换，无需重新打包）
-      2. PyInstaller 内嵌文件（sys._MEIPASS）
-      3. 开发时的项目目录（../）
+      1. 服务端运行目录（源码运行时为 _HERE，打包后为 exe 同目录）
+      2. 服务端当前源码目录 _HERE（与运行目录不同时兜底）
+      3. 开发时的项目目录（../，兼容旧部署布局）
+      4. PyInstaller 内嵌文件（sys._MEIPASS）
     """
-    if _EXE_DIR:
-        ext = os.path.join(_EXE_DIR, filename)
-        if os.path.exists(ext):
-            return ext
-        return os.path.join(sys._MEIPASS, filename)
-    return os.path.join(_PROJ, filename)
+    runtime_dir = _EXE_DIR or _HERE
+    candidates = [os.path.join(runtime_dir, filename)]
+    if os.path.normcase(os.path.abspath(_HERE)) != os.path.normcase(os.path.abspath(runtime_dir)):
+        candidates.append(os.path.join(_HERE, filename))
+    candidates.append(os.path.join(_PROJ, filename))
+    if getattr(sys, '_MEIPASS', None):
+        candidates.append(os.path.join(sys._MEIPASS, filename))
+
+    seen = set()
+    tried = []
+    for path in candidates:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        tried.append(path)
+        if os.path.exists(path):
+            _TPL_TRIED[norm] = tried
+            return path
+
+    fallback = tried[0] if tried else filename
+    _TPL_TRIED[os.path.normcase(os.path.abspath(fallback))] = tried
+    return fallback
 
 
+def _load_workbook(path, *args, **kwargs):
+    norm = os.path.normcase(os.path.abspath(path))
+    if not os.path.exists(path) and norm in _TPL_TRIED:
+        filename = os.path.basename(path)
+        tried_text = '\n  - '.join(_TPL_TRIED[norm])
+        raise FileNotFoundError(f'找不到模板/基础资料文件: {filename}\n已尝试:\n  - {tried_text}')
+    return openpyxl.load_workbook(path, *args, **kwargs)
+
+
+_TPL_TRIED = {}
 BASE_DATA      = _find_tpl('报关产品基础资料（智谱）.xlsx')
 TPL_CUSTOMS    = _find_tpl('出口报关单.xlsx')
 TPL_INVOICE    = _find_tpl('Proforma Invoice 形式发票.xlsx')
@@ -130,7 +158,7 @@ ORIGIN_CN   = '中国'
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def load_base_data():
-    wb = openpyxl.load_workbook(BASE_DATA, data_only=True)
+    wb = _load_workbook(BASE_DATA, data_only=True)
     ws = wb.active
     data = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -561,7 +589,7 @@ def _copy_template2(src_ws, dest_ws, copy_start_row):
 
 
 def generate_customs(items, invoice_no, output_path):
-    wb  = openpyxl.load_workbook(TPL_CUSTOMS)
+    wb  = _load_workbook(TPL_CUSTOMS)
     ws  = wb['模板']
     ws2 = wb['模板 (2)']
 
@@ -823,7 +851,7 @@ def generate_invoice(items, invoice_no, output_path, date_str=None, pi_no=None):
     from copy import copy as _copy
     from openpyxl.utils import get_column_letter
 
-    wb = openpyxl.load_workbook(TPL_INVOICE)
+    wb = _load_workbook(TPL_INVOICE)
     ws = wb.active
 
     now = datetime.now()
@@ -1016,7 +1044,7 @@ def generate_packing(items, invoice_no, output_path, pi_no='', date_str=None):
     n      = len(merged)
 
     # ⚠️ TPL_PACKING 须为 .xlsx（用 Excel/WPS 将原 .xls 另存一次）
-    wb = openpyxl.load_workbook(TPL_PACKING)
+    wb = _load_workbook(TPL_PACKING)
     ws = wb.active
 
     # ── H4 = 合同编号(发票号)\n日期（wrap），H5 = 日期 ──────────────
@@ -1709,7 +1737,7 @@ def generate_sales_contract(processed, invoice_no, output_path, today=None):
     # 使用合并后数据（与报关单行数一致）
     items = merge_for_customs([i for i in processed if i.get('found')])
 
-    wb = openpyxl.load_workbook(TPL_SALES)
+    wb = _load_workbook(TPL_SALES)
     ws = wb['销售合同']
 
     # 合同编号 H13, 合同日期 H14
@@ -1797,7 +1825,7 @@ def generate_purchase_contracts(processed, supplier_map, invoice_no, output_path
         supplier_items = gdata['items']
         n              = len(supplier_items)
 
-        wb = openpyxl.load_workbook(TPL_PURCHASE)
+        wb = _load_workbook(TPL_PURCHASE)
         ws = wb.active
 
         # 合同日期 B6 / 合同编号 G6 / 供方名称 B7
@@ -1903,7 +1931,7 @@ def generate_purchase_contracts_check(processed, supplier_map, invoice_no, outpu
         if n == 0:
             continue
 
-        wb = openpyxl.load_workbook(TPL_PURCHASE)
+        wb = _load_workbook(TPL_PURCHASE)
         ws = wb.active
 
         purchase_date = _random_workday(sc_date, 1, 5, 'forward')
@@ -2257,7 +2285,7 @@ def generate_invoice_import(invoice_no, pdf_hs_data, items_json_path, output_pat
         hs_map[key]['amount_sum'] += amount
         hs_map[key]['usd_sum']    += float(item.get('total_usd', 0))
 
-    wb = openpyxl.load_workbook(TPL_INV_IMPORT)
+    wb = _load_workbook(TPL_INV_IMPORT)
     ws = wb.active
 
     # 清除已有数据行（从第 4 行开始）
@@ -2341,7 +2369,7 @@ def update_base_data_units(invoice_no, pdf_hs_data, items_json_path, output_path
             shutil.copy2(BASE_DATA, bak_path)
             print(f'[INFO] 基础资料已备份到: {bak_path}')
 
-        wb = openpyxl.load_workbook(BASE_DATA)
+        wb = _load_workbook(BASE_DATA)
         ws = wb.active
 
         diff_lines = [f'差异日志 {invoice_no} — {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
@@ -2770,7 +2798,7 @@ def generate_linghang_invoices(invoice_no, pdf_hs_data, supplier_map,
         row_list      = [rd for _, rd in row_items]
         n             = len(row_list)
 
-        wb = openpyxl.load_workbook(TPL_LINGHANG)
+        wb = _load_workbook(TPL_LINGHANG)
         ws = wb.active
 
         start = 6     # 第一数据行
