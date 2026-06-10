@@ -4479,59 +4479,167 @@ def _customs_upsert_product(conn, item, updated_by='', change_source='zhipu_exce
     return 'inserted'
 
 
-def _customs_product_status(customs):
+_CUSTOMS_ZHIPU_CODE_CACHE = {
+    'key': None,
+    'codes': set(),
+    'meta': {},
+}
+
+
+def _customs_zhipu_code_index():
+    """Read the default Zhipu Excel once per file version for list status badges."""
+    excel_path = _customs_product_source_path('')
+    if not excel_path:
+        return set(), {'available': False, 'excel_path': '', 'error': 'not_found'}
+    try:
+        stat = os.stat(excel_path)
+        cache_key = (os.path.abspath(excel_path), stat.st_mtime, stat.st_size)
+        if _CUSTOMS_ZHIPU_CODE_CACHE.get('key') == cache_key:
+            return _CUSTOMS_ZHIPU_CODE_CACHE.get('codes') or set(), _CUSTOMS_ZHIPU_CODE_CACHE.get('meta') or {}
+        parsed = _customs_parse_excel(excel_path)
+        codes = {
+            str(item.get('product_code') or '').strip()
+            for item in parsed.get('valid_rows') or []
+            if str(item.get('product_code') or '').strip()
+        }
+        meta = {
+            'available': True,
+            'excel_path': excel_path,
+            'sheet_name': parsed.get('sheet_name') or '',
+            'code_count': len(codes),
+            'duplicate_code_count': parsed.get('duplicate_code_count') or 0,
+            'loaded_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        _CUSTOMS_ZHIPU_CODE_CACHE.update({'key': cache_key, 'codes': codes, 'meta': meta})
+        return codes, meta
+    except Exception as e:
+        meta = {'available': False, 'excel_path': excel_path, 'error': _short_sync_error(e)}
+        _CUSTOMS_ZHIPU_CODE_CACHE.update({'key': None, 'codes': set(), 'meta': meta})
+        return set(), meta
+
+
+def _customs_master_missing_fields(jdy):
+    missing = []
+    for key in ('product_name', 'spec', 'unit_name'):
+        if str((jdy or {}).get(key) or '').strip() == '':
+            missing.append(key)
+    return missing
+
+
+def _customs_grid_value(row, key):
+    c = row.get('customs') or {}
+    j = row.get('jdy') or {}
+    status = row.get('status') or {}
+    computed = row.get('computed') or {}
+    values = {
+        'product_code': row.get('product_code') or '',
+        'product_name': j.get('product_name') or c.get('product_name') or '',
+        'jdy_product_name': j.get('product_name') or c.get('product_name') or '',
+        'spec': j.get('spec') or c.get('spec') or '',
+        'jdy_spec': j.get('spec') or c.get('spec') or '',
+        'unit': j.get('unit_name') or c.get('unit') or '',
+        'jdy_unit': j.get('unit_name') or c.get('unit') or '',
+        'default_supplier': j.get('default_supplier_name') or j.get('default_supplier_number') or '',
+        'jdy_supplier': j.get('default_supplier_name') or j.get('default_supplier_number') or '',
+        'hs_code': c.get('hs_code') or '',
+        'customs_name_cn': c.get('customs_name_cn') or '',
+        'material': c.get('material') or '',
+        'usage': c.get('usage') or '',
+        'customs_name_en': c.get('customs_name_en') or '',
+        'customs_unit': c.get('customs_unit') or '',
+        'updated_at': c.get('updated_at') or j.get('updated_at') or '',
+        'maintenance_status': status.get('label') or '',
+        'status': status.get('label') or '',
+        'zhipu_status': status.get('zhipu_label') or '',
+        'source': c.get('source') or '',
+        'production_license_preview': computed.get('production_license_preview') or '',
+    }
+    if key in values:
+        return values[key]
+    if key.startswith('jdy_'):
+        return j.get(key[4:]) or ''
+    return c.get(key) or ''
+
+
+def _customs_product_status(customs, zhipu_has_match=False, zhipu_available=False, master_missing_fields=None):
     has_data = bool(customs and customs.get('product_code'))
     missing = _customs_missing_fields(customs or {}) if has_data else CUSTOMS_PRODUCT_REQUIRED_FIELDS[:]
     maintained = has_data and not missing
     source = str((customs or {}).get('source') or '')
-    if not has_data:
-        label = '缺少报关资料'
-    elif missing:
-        label = '缺少字段'
-    elif source == 'local_edit':
-        label = '本地编辑'
-    elif source == 'zhipu_excel':
-        label = '智谱导入'
+    if maintained:
+        label = '已有报关资料'
     else:
-        label = '已维护'
+        label = '缺少报关资料'
+    if not zhipu_available:
+        zhipu_label = '未读取智谱'
+        zhipu_status = 'unknown'
+    elif zhipu_has_match and not maintained:
+        zhipu_label = '智谱可补全'
+        zhipu_status = 'match_fillable'
+    elif zhipu_has_match:
+        zhipu_label = '智谱有匹配'
+        zhipu_status = 'match'
+    else:
+        zhipu_label = '智谱无匹配'
+        zhipu_status = 'no_match'
+    master_missing_fields = master_missing_fields or []
     return {
         'has_customs_data': has_data,
         'is_maintained': maintained,
         'missing_fields': missing,
         'source': source,
         'label': label,
+        'maintenance_status': 'complete' if maintained else ('incomplete' if has_data else 'missing'),
+        'zhipu_match': bool(zhipu_has_match),
+        'zhipu_status': zhipu_status,
+        'zhipu_label': zhipu_label,
+        'master_missing_fields': master_missing_fields,
+        'has_master_blank': bool(master_missing_fields),
+        'is_new_or_missing': (not maintained) or bool(master_missing_fields) or (zhipu_available and not zhipu_has_match),
     }
 
 
 def _customs_product_list_response():
     page = _bounded_query_int(request.args.get('page'), 1, 1, 1000000)
-    page_size = _bounded_query_int(request.args.get('page_size') or request.args.get('limit'), 50, 1, 200)
+    page_size = _bounded_query_int(request.args.get('page_size') or request.args.get('limit'), 50, 1, 500)
     account = str(request.args.get('account') or 'all').strip() or 'all'
     q = str(request.args.get('q') or request.args.get('search') or '').strip().lower()
     status = str(request.args.get('status') or 'all').strip().lower()
     has_customs_data = str(request.args.get('has_customs_data') or '').strip().lower()
+    sort_by = str(request.args.get('sort_by') or 'product_code').strip()
+    sort_dir = str(request.args.get('sort_dir') or 'asc').strip().lower()
+    blank_fields = {
+        x.strip()
+        for x in str(request.args.get('blank_fields') or '').split(',')
+        if x.strip()
+    }
+    filter_args = {
+        key[7:]: str(value or '').strip().lower()
+        for key, value in request.args.items()
+        if key.startswith('filter_') and str(value or '').strip()
+    }
+    zhipu_codes, zhipu_meta = _customs_zhipu_code_index()
+    zhipu_available = bool(zhipu_meta.get('available'))
     conn = _sales_readonly_conn()
     base = {
         'success': True,
         'local_only': True,
         'called_jdy': False,
-        'source': 'customs_product_master+jdy_products',
+        'source': 'jdy_products LEFT JOIN customs_product_master',
         'total': 0,
         'page': page,
         'page_size': page_size,
         'items': [],
+        'zhipu': zhipu_meta,
     }
     if not conn:
         return {**base, 'message': '本地 SQLite 尚不存在，请先导入或刷新本地商品主档。'}, 200
     try:
         has_customs = _cache_sqlite_table_count(conn, 'customs_product_master').get('exists')
         has_jdy = _cache_sqlite_table_count(conn, 'jdy_products').get('exists')
-        if not has_customs and not has_jdy:
+        if not has_jdy and not has_customs:
             return {**base, 'message': '本地商品主档和报关资料表均不存在。'}, 200
-        if has_customs:
-            customs_rows = conn.execute('SELECT * FROM customs_product_master').fetchall()
-        else:
-            customs_rows = []
+        customs_rows = conn.execute('SELECT * FROM customs_product_master').fetchall() if has_customs else []
         customs_map = {
             str(row['product_code'] or '').strip(): _customs_product_row_to_dict(row)
             for row in customs_rows
@@ -4555,8 +4663,16 @@ def _customs_product_list_response():
                 code = str(row['product_number'] or '').strip()
                 if code and code not in product_map:
                     product_map[code] = _customs_product_row_to_dict(row)
-        all_codes = sorted(set(product_map.keys()) | set(customs_map.keys()))
+        all_codes = sorted(product_map.keys()) if has_jdy else sorted(customs_map.keys())
         filtered = []
+        counts = {
+            'complete': 0,
+            'missing_customs': 0,
+            'zhipu_fillable': 0,
+            'zhipu_no_match': 0,
+            'master_blank': 0,
+            'new_or_missing': 0,
+        }
         for code in all_codes:
             jdy = product_map.get(code) or {}
             customs = customs_map.get(code) or {}
@@ -4564,35 +4680,16 @@ def _customs_product_list_response():
                 acct = str(jdy.get('account') or customs.get('account') or '')
                 if acct and acct != account:
                     continue
-            search_text = ' '.join([
-                code,
-                str(jdy.get('product_name') or ''),
-                str(customs.get('product_name') or ''),
-                str(jdy.get('spec') or ''),
-                str(customs.get('spec') or ''),
-                str(jdy.get('barcode') or ''),
-                str(customs.get('customs_name_cn') or ''),
-                str(customs.get('material') or ''),
-                str(jdy.get('default_supplier_name') or ''),
-            ]).lower()
-            if q and q not in search_text:
-                continue
-            st = _customs_product_status({**customs, 'product_code': customs.get('product_code') or code} if customs else {})
-            if has_customs_data in ('1', 'true', 'yes', 'y') and not st['has_customs_data']:
-                continue
-            if has_customs_data in ('0', 'false', 'no', 'n') and st['has_customs_data']:
-                continue
-            if status in ('maintained', '已维护') and not st['is_maintained']:
-                continue
-            if status in ('missing', 'incomplete', '缺少报关资料') and st['is_maintained']:
-                continue
-            if status in ('zhipu', 'zhipu_excel', '智谱导入') and st.get('source') != 'zhipu_excel':
-                continue
-            if status in ('local', 'local_edit', '本地编辑') and st.get('source') != 'local_edit':
-                continue
+            master_missing = _customs_master_missing_fields(jdy)
+            st = _customs_product_status(
+                {**customs, 'product_code': customs.get('product_code') or code} if customs else {},
+                zhipu_has_match=code in zhipu_codes,
+                zhipu_available=zhipu_available,
+                master_missing_fields=master_missing,
+            )
             cn = str(customs.get('customs_name_cn') or '')
             material = str(customs.get('material') or '')
-            filtered.append({
+            row = {
                 'product_code': code,
                 'jdy': {
                     'id': jdy.get('id') or '',
@@ -4607,6 +4704,7 @@ def _customs_product_list_response():
                     'default_supplier_number': jdy.get('default_supplier_number') or '',
                     'default_supplier_name': jdy.get('default_supplier_name') or '',
                     'status': jdy.get('status') or '',
+                    'updated_at': jdy.get('updated_at') or '',
                 },
                 'customs': customs,
                 'computed': {
@@ -4614,7 +4712,69 @@ def _customs_product_list_response():
                     'pro_license_preview': f'{cn}*{material}' if cn or material else '',
                 },
                 'status': st,
-            })
+            }
+            search_text = ' '.join([
+                str(_customs_grid_value(row, key) or '')
+                for key in (
+                    'product_code', 'product_name', 'spec', 'jdy_barcode', 'material',
+                    'customs_name_cn', 'customs_name_en', 'default_supplier', 'hs_code',
+                )
+            ]).lower()
+            if q and q not in search_text:
+                continue
+            if has_customs_data in ('1', 'true', 'yes', 'y') and not st['has_customs_data']:
+                continue
+            if has_customs_data in ('0', 'false', 'no', 'n') and st['has_customs_data']:
+                continue
+            if status in ('maintained', 'complete', 'has_customs', '已有报关资料') and not st['is_maintained']:
+                continue
+            if status in ('missing', 'incomplete', 'missing_customs', '缺少报关资料') and st['is_maintained']:
+                continue
+            if status in ('zhipu_fillable', 'zhipu_match_fillable', '智谱可补全') and st.get('zhipu_status') != 'match_fillable':
+                continue
+            if status in ('zhipu_no_match', 'new_product', '智谱无匹配') and st.get('zhipu_status') != 'no_match':
+                continue
+            if status in ('master_blank', '主档字段为空') and not st.get('has_master_blank'):
+                continue
+            if status in ('new_missing', 'new_or_missing', '新增/缺失') and not st.get('is_new_or_missing'):
+                continue
+            if status in ('zhipu', 'zhipu_excel') and st.get('source') != 'zhipu_excel':
+                continue
+            if status in ('local', 'local_edit') and st.get('source') != 'local_edit':
+                continue
+            if any(str(_customs_grid_value(row, field) or '').strip() for field in blank_fields):
+                continue
+            filter_miss = False
+            for key, needle in filter_args.items():
+                if needle not in str(_customs_grid_value(row, key) or '').lower():
+                    filter_miss = True
+                    break
+            if filter_miss:
+                continue
+            if st['is_maintained']:
+                counts['complete'] += 1
+            else:
+                counts['missing_customs'] += 1
+            if st.get('zhipu_status') == 'match_fillable':
+                counts['zhipu_fillable'] += 1
+            if st.get('zhipu_status') == 'no_match':
+                counts['zhipu_no_match'] += 1
+            if st.get('has_master_blank'):
+                counts['master_blank'] += 1
+            if st.get('is_new_or_missing'):
+                counts['new_or_missing'] += 1
+            filtered.append(row)
+        sortable = {
+            'product_code', 'product_name', 'jdy_product_name', 'updated_at',
+            'status', 'maintenance_status',
+        }
+        if sort_by not in sortable:
+            sort_by = 'product_code'
+        reverse = sort_dir == 'desc'
+        filtered.sort(
+            key=lambda item: str(_customs_grid_value(item, sort_by) or '').lower(),
+            reverse=reverse,
+        )
         total = len(filtered)
         start = (page - 1) * page_size
         return {
@@ -4628,6 +4788,9 @@ def _customs_product_list_response():
                 'jdy_products_exists': bool(has_jdy),
                 'customs_count': len(customs_map),
                 'jdy_count': len(product_map),
+                'filtered_counts': counts,
+                'sort_by': sort_by,
+                'sort_dir': 'desc' if reverse else 'asc',
             },
         }, 200
     finally:
