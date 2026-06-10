@@ -247,6 +247,143 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
+.customs-products-shell {
+  min-width: 0;
+}
+.customs-products-grid {
+  flex: 1;
+  overflow: auto;
+  border-top: 1px solid #c9d5e2;
+  border-bottom: 1px solid #c9d5e2;
+  background: #fff;
+}
+.customs-products-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 2380px;
+  width: max-content;
+  font-size: 12px;
+}
+.customs-products-table th,
+.customs-products-table td {
+  height: 32px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border-right: 1px solid #d9e1e8;
+  border-bottom: 1px solid #e4ebf2;
+  background: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.customs-products-table th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: #eef4fb;
+  color: #1d2b3a;
+  font-weight: 700;
+  text-align: left;
+}
+.customs-products-table tr:hover td {
+  background: #f6fbff;
+}
+.customs-products-table .sticky-col {
+  position: sticky;
+  z-index: 3;
+  background: #fff;
+}
+.customs-products-table th.sticky-col {
+  z-index: 5;
+  background: #e6eef8;
+}
+.customs-products-table .c-code { left: 0; min-width: 132px; width: 132px; }
+.customs-products-table .c-img { left: 132px; min-width: 62px; width: 62px; text-align: center; }
+.customs-products-table .c-name { left: 194px; min-width: 180px; width: 180px; }
+.customs-products-table .c-spec { left: 374px; min-width: 150px; width: 150px; }
+.customs-products-img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border: 1px solid #d9e1e8;
+  background: #f5f7fa;
+}
+.customs-products-img-empty {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d9e1e8;
+  color: #93a1af;
+  background: #f7f9fb;
+  font-size: 11px;
+}
+.customs-status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid #d0dae5;
+  background: #f7f9fc;
+  color: #3b4a5a;
+  font-size: 12px;
+}
+.customs-status-pill.ok { border-color: #b8e0c9; background: #effaf3; color: #187343; }
+.customs-status-pill.warn { border-color: #f4d4a1; background: #fff7e8; color: #9a5b00; }
+.customs-status-pill.edit { border-color: #bdd3ff; background: #eef4ff; color: #214e9f; }
+.customs-column-menu {
+  position: absolute;
+  right: 16px;
+  top: 72px;
+  z-index: 20;
+  width: min(560px, calc(100vw - 40px));
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid #ccd7e3;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(25, 44, 79, .16);
+  padding: 12px;
+}
+.customs-column-menu.hidden { display: none; }
+.customs-column-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+}
+.customs-column-list label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #26394d;
+}
+.customs-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.customs-edit-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #4b5d70;
+  font-size: 12px;
+}
+.customs-edit-grid input {
+  border: 1px solid #d9e1e8;
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.customs-import-result {
+  max-height: 160px;
+  overflow: auto;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
 
 /* ── 页面内容区 ───────────────────────────────────── */
 .page { display: none; flex: 1; overflow: auto; padding: 16px; }
@@ -1902,6 +2039,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <span class="secondary-label">报关</span>
   <button class="subtab-btn" data-sub-page="order-list" onclick="showPage('order-list')">调拨/报关单</button>
   <button class="subtab-btn" data-sub-page="purchase-list" onclick="showPage('purchase-list')">购货辅助</button>
+  <button class="subtab-btn" data-sub-page="customs-products" onclick="showPage('customs-products')">商品资料</button>
   <button class="subtab-btn" data-sub-page="fill-page" onclick="showPage('fill-page')">资料补全</button>
 </div>
 
@@ -2371,9 +2509,83 @@ td.code { font-family: monospace; color: #1a2c5b; }
   </div>
 </div>
 
+<div class="page" id="page-customs-products">
+  <div class="sales-shell table-mode customs-products-shell" style="height:calc(100vh - 92px);border-radius:8px;overflow:hidden;background:#fff;">
+    <div class="sales-phone-header">
+      <div class="sales-header-actions">
+        <button type="button" class="sales-icon-btn" onclick="showPage('order-list')" title="返回报关单" aria-label="返回报关单">←</button>
+      </div>
+      <div class="sales-phone-title">报关商品资料</div>
+      <div class="sales-header-actions right">
+        <button type="button" class="sales-icon-btn" onclick="loadCustomsProducts(1)" title="刷新" aria-label="刷新">↻</button>
+      </div>
+    </div>
+    <div class="sales-filter">
+      <input id="customs-product-search" placeholder="搜索商品编号 / 名称 / 规格 / 材料" onkeydown="if(event.key==='Enter') loadCustomsProducts(1)">
+      <div class="summary-filter-actions">
+        <button type="button" class="sales-account-pill active" data-customs-account="all" onclick="setCustomsProductAccount('all', this)">全部账套</button>
+        <button type="button" class="sales-account-pill" data-customs-account="祺航饰品" onclick="setCustomsProductAccount('祺航饰品', this)">祺航饰品</button>
+        <button type="button" class="sales-account-pill" data-customs-account="祺航箱包" onclick="setCustomsProductAccount('祺航箱包', this)">祺航箱包</button>
+        <select id="customs-product-status" onchange="loadCustomsProducts(1)" style="border:1px solid #d9e1e8;border-radius:6px;padding:7px 10px;font-size:13px;">
+          <option value="all">全部</option>
+          <option value="maintained">已维护</option>
+          <option value="missing">缺少报关资料</option>
+          <option value="zhipu_excel">智谱导入</option>
+          <option value="local_edit">本地编辑</option>
+        </select>
+      </div>
+    </div>
+    <div class="local-products-toolbar" style="position:relative;">
+      <select id="customs-product-page-size" onchange="loadCustomsProducts(1)">
+        <option value="50">每页 50</option>
+        <option value="100">每页 100</option>
+        <option value="200">每页 200</option>
+      </select>
+      <input id="customs-product-excel-path" placeholder="可选：智谱 Excel 路径">
+      <button type="button" class="btn btn-primary btn-sm" onclick="loadCustomsProducts(1)">查询</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="toggleCustomsColumnMenu()">列显示</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="runCustomsImportDryRun()">导入预览</button>
+      <button type="button" class="btn btn-success btn-sm" onclick="confirmCustomsImport()">确认导入</button>
+      <span class="tip" id="customs-product-status-text">本页只读取本地 SQLite，不调用 JDY。</span>
+      <div class="local-products-pager">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="loadCustomsProducts((window._customsProductPage || 1) - 1)">上一页</button>
+        <span class="tip" id="customs-product-page-info">第 1 页</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="loadCustomsProducts((window._customsProductPage || 1) + 1)">下一页</button>
+      </div>
+      <div id="customs-column-menu" class="customs-column-menu hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+          <b>显示列</b>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="resetCustomsColumns()">恢复默认</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="toggleCustomsColumnMenu(false)">完成</button>
+          </div>
+        </div>
+        <div class="customs-column-list" id="customs-column-list"></div>
+      </div>
+    </div>
+    <div class="customs-import-result tip" id="customs-import-result">等待导入预览。</div>
+    <div class="customs-products-grid" id="customs-product-grid">
+      <div class="empty">点击「查询」读取本地报关商品资料。</div>
+    </div>
+    <div class="sales-total-bar" id="customs-product-total-bar">共 <b>0</b> 款</div>
+  </div>
+</div>
+
 <div class="sales-image-viewer" id="sales-image-viewer" onclick="closeSalesImageViewer()">
   <button type="button" class="sales-image-close" onclick="event.stopPropagation();closeSalesImageViewer()">×</button>
   <img id="sales-image-viewer-img" src="" alt="商品大图">
+</div>
+
+<div class="modal-overlay hidden" id="customs-product-edit-modal">
+  <div class="modal" style="width:820px;max-width:96vw;">
+    <h3>编辑报关商品资料</h3>
+    <div class="tip" id="customs-edit-code" style="margin-bottom:12px;"></div>
+    <div class="customs-edit-grid" id="customs-edit-grid"></div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button type="button" class="btn btn-ghost" onclick="closeCustomsEditModal()">取消</button>
+      <button type="button" class="btn btn-primary" onclick="saveCustomsProductEdit()">保存本地资料</button>
+    </div>
+  </div>
 </div>
 
 <div class="modal-overlay hidden" id="reorder-attachment-modal">
@@ -3528,6 +3740,7 @@ const PAGE_MAIN_GROUP = {
   'accessory-product-search': 'accessory',
   'order-list': 'customs',
   'purchase-list': 'customs',
+  'customs-products': 'customs',
   'fill-page': 'customs',
   'settings': 'settings',
 };
@@ -3590,6 +3803,10 @@ function showPage(name) {
   }
   if (name === 'sales-products' && !window._localProductsLoaded) {
     loadLocalProducts(1);
+  }
+  if (name === 'customs-products' && !window._customsProductsLoaded) {
+    initCustomsColumnSettings();
+    loadCustomsProducts(1);
   }
 }
 
@@ -3931,6 +4148,371 @@ async function importSelectedLocalProductsToReorder() {
     window._reorderSuppliersLoaded = false;
   } catch (e) {
     alert('导入失败：' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 报关商品资料
+// ════════════════════════════════════════════════════════════════
+let customsProductAccount = 'all';
+window._customsProductsLoaded = false;
+window._customsProductPage = 1;
+window._customsProductTotal = 0;
+window._customsProductRows = [];
+window._customsEditingRow = null;
+
+const CUSTOMS_COLUMN_STORAGE = 'customs_product_columns_v1';
+const CUSTOMS_PRODUCT_COLUMNS = [
+  {key:'product_code', label:'商品编号', fixed:'c-code', always:true},
+  {key:'image', label:'图片', fixed:'c-img', always:true},
+  {key:'jdy_product_name', label:'商品名称', fixed:'c-name', always:true},
+  {key:'jdy_spec', label:'规格', fixed:'c-spec', always:true},
+  {key:'jdy_unit', label:'单位'},
+  {key:'jdy_supplier', label:'默认供应商'},
+  {key:'hs_code', label:'海关编码'},
+  {key:'customs_name_cn', label:'报关名称'},
+  {key:'material', label:'材料'},
+  {key:'usage', label:'用途'},
+  {key:'customs_name_en', label:'英文报关品名'},
+  {key:'customs_unit', label:'报关单位'},
+  {key:'gross_weight_per_pkg', label:'毛重'},
+  {key:'net_weight_per_pkg', label:'净重'},
+  {key:'carton_length', label:'长'},
+  {key:'carton_width', label:'宽'},
+  {key:'carton_height', label:'高'},
+  {key:'carton_volume', label:'体积'},
+  {key:'is_tax_refund', label:'是否退税'},
+  {key:'status', label:'维护状态'},
+  {key:'updated_at', label:'更新时间'},
+  {key:'production_license_preview', label:'生产许可证预览', hidden:true},
+  {key:'jdy_product_id', label:'JDY product_id', hidden:true},
+  {key:'jdy_barcode', label:'条码', hidden:true},
+  {key:'jdy_category', label:'分类', hidden:true},
+  {key:'tax_code', label:'商品和服务税收编码', hidden:true},
+  {key:'tax_category_short_name', label:'商品和服务分类简称', hidden:true},
+  {key:'account', label:'所属账套', hidden:true},
+  {key:'supplier_number', label:'供应商编号', hidden:true},
+  {key:'tax_refund_rate', label:'退税率', hidden:true},
+  {key:'pcs_per_pkg', label:'PCS换算', hidden:true},
+  {key:'source', label:'source', hidden:true},
+  {key:'source_excel_path', label:'source_excel_path', hidden:true},
+  {key:'source_row_no', label:'source_row_no', hidden:true},
+  {key:'updated_by', label:'updated_by', hidden:true},
+  {key:'internal_id', label:'内部ID', hidden:true},
+];
+const CUSTOMS_EDIT_FIELDS = [
+  ['customs_name_cn', '报关名称'],
+  ['hs_code', '海关编码'],
+  ['customs_unit', '报关单位'],
+  ['origin', '境内货源地'],
+  ['material', '材料'],
+  ['usage', '用途'],
+  ['customs_name_en', '英文报关品名'],
+  ['gross_weight_per_pkg', '毛重(KGS/包)'],
+  ['net_weight_per_pkg', '净重(KGS/包)'],
+  ['carton_length', '长(箱)'],
+  ['carton_width', '宽(箱)'],
+  ['carton_height', '高(箱)'],
+  ['carton_volume', '体积'],
+  ['is_tax_refund', '是否退税'],
+  ['pcs_per_pkg', '原智谱商品备注 / 可能用于 PCS 换算'],
+  ['supplier_number', '供应商编号'],
+  ['tax_code', '商品和服务税收编码'],
+  ['tax_category_short_name', '商品和服务分类简称'],
+];
+
+function defaultCustomsColumns() {
+  const result = {};
+  CUSTOMS_PRODUCT_COLUMNS.forEach(col => {
+    result[col.key] = col.always || !col.hidden;
+  });
+  return result;
+}
+
+function loadCustomsColumnState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CUSTOMS_COLUMN_STORAGE) || '{}');
+    return {...defaultCustomsColumns(), ...saved};
+  } catch (_) {
+    return defaultCustomsColumns();
+  }
+}
+
+function saveCustomsColumnState(state) {
+  localStorage.setItem(CUSTOMS_COLUMN_STORAGE, JSON.stringify(state || {}));
+}
+
+function initCustomsColumnSettings() {
+  const list = document.getElementById('customs-column-list');
+  if (!list || list.dataset.ready) return;
+  const state = loadCustomsColumnState();
+  list.innerHTML = CUSTOMS_PRODUCT_COLUMNS
+    .filter(col => !col.always)
+    .map(col => `
+      <label title="${salesAttr(col.label)}">
+        <input type="checkbox" data-customs-col="${salesAttr(col.key)}" ${state[col.key] ? 'checked' : ''} onchange="onCustomsColumnToggle(this)">
+        <span>${salesAttr(col.label)}</span>
+      </label>
+    `).join('');
+  list.dataset.ready = '1';
+}
+
+function onCustomsColumnToggle(cb) {
+  const state = loadCustomsColumnState();
+  state[cb.dataset.customsCol] = cb.checked;
+  saveCustomsColumnState(state);
+  renderCustomsProducts(window._customsProductRows || [], window._customsLastPayload || {});
+}
+
+function resetCustomsColumns() {
+  localStorage.removeItem(CUSTOMS_COLUMN_STORAGE);
+  const list = document.getElementById('customs-column-list');
+  if (list) list.dataset.ready = '';
+  initCustomsColumnSettings();
+  renderCustomsProducts(window._customsProductRows || [], window._customsLastPayload || {});
+}
+
+function toggleCustomsColumnMenu(force) {
+  initCustomsColumnSettings();
+  const menu = document.getElementById('customs-column-menu');
+  if (!menu) return;
+  const show = typeof force === 'boolean' ? force : menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !show);
+}
+
+function setCustomsProductAccount(account, btn) {
+  customsProductAccount = account || 'all';
+  document.querySelectorAll('[data-customs-account]').forEach(p => {
+    p.classList.toggle('active', p === btn || p.dataset.customsAccount === customsProductAccount);
+  });
+  loadCustomsProducts(1);
+}
+
+function customsValue(row, key) {
+  const c = row.customs || {};
+  const j = row.jdy || {};
+  const computed = row.computed || {};
+  const status = row.status || {};
+  const map = {
+    product_code: row.product_code,
+    jdy_product_name: j.product_name || c.product_name,
+    jdy_spec: j.spec || c.spec,
+    jdy_unit: j.unit_name || c.unit,
+    jdy_supplier: j.default_supplier_name || j.default_supplier_number,
+    jdy_product_id: j.product_id,
+    jdy_barcode: j.barcode || c.barcode,
+    jdy_category: j.category_name || c.category_name,
+    account: j.account || c.account,
+    hs_code: c.hs_code,
+    customs_name_cn: c.customs_name_cn,
+    material: c.material,
+    usage: c.usage,
+    customs_name_en: c.customs_name_en,
+    customs_unit: c.customs_unit,
+    gross_weight_per_pkg: c.gross_weight_per_pkg,
+    net_weight_per_pkg: c.net_weight_per_pkg,
+    carton_length: c.carton_length,
+    carton_width: c.carton_width,
+    carton_height: c.carton_height,
+    carton_volume: c.carton_volume,
+    is_tax_refund: c.is_tax_refund,
+    updated_at: c.updated_at,
+    production_license_preview: computed.production_license_preview,
+    tax_code: c.tax_code,
+    tax_category_short_name: c.tax_category_short_name,
+    supplier_number: c.supplier_number,
+    tax_refund_rate: c.tax_refund_rate,
+    pcs_per_pkg: c.pcs_per_pkg,
+    source: c.source,
+    source_excel_path: c.source_excel_path,
+    source_row_no: c.source_row_no,
+    updated_by: c.updated_by,
+    internal_id: c.id,
+    status: status.label || '',
+  };
+  return map[key] ?? '';
+}
+
+function customsStatusHtml(row) {
+  const status = row.status || {};
+  const cls = status.is_maintained ? (status.source === 'local_edit' ? 'edit' : 'ok') : 'warn';
+  const miss = (status.missing_fields || []).length ? `：缺 ${status.missing_fields.join(', ')}` : '';
+  return `<span class="customs-status-pill ${cls}" title="${salesAttr((status.label || '') + miss)}">${salesAttr(status.label || '—')}</span>`;
+}
+
+function renderCustomsProducts(list, data) {
+  const grid = document.getElementById('customs-product-grid');
+  const totalBar = document.getElementById('customs-product-total-bar');
+  const pageInfo = document.getElementById('customs-product-page-info');
+  if (!grid) return;
+  const total = Number(data?.total || 0);
+  const page = Number(data?.page || 1);
+  const pageSize = Number(data?.page_size || 50);
+  const maxPage = Math.max(1, Math.ceil(total / pageSize));
+  if (pageInfo) pageInfo.textContent = `第 ${page} / ${maxPage} 页`;
+  if (!list || !list.length) {
+    grid.innerHTML = `<div class="empty">${total ? '当前页暂无商品' : '暂无报关商品资料，请先导入智谱 Excel 或检查本地商品主档。'}</div>`;
+    if (totalBar) totalBar.innerHTML = '共 <b>0</b> 款';
+    return;
+  }
+  const state = loadCustomsColumnState();
+  const columns = CUSTOMS_PRODUCT_COLUMNS.filter(col => col.always || state[col.key]);
+  const head = columns.map(col => `<th class="${col.fixed ? 'sticky-col ' + col.fixed : ''}">${salesAttr(col.label)}</th>`).join('');
+  const rows = list.map((row, idx) => {
+    const cells = columns.map(col => {
+      const cls = col.fixed ? `sticky-col ${col.fixed}` : '';
+      if (col.key === 'image') {
+        const src = row.jdy?.image_url || '';
+        const img = src
+          ? `<img class="customs-products-img" src="${salesAttr(src)}" data-full-img="${salesAttr(src)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), {className:'customs-products-img-empty', textContent:'无图'}))">`
+          : '<span class="customs-products-img-empty">无图</span>';
+        return `<td class="${cls}">${img}</td>`;
+      }
+      if (col.key === 'status') return `<td class="${cls}">${customsStatusHtml(row)}</td>`;
+      const val = customsValue(row, col.key);
+      return `<td class="${cls}" title="${salesAttr(val)}">${salesAttr(val || '—')}</td>`;
+    }).join('');
+    return `<tr ondblclick="openCustomsEditModal(${idx})">${cells}</tr>`;
+  }).join('');
+  grid.innerHTML = `<table class="customs-products-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  if (totalBar) totalBar.innerHTML = `共 <b>${salesAttr(total)}</b> 款，当前页 <b>${salesAttr(list.length)}</b> 款；双击行可编辑本地报关字段`;
+  bindSalesProductImages();
+}
+
+async function loadCustomsProducts(page) {
+  initCustomsColumnSettings();
+  const grid = document.getElementById('customs-product-grid');
+  const statusText = document.getElementById('customs-product-status-text');
+  const pageSize = Number(document.getElementById('customs-product-page-size')?.value || 50);
+  const q = document.getElementById('customs-product-search')?.value.trim() || '';
+  const status = document.getElementById('customs-product-status')?.value || 'all';
+  const maxPage = Math.max(1, Math.ceil((window._customsProductTotal || 0) / pageSize));
+  const nextPage = Math.max(1, Number(page || window._customsProductPage || 1));
+  if (page && window._customsProductTotal && nextPage > maxPage) return;
+  window._customsProductPage = nextPage;
+  if (grid) grid.innerHTML = '<div class="empty">正在读取本地报关商品资料…</div>';
+  if (statusText) statusText.textContent = '只读取本地 SQLite，不调用 JDY。';
+  try {
+    const params = new URLSearchParams({
+      account: customsProductAccount || 'all',
+      q,
+      status,
+      page: String(window._customsProductPage),
+      page_size: String(pageSize),
+    });
+    const data = await attachmentFetchJson(`${API}/customs-products?${params.toString()}`);
+    window._customsProductRows = data.items || [];
+    window._customsLastPayload = data;
+    window._customsProductsLoaded = true;
+    window._customsProductPage = Number(data.page || window._customsProductPage || 1);
+    window._customsProductTotal = Number(data.total || 0);
+    renderCustomsProducts(window._customsProductRows, data);
+    if (statusText) {
+      const s = data.summary || {};
+      statusText.textContent = `本地报关资料 ${s.customs_count || 0} 条，JDY 主档 ${s.jdy_count || 0} 条。`;
+    }
+  } catch (e) {
+    if (grid) grid.innerHTML = `<div class="empty log-err">读取失败：${salesAttr(e.message)}</div>`;
+    if (statusText) statusText.textContent = '读取失败：' + e.message;
+  }
+}
+
+function customsImportPathPayload() {
+  const p = document.getElementById('customs-product-excel-path')?.value.trim() || '';
+  return p ? {excel_path: p} : {};
+}
+
+function renderCustomsImportResult(data) {
+  const box = document.getElementById('customs-import-result');
+  if (!box) return;
+  const dups = (data.duplicate_codes || []).map(x => `${x.product_code}×${x.count}`).join('，') || '无';
+  const miss = data.field_missing_counts || {};
+  const missText = Object.keys(miss).length
+    ? Object.entries(miss).map(([k, v]) => `${k}:${v}`).join('，')
+    : '无';
+  box.textContent =
+    `Excel：${data.excel_path || ''}\n` +
+    `总行数 ${data.total_rows || 0}，有效编号 ${data.valid_code_count || 0}，空编号 ${data.blank_code_count || 0}，重复编号 ${data.duplicate_code_count || 0}\n` +
+    `${data.dry_run ? '预计' : '实际'}新增 ${data.estimated_insert ?? data.inserted ?? 0}，更新 ${data.estimated_update ?? data.updated ?? 0}，跳过 ${data.estimated_skip ?? data.skipped ?? 0}，未变 ${data.unchanged_count ?? data.unchanged ?? 0}\n` +
+    `重复商品编号：${dups}\n字段缺失：${missText}`;
+}
+
+async function runCustomsImportDryRun() {
+  const box = document.getElementById('customs-import-result');
+  if (box) box.textContent = '正在只读预览智谱 Excel，不写库…';
+  try {
+    const data = await attachmentFetchJson(`${API}/customs-products/import-dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(customsImportPathPayload()),
+    });
+    window._lastCustomsImportDryRun = data;
+    renderCustomsImportResult(data);
+  } catch (e) {
+    if (box) box.textContent = '导入预览失败：' + e.message;
+  }
+}
+
+async function confirmCustomsImport() {
+  if (!confirm('确认将智谱 Excel 导入本地 customs_product_master？不会修改 Excel，不会调用 JDY。')) return;
+  const box = document.getElementById('customs-import-result');
+  if (box) box.textContent = '正在导入本地 SQLite…';
+  try {
+    const data = await attachmentFetchJson(`${API}/customs-products/import-confirm`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({...customsImportPathPayload(), confirm: 'IMPORT_CUSTOMS_PRODUCTS'}),
+    });
+    renderCustomsImportResult(data);
+    await loadCustomsProducts(1);
+  } catch (e) {
+    if (box) box.textContent = '确认导入失败：' + e.message;
+  }
+}
+
+function openCustomsEditModal(index) {
+  const row = (window._customsProductRows || [])[index];
+  if (!row) return;
+  window._customsEditingRow = row;
+  const codeEl = document.getElementById('customs-edit-code');
+  if (codeEl) {
+    codeEl.textContent = `${row.product_code || ''} / ${row.jdy?.product_name || row.customs?.product_name || ''}`;
+  }
+  const grid = document.getElementById('customs-edit-grid');
+  const c = row.customs || {};
+  if (grid) {
+    grid.innerHTML = CUSTOMS_EDIT_FIELDS.map(([key, label]) => `
+      <label>
+        <span>${salesAttr(label)}</span>
+        <input data-customs-edit="${salesAttr(key)}" value="${salesAttr(c[key] ?? '')}">
+      </label>
+    `).join('');
+  }
+  document.getElementById('customs-product-edit-modal')?.classList.remove('hidden');
+}
+
+function closeCustomsEditModal() {
+  document.getElementById('customs-product-edit-modal')?.classList.add('hidden');
+  window._customsEditingRow = null;
+}
+
+async function saveCustomsProductEdit() {
+  const row = window._customsEditingRow;
+  if (!row || !row.product_code) return;
+  const payload = {};
+  document.querySelectorAll('[data-customs-edit]').forEach(input => {
+    payload[input.dataset.customsEdit] = input.value;
+  });
+  try {
+    await attachmentFetchJson(`${API}/customs-products/${encodeURIComponent(row.product_code)}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    closeCustomsEditModal();
+    await loadCustomsProducts(window._customsProductPage || 1);
+  } catch (e) {
+    alert('保存失败：' + e.message);
   }
 }
 
