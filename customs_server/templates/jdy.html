@@ -275,10 +275,79 @@ body {
   flex-wrap: wrap;
 }
 .customs-products-shell {
+  width: 100%;
   min-width: 0;
+  height: calc(100vh - 92px);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+.customs-products-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf0f3;
+  background: #fbfcfd;
+}
+.customs-products-topbar input,
+.customs-products-topbar select,
+.customs-products-toolbar input,
+.customs-products-toolbar select,
+.customs-filter-input,
+.customs-filter-select {
+  border: 1px solid #d9e1e8;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.customs-products-topbar input {
+  min-width: 360px;
+  flex: 1 1 360px;
+}
+.customs-products-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf3;
+  background: #fff;
+  position: relative;
+}
+.customs-products-toolbar input {
+  width: 240px;
+}
+.customs-quick-filter {
+  border: 1px solid #f2c36b;
+  background: #fff8e7;
+  color: #8a5200;
+}
+.customs-quick-filter.active {
+  background: #ffb72c;
+  border-color: #ffb72c;
+  color: #1d2b3a;
+  font-weight: 700;
+}
+.customs-filter-input,
+.customs-filter-select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+#page-customs-products.page.active {
+  overflow: hidden;
+  padding: 8px;
 }
 .customs-products-grid {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   border-top: 1px solid #c9d5e2;
   border-bottom: 1px solid #c9d5e2;
@@ -313,6 +382,23 @@ body {
   font-weight: 700;
   text-align: left;
 }
+.customs-products-table th.sortable {
+  cursor: pointer;
+}
+.customs-products-table th.sortable::after {
+  content: "↕";
+  color: #7d8da0;
+  float: right;
+  font-size: 11px;
+}
+.customs-products-table th.sort-asc::after { content: "↑"; color: #1a2c5b; }
+.customs-products-table th.sort-desc::after { content: "↓"; color: #1a2c5b; }
+.customs-products-table thead tr.customs-filter-row th {
+  top: 32px;
+  z-index: 4;
+  padding: 3px 6px;
+  background: #f8fbff;
+}
 .customs-products-table tr:hover td {
   background: #f6fbff;
 }
@@ -325,10 +411,13 @@ body {
   z-index: 5;
   background: #e6eef8;
 }
+.customs-products-table thead tr.customs-filter-row th.sticky-col {
+  z-index: 5;
+  background: #f4f8fe;
+}
 .customs-products-table .c-code { left: 0; min-width: 132px; width: 132px; }
 .customs-products-table .c-img { left: 132px; min-width: 62px; width: 62px; text-align: center; }
 .customs-products-table .c-name { left: 194px; min-width: 180px; width: 180px; }
-.customs-products-table .c-spec { left: 374px; min-width: 150px; width: 150px; }
 .customs-products-img {
   width: 34px;
   height: 34px;
@@ -2540,7 +2629,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
 </div>
 
 <div class="page" id="page-customs-products">
-  <div class="sales-shell table-mode customs-products-shell" style="height:calc(100vh - 92px);border-radius:8px;overflow:hidden;background:#fff;">
+  <div class="customs-products-shell">
     <div class="sales-phone-header">
       <div class="sales-header-actions">
         <button type="button" class="sales-icon-btn" onclick="showPage('order-list')" title="返回报关单" aria-label="返回报关单">←</button>
@@ -2550,26 +2639,39 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <button type="button" class="sales-icon-btn" onclick="loadCustomsProducts(1)" title="刷新" aria-label="刷新">↻</button>
       </div>
     </div>
-    <div class="sales-filter">
-      <input id="customs-product-search" placeholder="搜索商品编号 / 名称 / 规格 / 材料" onkeydown="if(event.key==='Enter') loadCustomsProducts(1)">
+    <div class="customs-products-topbar">
+      <input id="customs-product-search" placeholder="全局搜索：商品编号 / 名称 / 规格 / 材料 / 报关名称 / 英文品名 / 供应商" onkeydown="if(event.key==='Enter') loadCustomsProducts(1)">
       <div class="summary-filter-actions">
         <button type="button" class="sales-account-pill active" data-customs-account="all" onclick="setCustomsProductAccount('all', this)">全部账套</button>
         <button type="button" class="sales-account-pill" data-customs-account="祺航饰品" onclick="setCustomsProductAccount('祺航饰品', this)">祺航饰品</button>
         <button type="button" class="sales-account-pill" data-customs-account="祺航箱包" onclick="setCustomsProductAccount('祺航箱包', this)">祺航箱包</button>
-        <select id="customs-product-status" onchange="loadCustomsProducts(1)" style="border:1px solid #d9e1e8;border-radius:6px;padding:7px 10px;font-size:13px;">
+        <select id="customs-product-status" onchange="loadCustomsProducts(1)">
           <option value="all">全部</option>
-          <option value="maintained">已维护</option>
+          <option value="maintained">已有报关资料</option>
           <option value="missing">缺少报关资料</option>
-          <option value="zhipu_excel">智谱导入</option>
-          <option value="local_edit">本地编辑</option>
+          <option value="zhipu_fillable">智谱可补全</option>
+          <option value="zhipu_no_match">智谱无匹配</option>
+          <option value="master_blank">主档字段为空</option>
+          <option value="new_missing">新增/缺失</option>
         </select>
+        <button type="button" id="customs-product-new-missing" class="btn btn-sm customs-quick-filter" onclick="setCustomsQuickMissing()">新增/缺失</button>
       </div>
     </div>
-    <div class="local-products-toolbar" style="position:relative;">
+    <div class="customs-products-toolbar">
       <select id="customs-product-page-size" onchange="loadCustomsProducts(1)">
         <option value="50">每页 50</option>
         <option value="100">每页 100</option>
         <option value="200">每页 200</option>
+        <option value="500">每页 500</option>
+      </select>
+      <select id="customs-product-blank-fields" onchange="loadCustomsProducts(1)" title="只看所选字段为空">
+        <option value="">只看空白：不限</option>
+        <option value="product_name">商品名称为空</option>
+        <option value="spec">规格为空</option>
+        <option value="material">材料为空</option>
+        <option value="hs_code">海关编码为空</option>
+        <option value="customs_name_cn">报关商品名称为空</option>
+        <option value="customs_name_en">英文报关品名为空</option>
       </select>
       <input id="customs-product-excel-path" placeholder="可选：智谱 Excel 路径">
       <button type="button" class="btn btn-primary btn-sm" onclick="loadCustomsProducts(1)">查询</button>
@@ -4190,30 +4292,47 @@ window._customsProductPage = 1;
 window._customsProductTotal = 0;
 window._customsProductRows = [];
 window._customsEditingRow = null;
+window._customsProductSort = {key: 'product_code', dir: 'asc'};
+window._customsProductFilters = {};
 
-const CUSTOMS_COLUMN_STORAGE = 'customs_product_columns_v1';
+const CUSTOMS_COLUMN_STORAGE = 'customs_product_columns_v2';
+const CUSTOMS_SORTABLE_COLUMNS = new Set(['product_code', 'jdy_product_name', 'updated_at', 'status']);
+const CUSTOMS_FILTERABLE_COLUMNS = new Set([
+  'product_code',
+  'jdy_product_name',
+  'jdy_spec',
+  'jdy_unit',
+  'jdy_supplier',
+  'hs_code',
+  'customs_name_cn',
+  'material',
+  'usage',
+  'customs_name_en',
+]);
 const CUSTOMS_PRODUCT_COLUMNS = [
   {key:'product_code', label:'商品编号', fixed:'c-code', always:true},
   {key:'image', label:'图片', fixed:'c-img', always:true},
   {key:'jdy_product_name', label:'商品名称', fixed:'c-name', always:true},
-  {key:'jdy_spec', label:'规格', fixed:'c-spec', always:true},
+  {key:'jdy_spec', label:'规格'},
   {key:'jdy_unit', label:'单位'},
   {key:'jdy_supplier', label:'默认供应商'},
+  {key:'status', label:'维护状态'},
+  {key:'zhipu_status', label:'智谱匹配状态'},
   {key:'hs_code', label:'海关编码'},
-  {key:'customs_name_cn', label:'报关名称'},
+  {key:'customs_name_cn', label:'报关商品名称'},
   {key:'material', label:'材料'},
   {key:'usage', label:'用途'},
   {key:'customs_name_en', label:'英文报关品名'},
-  {key:'customs_unit', label:'报关单位'},
   {key:'gross_weight_per_pkg', label:'毛重'},
   {key:'net_weight_per_pkg', label:'净重'},
   {key:'carton_length', label:'长'},
   {key:'carton_width', label:'宽'},
   {key:'carton_height', label:'高'},
   {key:'carton_volume', label:'体积'},
-  {key:'is_tax_refund', label:'是否退税'},
-  {key:'status', label:'维护状态'},
   {key:'updated_at', label:'更新时间'},
+  {key:'customs_unit', label:'报关单位', hidden:true},
+  {key:'origin', label:'境内货源地', hidden:true},
+  {key:'is_tax_refund', label:'是否退税', hidden:true},
   {key:'production_license_preview', label:'生产许可证预览', hidden:true},
   {key:'jdy_product_id', label:'JDY product_id', hidden:true},
   {key:'jdy_barcode', label:'条码', hidden:true},
@@ -4227,6 +4346,8 @@ const CUSTOMS_PRODUCT_COLUMNS = [
   {key:'source', label:'source', hidden:true},
   {key:'source_excel_path', label:'source_excel_path', hidden:true},
   {key:'source_row_no', label:'source_row_no', hidden:true},
+  {key:'data_json', label:'data_json', hidden:true},
+  {key:'created_at', label:'created_at', hidden:true},
   {key:'updated_by', label:'updated_by', hidden:true},
   {key:'internal_id', label:'内部ID', hidden:true},
 ];
@@ -4325,9 +4446,13 @@ function customsValue(row, key) {
   const status = row.status || {};
   const map = {
     product_code: row.product_code,
+    product_name: j.product_name || c.product_name,
     jdy_product_name: j.product_name || c.product_name,
+    spec: j.spec || c.spec,
     jdy_spec: j.spec || c.spec,
+    unit: j.unit_name || c.unit,
     jdy_unit: j.unit_name || c.unit,
+    default_supplier: j.default_supplier_name || j.default_supplier_number,
     jdy_supplier: j.default_supplier_name || j.default_supplier_number,
     jdy_product_id: j.product_id,
     jdy_barcode: j.barcode || c.barcode,
@@ -4346,7 +4471,8 @@ function customsValue(row, key) {
     carton_height: c.carton_height,
     carton_volume: c.carton_volume,
     is_tax_refund: c.is_tax_refund,
-    updated_at: c.updated_at,
+    origin: c.origin,
+    updated_at: c.updated_at || j.updated_at,
     production_license_preview: computed.production_license_preview,
     tax_code: c.tax_code,
     tax_category_short_name: c.tax_category_short_name,
@@ -4356,18 +4482,88 @@ function customsValue(row, key) {
     source: c.source,
     source_excel_path: c.source_excel_path,
     source_row_no: c.source_row_no,
+    data_json: c.data_json || j.data_json,
+    created_at: c.created_at,
     updated_by: c.updated_by,
     internal_id: c.id,
     status: status.label || '',
+    zhipu_status: status.zhipu_label || '',
   };
   return map[key] ?? '';
 }
 
 function customsStatusHtml(row) {
   const status = row.status || {};
-  const cls = status.is_maintained ? (status.source === 'local_edit' ? 'edit' : 'ok') : 'warn';
+  const cls = status.is_maintained ? 'ok' : 'warn';
   const miss = (status.missing_fields || []).length ? `：缺 ${status.missing_fields.join(', ')}` : '';
   return `<span class="customs-status-pill ${cls}" title="${salesAttr((status.label || '') + miss)}">${salesAttr(status.label || '—')}</span>`;
+}
+
+function customsZhipuStatusHtml(row) {
+  const status = row.status || {};
+  let cls = 'edit';
+  if (status.zhipu_status === 'match_fillable') cls = 'ok';
+  if (status.zhipu_status === 'no_match') cls = 'warn';
+  return `<span class="customs-status-pill ${cls}">${salesAttr(status.zhipu_label || '—')}</span>`;
+}
+
+function customsSortParam(key) {
+  if (key === 'status') return 'maintenance_status';
+  return key;
+}
+
+function setCustomsSort(key) {
+  if (!CUSTOMS_SORTABLE_COLUMNS.has(key)) return;
+  const nextKey = customsSortParam(key);
+  const current = window._customsProductSort || {key: 'product_code', dir: 'asc'};
+  const nextDir = current.key === nextKey && current.dir === 'asc' ? 'desc' : 'asc';
+  window._customsProductSort = {key: nextKey, dir: nextDir};
+  loadCustomsProducts(1);
+}
+
+function customsColumnFilterValue(key) {
+  return (window._customsProductFilters || {})[key] || '';
+}
+
+function setCustomsColumnFilter(input) {
+  if (!input) return;
+  window._customsProductFilters = window._customsProductFilters || {};
+  const key = input.dataset.customsFilter || '';
+  if (!key) return;
+  const val = input.value.trim();
+  if (val) {
+    window._customsProductFilters[key] = val;
+  } else {
+    delete window._customsProductFilters[key];
+  }
+}
+
+function applyCustomsColumnFilters() {
+  document.querySelectorAll('[data-customs-filter]').forEach(input => setCustomsColumnFilter(input));
+  loadCustomsProducts(1);
+}
+
+function onCustomsFilterKeydown(event) {
+  if (event.key !== 'Enter') return;
+  setCustomsColumnFilter(event.currentTarget);
+  loadCustomsProducts(1);
+}
+
+function setCustomsQuickMissing() {
+  const select = document.getElementById('customs-product-status');
+  if (select) select.value = 'new_missing';
+  loadCustomsProducts(1);
+}
+
+function syncCustomsQuickMissingState() {
+  const active = (document.getElementById('customs-product-status')?.value || '') === 'new_missing';
+  document.getElementById('customs-product-new-missing')?.classList.toggle('active', active);
+}
+
+function customsFilterControl(col) {
+  if (!CUSTOMS_FILTERABLE_COLUMNS.has(col.key)) return '';
+  const value = customsColumnFilterValue(col.key);
+  return `<input class="customs-filter-input" data-customs-filter="${salesAttr(col.key)}" value="${salesAttr(value)}" placeholder="筛选" oninput="setCustomsColumnFilter(this)" onkeydown="onCustomsFilterKeydown(event)" onchange="applyCustomsColumnFilters()">`;
 }
 
 function renderCustomsProducts(list, data) {
@@ -4380,15 +4576,19 @@ function renderCustomsProducts(list, data) {
   const pageSize = Number(data?.page_size || 50);
   const maxPage = Math.max(1, Math.ceil(total / pageSize));
   if (pageInfo) pageInfo.textContent = `第 ${page} / ${maxPage} 页`;
-  if (!list || !list.length) {
-    grid.innerHTML = `<div class="empty">${total ? '当前页暂无商品' : '暂无报关商品资料，请先导入智谱 Excel 或检查本地商品主档。'}</div>`;
-    if (totalBar) totalBar.innerHTML = '共 <b>0</b> 款';
-    return;
-  }
   const state = loadCustomsColumnState();
   const columns = CUSTOMS_PRODUCT_COLUMNS.filter(col => col.always || state[col.key]);
-  const head = columns.map(col => `<th class="${col.fixed ? 'sticky-col ' + col.fixed : ''}">${salesAttr(col.label)}</th>`).join('');
-  const rows = list.map((row, idx) => {
+  const sort = window._customsProductSort || {key: 'product_code', dir: 'asc'};
+  const head = columns.map(col => {
+    const sortKey = customsSortParam(col.key);
+    const sortable = CUSTOMS_SORTABLE_COLUMNS.has(col.key);
+    const sortClass = sortable && sort.key === sortKey ? ` sort-${sort.dir === 'desc' ? 'desc' : 'asc'}` : '';
+    const cls = `${col.fixed ? 'sticky-col ' + col.fixed : ''}${sortable ? ' sortable' : ''}${sortClass}`;
+    const click = sortable ? ` onclick="setCustomsSort('${salesAttr(col.key)}')"` : '';
+    return `<th class="${cls}"${click}>${salesAttr(col.label)}</th>`;
+  }).join('');
+  const filters = columns.map(col => `<th class="${col.fixed ? 'sticky-col ' + col.fixed : ''}">${customsFilterControl(col)}</th>`).join('');
+  const rows = (list || []).map((row, idx) => {
     const cells = columns.map(col => {
       const cls = col.fixed ? `sticky-col ${col.fixed}` : '';
       if (col.key === 'image') {
@@ -4399,13 +4599,15 @@ function renderCustomsProducts(list, data) {
         return `<td class="${cls}">${img}</td>`;
       }
       if (col.key === 'status') return `<td class="${cls}">${customsStatusHtml(row)}</td>`;
+      if (col.key === 'zhipu_status') return `<td class="${cls}">${customsZhipuStatusHtml(row)}</td>`;
       const val = customsValue(row, col.key);
       return `<td class="${cls}" title="${salesAttr(val)}">${salesAttr(val || '—')}</td>`;
     }).join('');
     return `<tr ondblclick="openCustomsEditModal(${idx})">${cells}</tr>`;
   }).join('');
-  grid.innerHTML = `<table class="customs-products-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-  if (totalBar) totalBar.innerHTML = `共 <b>${salesAttr(total)}</b> 款，当前页 <b>${salesAttr(list.length)}</b> 款；双击行可编辑本地报关字段`;
+  const emptyRow = rows || `<tr><td colspan="${columns.length}" class="empty">${total ? '当前页暂无商品' : '暂无匹配商品，可调整筛选条件或先做导入预览。'}</td></tr>`;
+  grid.innerHTML = `<table class="customs-products-table"><thead><tr>${head}</tr><tr class="customs-filter-row">${filters}</tr></thead><tbody>${emptyRow}</tbody></table>`;
+  if (totalBar) totalBar.innerHTML = `共 <b>${salesAttr(total)}</b> 款，当前页 <b>${salesAttr((list || []).length)}</b> 款；双击行可编辑本地报关字段`;
   bindSalesProductImages();
 }
 
@@ -4416,19 +4618,28 @@ async function loadCustomsProducts(page) {
   const pageSize = Number(document.getElementById('customs-product-page-size')?.value || 50);
   const q = document.getElementById('customs-product-search')?.value.trim() || '';
   const status = document.getElementById('customs-product-status')?.value || 'all';
+  const blankFields = document.getElementById('customs-product-blank-fields')?.value || '';
   const maxPage = Math.max(1, Math.ceil((window._customsProductTotal || 0) / pageSize));
   const nextPage = Math.max(1, Number(page || window._customsProductPage || 1));
   if (page && window._customsProductTotal && nextPage > maxPage) return;
   window._customsProductPage = nextPage;
+  syncCustomsQuickMissingState();
   if (grid) grid.innerHTML = '<div class="empty">正在读取本地报关商品资料…</div>';
   if (statusText) statusText.textContent = '只读取本地 SQLite，不调用 JDY。';
   try {
+    const sort = window._customsProductSort || {key: 'product_code', dir: 'asc'};
     const params = new URLSearchParams({
       account: customsProductAccount || 'all',
       q,
       status,
       page: String(window._customsProductPage),
       page_size: String(pageSize),
+      sort_by: sort.key || 'product_code',
+      sort_dir: sort.dir || 'asc',
+    });
+    if (blankFields) params.set('blank_fields', blankFields);
+    Object.entries(window._customsProductFilters || {}).forEach(([key, val]) => {
+      if (val) params.set(`filter_${key}`, val);
     });
     const data = await attachmentFetchJson(`${API}/customs-products?${params.toString()}`);
     window._customsProductRows = data.items || [];
@@ -4436,10 +4647,16 @@ async function loadCustomsProducts(page) {
     window._customsProductsLoaded = true;
     window._customsProductPage = Number(data.page || window._customsProductPage || 1);
     window._customsProductTotal = Number(data.total || 0);
+    if (data.summary?.sort_by) {
+      window._customsProductSort = {key: data.summary.sort_by, dir: data.summary.sort_dir || 'asc'};
+    }
     renderCustomsProducts(window._customsProductRows, data);
     if (statusText) {
       const s = data.summary || {};
-      statusText.textContent = `本地报关资料 ${s.customs_count || 0} 条，JDY 主档 ${s.jdy_count || 0} 条。`;
+      const c = s.filtered_counts || {};
+      const z = data.zhipu || {};
+      const zText = z.available ? `，智谱编号 ${z.code_count || 0} 个` : '，智谱匹配状态未读取';
+      statusText.textContent = `本地报关资料 ${s.customs_count || 0} 条，JDY 主档 ${s.jdy_count || 0} 条${zText}；新增/缺失 ${c.new_or_missing || 0} 款。`;
     }
   } catch (e) {
     if (grid) grid.innerHTML = `<div class="empty log-err">读取失败：${salesAttr(e.message)}</div>`;
