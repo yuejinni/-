@@ -221,6 +221,33 @@ body {
 .local-product-card {
   grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
 }
+.local-product-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+.sales-filter .local-product-search-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.local-product-search-btn {
+  flex: 0 0 auto;
+  min-width: 64px;
+  border: 1px solid #1a2c5b;
+  border-radius: 6px;
+  background: #1a2c5b;
+  color: #fff;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.local-product-search-btn:hover {
+  background: #243b74;
+  border-color: #243b74;
+}
 .local-products-toolbar {
   display: flex;
   align-items: center;
@@ -2470,7 +2497,10 @@ td.code { font-family: monospace; color: #1a2c5b; }
         </div>
       </div>
       <div class="sales-filter">
-        <input id="local-product-search" placeholder="搜索商品编号 / 名称 / 规格 / 条码 / 供应商" onkeydown="if(event.key==='Enter') loadLocalProducts(1)">
+        <div class="local-product-search-row">
+          <input id="local-product-search" placeholder="搜索商品编号 / 名称 / 规格 / 条码 / 供应商" enterkeyhint="search" inputmode="search" onkeydown="if(event.key==='Enter') loadLocalProducts(1)">
+          <button type="button" class="local-product-search-btn" onclick="loadLocalProducts(1)" aria-label="搜索本地商品">搜索</button>
+        </div>
         <div class="summary-filter-actions">
           <button type="button" class="sales-account-pill active" data-local-product-account="all" onclick="setLocalProductAccount('all', this)">全部账套</button>
           <button type="button" class="sales-account-pill" data-local-product-account="祺航饰品" onclick="setLocalProductAccount('祺航饰品', this)">祺航饰品</button>
