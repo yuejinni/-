@@ -37,6 +37,7 @@ import re
 import math
 import urllib.request
 from urllib.parse import urlparse
+from collections import Counter
 
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -196,8 +197,11 @@ def _admin_path_required():
         '/clear-supplier-cache', '/admin/users',
         '/attachments/status', '/attachments/refresh-dry-run', '/attachments/refresh',
         '/attachments/history-backfill-dry-run', '/attachments/history-backfill',
+        '/customs-products/import-dry-run', '/customs-products/import-confirm',
     }
     if request.path in admin_exact:
+        return True
+    if request.path.startswith('/customs-products/') and request.method in ('PATCH', 'PUT', 'DELETE'):
         return True
     return request.path.startswith('/admin/users/')
 
@@ -3747,6 +3751,7 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_category ON jdy_products(account, category_name)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_updated ON jdy_products(account, updated_at)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jdy_products_seen ON jdy_products(account, last_seen_at)')
+    _ensure_customs_product_tables(conn)
     webhook_cols = {str(row['name']).lower() for row in conn.execute('PRAGMA table_info(webhook_events)').fetchall()}
     webhook_additions = [
         ('event_id', 'TEXT'),
@@ -4046,6 +4051,704 @@ def _sales_readonly_conn():
     conn = sqlite3.connect(uri, uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+CUSTOMS_PRODUCT_COLUMNS = [
+    'account', 'product_code', 'product_name', 'category_name', 'spec', 'unit', 'barcode',
+    'jdy_product_id', 'customs_name_cn', 'customs_name_en', 'hs_code', 'customs_unit',
+    'origin', 'material', 'usage', 'tax_refund_rate', 'is_tax_refund',
+    'gross_weight_per_pkg', 'net_weight_per_pkg', 'carton_length', 'carton_width',
+    'carton_height', 'carton_volume', 'pcs_per_pkg', 'supplier_number', 'tax_code',
+    'tax_category_short_name', 'source', 'source_excel_path', 'source_row_no',
+    'created_at', 'updated_at', 'updated_by',
+]
+CUSTOMS_PRODUCT_NUMERIC_FIELDS = {
+    'tax_refund_rate', 'gross_weight_per_pkg', 'net_weight_per_pkg', 'carton_length',
+    'carton_width', 'carton_height', 'carton_volume', 'pcs_per_pkg',
+}
+CUSTOMS_PRODUCT_REQUIRED_FIELDS = [
+    'hs_code', 'customs_name_cn', 'customs_unit', 'origin', 'material', 'usage',
+]
+CUSTOMS_PRODUCT_MUTABLE_FIELDS = [
+    'account', 'product_name', 'category_name', 'spec', 'unit', 'barcode', 'jdy_product_id',
+    'customs_name_cn', 'customs_name_en', 'hs_code', 'customs_unit', 'origin', 'material',
+    'usage', 'tax_refund_rate', 'is_tax_refund', 'gross_weight_per_pkg', 'net_weight_per_pkg',
+    'carton_length', 'carton_width', 'carton_height', 'carton_volume', 'pcs_per_pkg',
+    'supplier_number', 'tax_code', 'tax_category_short_name',
+]
+
+
+def _ensure_customs_product_tables(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS customs_product_master (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT,
+            product_code TEXT NOT NULL UNIQUE,
+            product_name TEXT,
+            category_name TEXT,
+            spec TEXT,
+            unit TEXT,
+            barcode TEXT,
+            jdy_product_id TEXT,
+            customs_name_cn TEXT,
+            customs_name_en TEXT,
+            hs_code TEXT,
+            customs_unit TEXT,
+            origin TEXT,
+            material TEXT,
+            usage TEXT,
+            tax_refund_rate REAL,
+            is_tax_refund TEXT,
+            gross_weight_per_pkg REAL,
+            net_weight_per_pkg REAL,
+            carton_length REAL,
+            carton_width REAL,
+            carton_height REAL,
+            carton_volume REAL,
+            pcs_per_pkg REAL,
+            supplier_number TEXT,
+            tax_code TEXT,
+            tax_category_short_name TEXT,
+            source TEXT,
+            source_excel_path TEXT,
+            source_row_no INTEGER,
+            created_at TEXT,
+            updated_at TEXT,
+            updated_by TEXT
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS customs_product_master_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_code TEXT NOT NULL,
+            changed_at TEXT NOT NULL,
+            changed_by TEXT,
+            change_source TEXT,
+            old_json TEXT,
+            new_json TEXT,
+            created_at TEXT NOT NULL
+        )
+    ''')
+    cols = {
+        str(row['name']).lower()
+        for row in conn.execute('PRAGMA table_info(customs_product_master)').fetchall()
+    }
+    additions = [
+        ('account', 'TEXT'),
+        ('product_code', 'TEXT'),
+        ('product_name', 'TEXT'),
+        ('category_name', 'TEXT'),
+        ('spec', 'TEXT'),
+        ('unit', 'TEXT'),
+        ('barcode', 'TEXT'),
+        ('jdy_product_id', 'TEXT'),
+        ('customs_name_cn', 'TEXT'),
+        ('customs_name_en', 'TEXT'),
+        ('hs_code', 'TEXT'),
+        ('customs_unit', 'TEXT'),
+        ('origin', 'TEXT'),
+        ('material', 'TEXT'),
+        ('usage', 'TEXT'),
+        ('tax_refund_rate', 'REAL'),
+        ('is_tax_refund', 'TEXT'),
+        ('gross_weight_per_pkg', 'REAL'),
+        ('net_weight_per_pkg', 'REAL'),
+        ('carton_length', 'REAL'),
+        ('carton_width', 'REAL'),
+        ('carton_height', 'REAL'),
+        ('carton_volume', 'REAL'),
+        ('pcs_per_pkg', 'REAL'),
+        ('supplier_number', 'TEXT'),
+        ('tax_code', 'TEXT'),
+        ('tax_category_short_name', 'TEXT'),
+        ('source', 'TEXT'),
+        ('source_excel_path', 'TEXT'),
+        ('source_row_no', 'INTEGER'),
+        ('created_at', 'TEXT'),
+        ('updated_at', 'TEXT'),
+        ('updated_by', 'TEXT'),
+    ]
+    for name, ddl in additions:
+        if name.lower() not in cols:
+            conn.execute(f'ALTER TABLE customs_product_master ADD COLUMN {name} {ddl}')
+            cols.add(name.lower())
+    hcols = {
+        str(row['name']).lower()
+        for row in conn.execute('PRAGMA table_info(customs_product_master_history)').fetchall()
+    }
+    hadditions = [
+        ('product_code', 'TEXT'),
+        ('changed_at', 'TEXT'),
+        ('changed_by', 'TEXT'),
+        ('change_source', 'TEXT'),
+        ('old_json', 'TEXT'),
+        ('new_json', 'TEXT'),
+        ('created_at', 'TEXT'),
+    ]
+    for name, ddl in hadditions:
+        if name.lower() not in hcols:
+            conn.execute(f'ALTER TABLE customs_product_master_history ADD COLUMN {name} {ddl}')
+            hcols.add(name.lower())
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_customs_product_code ON customs_product_master(product_code)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_customs_product_account ON customs_product_master(account)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_customs_product_source ON customs_product_master(source)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_customs_product_updated ON customs_product_master(updated_at)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_customs_product_history_code ON customs_product_master_history(product_code, changed_at)')
+
+
+def _customs_product_row_to_dict(row):
+    if not row:
+        return {}
+    data = {}
+    for key in row.keys():
+        data[key] = row[key]
+    return data
+
+
+def _clean_excel_text(value):
+    if value is None:
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _clean_excel_number(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(str(value).replace(',', '').strip())
+    except Exception:
+        return None
+
+
+def _customs_json_for_compare(data):
+    return {
+        key: data.get(key)
+        for key in CUSTOMS_PRODUCT_COLUMNS
+        if key not in ('id', 'created_at', 'updated_at', 'updated_by')
+    }
+
+
+def _customs_missing_fields(data):
+    return [
+        field for field in CUSTOMS_PRODUCT_REQUIRED_FIELDS
+        if str((data or {}).get(field) or '').strip() == ''
+    ]
+
+
+def _customs_product_source_path(explicit_path=''):
+    explicit_path = str(explicit_path or '').strip().strip('"')
+    if explicit_path and os.path.exists(explicit_path):
+        return explicit_path
+    try:
+        from ai_identify import _find_excel
+        path = _find_excel(_load_ai_config())
+        if path and os.path.exists(path):
+            return path
+    except Exception:
+        pass
+    candidates = [
+        os.path.join(_DATA_BASE, '报关产品基础资料（智谱）.xlsx'),
+        os.path.join(_BASE, '报关产品基础资料（智谱）.xlsx'),
+        os.path.join(os.path.dirname(_DATA_BASE), '报关产品基础资料（智谱）.xlsx'),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ''
+
+
+def _customs_load_existing_map(conn):
+    if not conn:
+        return {}
+    try:
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='customs_product_master'"
+        ).fetchone()
+        if not exists:
+            return {}
+        rows = conn.execute('SELECT * FROM customs_product_master').fetchall()
+        return {
+            str(row['product_code'] or '').strip(): _customs_product_row_to_dict(row)
+            for row in rows
+            if str(row['product_code'] or '').strip()
+        }
+    except Exception:
+        return {}
+
+
+def _customs_parse_excel(excel_path):
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        headers = [_clean_excel_text(ws.cell(1, col).value) for col in range(1, ws.max_column + 1)]
+        header_counts = Counter([h for h in headers if h])
+        duplicate_headers = [
+            {'field': key, 'count': count}
+            for key, count in header_counts.items()
+            if count > 1
+        ]
+        rows = []
+        blank_code_rows = []
+        total_rows = 0
+        code_counts = Counter()
+        for row_no, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(value not in (None, '') for value in row):
+                continue
+            total_rows += 1
+            product_code = _clean_excel_text(row[1] if len(row) > 1 else '')
+            if not product_code:
+                blank_code_rows.append(row_no)
+                continue
+            code_counts[product_code] += 1
+            item = {
+                'account': _clean_excel_text(row[20] if len(row) > 20 else ''),
+                'product_code': product_code,
+                'product_name': _clean_excel_text(row[2] if len(row) > 2 else ''),
+                'category_name': _clean_excel_text(row[3] if len(row) > 3 else ''),
+                'spec': '',
+                'unit': '',
+                'barcode': '',
+                'jdy_product_id': '',
+                'customs_name_cn': _clean_excel_text(row[5] if len(row) > 5 else ''),
+                'customs_name_en': _clean_excel_text(row[22] if len(row) > 22 else ''),
+                'hs_code': _clean_excel_text(row[4] if len(row) > 4 else ''),
+                'customs_unit': _clean_excel_text(row[6] if len(row) > 6 else ''),
+                'origin': _clean_excel_text(row[7] if len(row) > 7 else ''),
+                'material': _clean_excel_text(row[8] if len(row) > 8 else ''),
+                'usage': _clean_excel_text(row[9] if len(row) > 9 else ''),
+                'tax_refund_rate': _clean_excel_number(row[10] if len(row) > 10 else None),
+                'is_tax_refund': _clean_excel_text(row[17] if len(row) > 17 else ''),
+                'gross_weight_per_pkg': _clean_excel_number(row[11] if len(row) > 11 else None),
+                'net_weight_per_pkg': _clean_excel_number(row[12] if len(row) > 12 else None),
+                'carton_length': _clean_excel_number(row[13] if len(row) > 13 else None),
+                'carton_width': _clean_excel_number(row[14] if len(row) > 14 else None),
+                'carton_height': _clean_excel_number(row[15] if len(row) > 15 else None),
+                'carton_volume': _clean_excel_number(row[16] if len(row) > 16 else None),
+                'pcs_per_pkg': _clean_excel_number(row[18] if len(row) > 18 else None),
+                'supplier_number': _clean_excel_text(row[19] if len(row) > 19 else ''),
+                'tax_code': _clean_excel_text(row[21] if len(row) > 21 else ''),
+                'tax_category_short_name': _clean_excel_text(row[23] if len(row) > 23 else ''),
+                'source': 'zhipu_excel',
+                'source_excel_path': excel_path,
+                'source_row_no': row_no,
+            }
+            rows.append(item)
+        duplicate_codes = [
+            {'product_code': code, 'count': count}
+            for code, count in code_counts.items()
+            if count > 1
+        ]
+        duplicate_set = {item['product_code'] for item in duplicate_codes}
+        valid_rows = [item for item in rows if item['product_code'] not in duplicate_set]
+        missing_counts = {}
+        for item in rows:
+            for field in CUSTOMS_PRODUCT_REQUIRED_FIELDS:
+                if str(item.get(field) or '').strip() == '':
+                    missing_counts[field] = missing_counts.get(field, 0) + 1
+        return {
+            'excel_path': excel_path,
+            'sheet_name': ws.title,
+            'headers': headers,
+            'duplicate_headers': duplicate_headers,
+            'total_rows': total_rows,
+            'valid_code_count': len(rows),
+            'blank_code_count': len(blank_code_rows),
+            'blank_code_rows': blank_code_rows[:100],
+            'duplicate_code_count': len(duplicate_codes),
+            'duplicate_codes': duplicate_codes[:200],
+            'rows': rows,
+            'valid_rows': valid_rows,
+            'conflict_rows': [item for item in rows if item['product_code'] in duplicate_set],
+            'missing_field_counts': missing_counts,
+        }
+    finally:
+        wb.close()
+
+
+def _customs_import_preview(excel_path, conn=None):
+    parsed = _customs_parse_excel(excel_path)
+    existing = _customs_load_existing_map(conn)
+    insert_count = update_count = unchanged_count = 0
+    samples = []
+    for item in parsed['valid_rows']:
+        old = existing.get(item['product_code'])
+        if not old:
+            insert_count += 1
+        else:
+            old_cmp = _customs_json_for_compare(old)
+            new_cmp = _customs_json_for_compare(item)
+            if old_cmp == new_cmp:
+                unchanged_count += 1
+            else:
+                update_count += 1
+        if len(samples) < 10:
+            samples.append(item)
+    skipped = parsed['blank_code_count'] + len(parsed['conflict_rows']) + unchanged_count
+    return {
+        'success': True,
+        'dry_run': True,
+        'would_write': False,
+        'called_jdy': False,
+        'excel_path': parsed['excel_path'],
+        'sheet_name': parsed['sheet_name'],
+        'headers': parsed['headers'],
+        'duplicate_headers': parsed['duplicate_headers'],
+        'total_rows': parsed['total_rows'],
+        'valid_code_count': parsed['valid_code_count'],
+        'blank_code_count': parsed['blank_code_count'],
+        'blank_code_rows': parsed['blank_code_rows'],
+        'duplicate_code_count': parsed['duplicate_code_count'],
+        'duplicate_codes': parsed['duplicate_codes'],
+        'field_missing_counts': parsed['missing_field_counts'],
+        'estimated_insert': insert_count,
+        'estimated_update': update_count,
+        'estimated_skip': skipped,
+        'unchanged_count': unchanged_count,
+        'conflict_count': len(parsed['conflict_rows']),
+        'sample_rows': samples,
+    }
+
+
+def _customs_history_insert(conn, product_code, old_data, new_data, change_source, changed_by, changed_at):
+    conn.execute('''
+        INSERT INTO customs_product_master_history
+        (product_code, changed_at, changed_by, change_source, old_json, new_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        product_code,
+        changed_at,
+        changed_by or '',
+        change_source or '',
+        json.dumps(old_data or {}, ensure_ascii=False, sort_keys=True),
+        json.dumps(new_data or {}, ensure_ascii=False, sort_keys=True),
+        changed_at,
+    ))
+
+
+def _customs_upsert_product(conn, item, updated_by='', change_source='zhipu_excel', now=None):
+    now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    product_code = str(item.get('product_code') or '').strip()
+    if not product_code:
+        return 'skipped'
+    old_row = conn.execute(
+        'SELECT * FROM customs_product_master WHERE product_code = ?',
+        (product_code,),
+    ).fetchone()
+    values = {key: item.get(key) for key in CUSTOMS_PRODUCT_COLUMNS if key not in ('created_at', 'updated_at', 'updated_by')}
+    values['product_code'] = product_code
+    values['source'] = change_source or values.get('source') or 'local_edit'
+    values['updated_at'] = now
+    values['updated_by'] = updated_by or ''
+    if old_row:
+        old_data = _customs_product_row_to_dict(old_row)
+        old_cmp = _customs_json_for_compare(old_data)
+        new_cmp = _customs_json_for_compare(values)
+        if old_cmp == new_cmp:
+            return 'unchanged'
+        set_fields = [key for key in CUSTOMS_PRODUCT_COLUMNS if key not in ('created_at',)]
+        conn.execute(
+            f'''UPDATE customs_product_master
+                   SET {', '.join([field + '=?' for field in set_fields])}
+                 WHERE product_code = ?''',
+            [values.get(field) for field in set_fields] + [product_code],
+        )
+        new_row = conn.execute('SELECT * FROM customs_product_master WHERE product_code = ?', (product_code,)).fetchone()
+        _customs_history_insert(
+            conn,
+            product_code,
+            old_data,
+            _customs_product_row_to_dict(new_row),
+            change_source,
+            updated_by,
+            now,
+        )
+        return 'updated'
+    insert_fields = [key for key in CUSTOMS_PRODUCT_COLUMNS if key != 'id']
+    values['created_at'] = now
+    conn.execute(
+        f'''INSERT INTO customs_product_master
+            ({', '.join(insert_fields)})
+            VALUES ({', '.join(['?'] * len(insert_fields))})''',
+        [values.get(field) for field in insert_fields],
+    )
+    return 'inserted'
+
+
+def _customs_product_status(customs):
+    has_data = bool(customs and customs.get('product_code'))
+    missing = _customs_missing_fields(customs or {}) if has_data else CUSTOMS_PRODUCT_REQUIRED_FIELDS[:]
+    maintained = has_data and not missing
+    source = str((customs or {}).get('source') or '')
+    if not has_data:
+        label = '缺少报关资料'
+    elif missing:
+        label = '缺少字段'
+    elif source == 'local_edit':
+        label = '本地编辑'
+    elif source == 'zhipu_excel':
+        label = '智谱导入'
+    else:
+        label = '已维护'
+    return {
+        'has_customs_data': has_data,
+        'is_maintained': maintained,
+        'missing_fields': missing,
+        'source': source,
+        'label': label,
+    }
+
+
+def _customs_product_list_response():
+    page = _bounded_query_int(request.args.get('page'), 1, 1, 1000000)
+    page_size = _bounded_query_int(request.args.get('page_size') or request.args.get('limit'), 50, 1, 200)
+    account = str(request.args.get('account') or 'all').strip() or 'all'
+    q = str(request.args.get('q') or request.args.get('search') or '').strip().lower()
+    status = str(request.args.get('status') or 'all').strip().lower()
+    has_customs_data = str(request.args.get('has_customs_data') or '').strip().lower()
+    conn = _sales_readonly_conn()
+    base = {
+        'success': True,
+        'local_only': True,
+        'called_jdy': False,
+        'source': 'customs_product_master+jdy_products',
+        'total': 0,
+        'page': page,
+        'page_size': page_size,
+        'items': [],
+    }
+    if not conn:
+        return {**base, 'message': '本地 SQLite 尚不存在，请先导入或刷新本地商品主档。'}, 200
+    try:
+        has_customs = _cache_sqlite_table_count(conn, 'customs_product_master').get('exists')
+        has_jdy = _cache_sqlite_table_count(conn, 'jdy_products').get('exists')
+        if not has_customs and not has_jdy:
+            return {**base, 'message': '本地商品主档和报关资料表均不存在。'}, 200
+        if has_customs:
+            customs_rows = conn.execute('SELECT * FROM customs_product_master').fetchall()
+        else:
+            customs_rows = []
+        customs_map = {
+            str(row['product_code'] or '').strip(): _customs_product_row_to_dict(row)
+            for row in customs_rows
+            if str(row['product_code'] or '').strip()
+        }
+        product_map = {}
+        if has_jdy:
+            clauses, params = ['COALESCE(product_number, "") != ""'], []
+            if account != 'all':
+                clauses.append('account = ?')
+                params.append(account)
+            rows = conn.execute(f'''
+                SELECT id, account, product_id, product_number, product_name, spec, barcode,
+                       category_name, unit_name, default_supplier_number, default_supplier_name,
+                       image_url, status, data_json, updated_at
+                FROM jdy_products
+                WHERE {' AND '.join(clauses)}
+                ORDER BY account ASC, product_number ASC, id ASC
+            ''', params).fetchall()
+            for row in rows:
+                code = str(row['product_number'] or '').strip()
+                if code and code not in product_map:
+                    product_map[code] = _customs_product_row_to_dict(row)
+        all_codes = sorted(set(product_map.keys()) | set(customs_map.keys()))
+        filtered = []
+        for code in all_codes:
+            jdy = product_map.get(code) or {}
+            customs = customs_map.get(code) or {}
+            if account != 'all':
+                acct = str(jdy.get('account') or customs.get('account') or '')
+                if acct and acct != account:
+                    continue
+            search_text = ' '.join([
+                code,
+                str(jdy.get('product_name') or ''),
+                str(customs.get('product_name') or ''),
+                str(jdy.get('spec') or ''),
+                str(customs.get('spec') or ''),
+                str(jdy.get('barcode') or ''),
+                str(customs.get('customs_name_cn') or ''),
+                str(customs.get('material') or ''),
+                str(jdy.get('default_supplier_name') or ''),
+            ]).lower()
+            if q and q not in search_text:
+                continue
+            st = _customs_product_status({**customs, 'product_code': customs.get('product_code') or code} if customs else {})
+            if has_customs_data in ('1', 'true', 'yes', 'y') and not st['has_customs_data']:
+                continue
+            if has_customs_data in ('0', 'false', 'no', 'n') and st['has_customs_data']:
+                continue
+            if status in ('maintained', '已维护') and not st['is_maintained']:
+                continue
+            if status in ('missing', 'incomplete', '缺少报关资料') and st['is_maintained']:
+                continue
+            if status in ('zhipu', 'zhipu_excel', '智谱导入') and st.get('source') != 'zhipu_excel':
+                continue
+            if status in ('local', 'local_edit', '本地编辑') and st.get('source') != 'local_edit':
+                continue
+            cn = str(customs.get('customs_name_cn') or '')
+            material = str(customs.get('material') or '')
+            filtered.append({
+                'product_code': code,
+                'jdy': {
+                    'id': jdy.get('id') or '',
+                    'account': jdy.get('account') or '',
+                    'product_id': jdy.get('product_id') or '',
+                    'product_name': jdy.get('product_name') or '',
+                    'spec': jdy.get('spec') or '',
+                    'unit_name': jdy.get('unit_name') or '',
+                    'barcode': jdy.get('barcode') or '',
+                    'category_name': jdy.get('category_name') or '',
+                    'image_url': jdy.get('image_url') or '',
+                    'default_supplier_number': jdy.get('default_supplier_number') or '',
+                    'default_supplier_name': jdy.get('default_supplier_name') or '',
+                    'status': jdy.get('status') or '',
+                },
+                'customs': customs,
+                'computed': {
+                    'production_license_preview': f'{cn}*{material}' if cn or material else '',
+                    'pro_license_preview': f'{cn}*{material}' if cn or material else '',
+                },
+                'status': st,
+            })
+        total = len(filtered)
+        start = (page - 1) * page_size
+        return {
+            **base,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'items': filtered[start:start + page_size],
+            'summary': {
+                'customs_table_exists': bool(has_customs),
+                'jdy_products_exists': bool(has_jdy),
+                'customs_count': len(customs_map),
+                'jdy_count': len(product_map),
+            },
+        }, 200
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _customs_product_status_response():
+    account = str(request.args.get('account') or 'all').strip() or 'all'
+    conn = _sales_readonly_conn()
+    base = {
+        'success': True,
+        'local_only': True,
+        'called_jdy': False,
+        'source': 'customs_product_master+jdy_products',
+        'account': account,
+        'customs_table_exists': False,
+        'jdy_products_exists': False,
+        'customs_count': 0,
+        'jdy_count': 0,
+        'linked_count': 0,
+        'customs_only_count': 0,
+        'jdy_only_count': 0,
+        'maintained_count': 0,
+        'missing_count': 0,
+        'incomplete_count': 0,
+        'zhipu_import_count': 0,
+        'local_edit_count': 0,
+        'latest_import_at': '',
+        'latest_local_edit_at': '',
+        'latest_updated_at': '',
+        'required_fields': CUSTOMS_PRODUCT_REQUIRED_FIELDS,
+    }
+    if not conn:
+        return {**base, 'message': '本地 SQLite 尚不存在。'}, 200
+    try:
+        has_customs = _cache_sqlite_table_count(conn, 'customs_product_master').get('exists')
+        has_jdy = _cache_sqlite_table_count(conn, 'jdy_products').get('exists')
+        customs_map = {}
+        product_map = {}
+        if has_customs:
+            rows = conn.execute('SELECT * FROM customs_product_master').fetchall()
+            for row in rows:
+                data = _customs_product_row_to_dict(row)
+                code = str(data.get('product_code') or '').strip()
+                if code:
+                    customs_map[code] = data
+        if has_jdy:
+            clauses, params = ['COALESCE(product_number, "") != ""'], []
+            if account != 'all':
+                clauses.append('account = ?')
+                params.append(account)
+            rows = conn.execute(f'''
+                SELECT account, product_number
+                FROM jdy_products
+                WHERE {' AND '.join(clauses)}
+            ''', params).fetchall()
+            for row in rows:
+                code = str(row['product_number'] or '').strip()
+                if code and code not in product_map:
+                    product_map[code] = _customs_product_row_to_dict(row)
+        all_codes = set(product_map.keys()) | set(customs_map.keys())
+        maintained = missing = incomplete = zhipu = local = linked = customs_only = jdy_only = 0
+        latest_import_at = ''
+        latest_local_edit_at = ''
+        latest_updated_at = ''
+        for code in all_codes:
+            customs = customs_map.get(code) or {}
+            jdy = product_map.get(code) or {}
+            if account != 'all':
+                acct = str(jdy.get('account') or customs.get('account') or '')
+                if acct and acct != account:
+                    continue
+            if customs and jdy:
+                linked += 1
+            elif customs:
+                customs_only += 1
+            else:
+                jdy_only += 1
+            st = _customs_product_status(customs)
+            if not st['has_customs_data']:
+                missing += 1
+            elif st['is_maintained']:
+                maintained += 1
+            else:
+                incomplete += 1
+            updated_at = str(customs.get('updated_at') or '')
+            if updated_at and updated_at > latest_updated_at:
+                latest_updated_at = updated_at
+            if st.get('source') == 'zhipu_excel':
+                zhipu += 1
+                if updated_at and updated_at > latest_import_at:
+                    latest_import_at = updated_at
+            elif st.get('source') == 'local_edit':
+                local += 1
+                if updated_at and updated_at > latest_local_edit_at:
+                    latest_local_edit_at = updated_at
+        return {
+            **base,
+            'customs_table_exists': bool(has_customs),
+            'jdy_products_exists': bool(has_jdy),
+            'customs_count': len(customs_map),
+            'jdy_count': len(product_map),
+            'linked_count': linked,
+            'customs_only_count': customs_only,
+            'jdy_only_count': jdy_only,
+            'maintained_count': maintained,
+            'missing_count': missing,
+            'incomplete_count': incomplete,
+            'zhipu_import_count': zhipu,
+            'local_edit_count': local,
+            'latest_import_at': latest_import_at,
+            'latest_local_edit_at': latest_local_edit_at,
+            'latest_updated_at': latest_updated_at,
+        }, 200
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 JDY_SUPPLIER_EXTRA_COLUMNS = {
@@ -12298,6 +13001,300 @@ def local_products():
             'error': str(e),
             'traceback': tb,
         }), 500
+
+
+@app.route('/customs-products', methods=['GET'])
+def customs_products():
+    """报关商品资料列表。只读取本地 SQLite，不调用 JDY。"""
+    try:
+        payload, status = _customs_product_list_response()
+        return jsonify(payload), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_products: {tb}')
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'called_jdy': False,
+            'error': str(e),
+            'traceback': tb,
+            'items': [],
+        }), 500
+
+
+@app.route('/customs-products/status', methods=['GET'])
+def customs_products_status():
+    """只读统计本地报关商品资料状态，不调用 JDY。"""
+    try:
+        payload, status = _customs_product_status_response()
+        return jsonify(payload), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_products_status: {tb}')
+        return jsonify({
+            'success': False,
+            'local_only': True,
+            'called_jdy': False,
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
+@app.route('/customs-products/import-dry-run', methods=['POST'])
+def customs_products_import_dry_run():
+    """只读预览智谱 Excel 导入，不写 SQLite，不修改 Excel。"""
+    try:
+        body = request.get_json(silent=True) or {}
+        excel_path = _customs_product_source_path(body.get('excel_path') or body.get('path') or '')
+        if not excel_path:
+            return jsonify({
+                'success': False,
+                'dry_run': True,
+                'would_write': False,
+                'called_jdy': False,
+                'error': '未找到报关产品基础资料（智谱）.xlsx，请在设置中配置 Excel 路径或传入 excel_path',
+            }), 404
+        conn = _sales_readonly_conn()
+        try:
+            result = _customs_import_preview(excel_path, conn=conn)
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+        return jsonify(result)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_products_import_dry_run: {tb}')
+        return jsonify({
+            'success': False,
+            'dry_run': True,
+            'would_write': False,
+            'called_jdy': False,
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
+@app.route('/customs-products/import-confirm', methods=['POST'])
+def customs_products_import_confirm():
+    """确认从智谱 Excel 导入本地 customs_product_master。不会修改 Excel，不调用 JDY。"""
+    body = request.get_json(silent=True) or {}
+    if str(body.get('confirm') or '').strip() != 'IMPORT_CUSTOMS_PRODUCTS':
+        return jsonify({
+            'success': False,
+            'dry_run': False,
+            'would_write': True,
+            'called_jdy': False,
+            'error': 'missing confirm token IMPORT_CUSTOMS_PRODUCTS',
+        }), 400
+    try:
+        excel_path = _customs_product_source_path(body.get('excel_path') or body.get('path') or '')
+        if not excel_path:
+            return jsonify({
+                'success': False,
+                'dry_run': False,
+                'would_write': True,
+                'called_jdy': False,
+                'error': '未找到报关产品基础资料（智谱）.xlsx，请在设置中配置 Excel 路径或传入 excel_path',
+            }), 404
+        parsed = _customs_parse_excel(excel_path)
+        conn = _sales_cache_conn()
+        user = _current_user() or {}
+        updated_by = user.get('username') or user.get('name') or 'admin'
+        inserted = updated = unchanged = skipped = 0
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conflict_codes = {item['product_code'] for item in parsed['conflict_rows']}
+        try:
+            for item in parsed['rows']:
+                code = item.get('product_code')
+                if not code or code in conflict_codes:
+                    skipped += 1
+                    continue
+                action = _customs_upsert_product(
+                    conn,
+                    item,
+                    updated_by=updated_by,
+                    change_source='zhipu_excel',
+                    now=now,
+                )
+                if action == 'inserted':
+                    inserted += 1
+                elif action == 'updated':
+                    updated += 1
+                elif action == 'unchanged':
+                    unchanged += 1
+                else:
+                    skipped += 1
+            conn.commit()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return jsonify({
+            'success': True,
+            'dry_run': False,
+            'would_write': True,
+            'called_jdy': False,
+            'written_table': 'customs_product_master',
+            'excel_path': excel_path,
+            'sheet_name': parsed['sheet_name'],
+            'total_rows': parsed['total_rows'],
+            'valid_code_count': parsed['valid_code_count'],
+            'blank_code_count': parsed['blank_code_count'],
+            'duplicate_code_count': parsed['duplicate_code_count'],
+            'duplicate_codes': parsed['duplicate_codes'],
+            'conflict_count': len(parsed['conflict_rows']),
+            'inserted': inserted,
+            'updated': updated,
+            'unchanged': unchanged,
+            'skipped': skipped,
+            'field_missing_counts': parsed['missing_field_counts'],
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_products_import_confirm: {tb}')
+        return jsonify({
+            'success': False,
+            'dry_run': False,
+            'would_write': True,
+            'called_jdy': False,
+            'error': str(e),
+            'traceback': tb,
+        }), 500
+
+
+@app.route('/customs-products/<path:product_code>', methods=['PATCH'])
+def customs_product_patch(product_code):
+    """单商品编辑。只写 customs_product_master 和 history，不改 jdy_products/JDY/Excel。"""
+    try:
+        code = str(product_code or '').strip()
+        if not code:
+            return jsonify({'success': False, 'error': '缺少 product_code'}), 400
+        body = request.get_json(force=True) or {}
+        changes = body.get('customs') if isinstance(body.get('customs'), dict) else body
+        if not isinstance(changes, dict):
+            return jsonify({'success': False, 'error': '无效请求体'}), 400
+        conn = _sales_cache_conn()
+        user = _current_user() or {}
+        updated_by = user.get('username') or user.get('name') or 'admin'
+        try:
+            old = conn.execute(
+                'SELECT * FROM customs_product_master WHERE product_code = ?',
+                (code,),
+            ).fetchone()
+            item = _customs_product_row_to_dict(old) if old else {'product_code': code}
+            for field in CUSTOMS_PRODUCT_MUTABLE_FIELDS:
+                if field in changes:
+                    val = changes.get(field)
+                    if field in CUSTOMS_PRODUCT_NUMERIC_FIELDS:
+                        val = _clean_excel_number(val)
+                    else:
+                        val = _clean_excel_text(val)
+                    item[field] = val
+            item['product_code'] = code
+            item['source'] = 'local_edit'
+            action = _customs_upsert_product(
+                conn,
+                item,
+                updated_by=updated_by,
+                change_source='local_edit',
+            )
+            conn.commit()
+            row = conn.execute(
+                'SELECT * FROM customs_product_master WHERE product_code = ?',
+                (code,),
+            ).fetchone()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        data = _customs_product_row_to_dict(row)
+        return jsonify({
+            'success': True,
+            'called_jdy': False,
+            'modified_jdy': False,
+            'modified_excel': False,
+            'action': action,
+            'product_code': code,
+            'customs': data,
+            'status': _customs_product_status(data),
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_product_patch: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/customs-products/precheck', methods=['POST'])
+def customs_products_precheck():
+    """只读预检查商品报关资料状态，不改变报关生成结果。"""
+    try:
+        body = request.get_json(force=True) or {}
+        codes = body.get('codes') or body.get('items') or []
+        normalized = []
+        for item in codes:
+            code = item.get('code') if isinstance(item, dict) else item
+            code = str(code or '').strip()
+            if code:
+                normalized.append(code)
+        counts = Counter(normalized)
+        conn = _sales_readonly_conn()
+        customs_map = {}
+        try:
+            if conn and _cache_sqlite_table_count(conn, 'customs_product_master').get('exists'):
+                marks = ','.join(['?'] * len(counts))
+                if marks:
+                    rows = conn.execute(
+                        f'SELECT * FROM customs_product_master WHERE product_code IN ({marks})',
+                        list(counts.keys()),
+                    ).fetchall()
+                    customs_map = {
+                        str(row['product_code'] or '').strip(): _customs_product_row_to_dict(row)
+                        for row in rows
+                    }
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+        ready, missing, incomplete, duplicate = [], [], [], []
+        for code in counts:
+            if counts[code] > 1:
+                duplicate.append({'product_code': code, 'count': counts[code]})
+            data = customs_map.get(code)
+            if not data:
+                missing.append({'product_code': code})
+                continue
+            miss = _customs_missing_fields(data)
+            if miss:
+                incomplete.append({'product_code': code, 'missing_fields': miss})
+            else:
+                ready.append({'product_code': code})
+        return jsonify({
+            'success': True,
+            'called_jdy': False,
+            'ready': ready,
+            'missing': missing,
+            'incomplete': incomplete,
+            'duplicate': duplicate,
+            'summary': {
+                'input_count': len(normalized),
+                'unique_count': len(counts),
+                'ready_count': len(ready),
+                'missing_count': len(missing),
+                'incomplete_count': len(incomplete),
+                'duplicate_count': len(duplicate),
+            },
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] customs_products_precheck: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
 
 
 @app.route('/sales-summary-products', methods=['GET'])
