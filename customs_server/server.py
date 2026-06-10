@@ -197,7 +197,7 @@ def _admin_path_required():
         '/clear-supplier-cache', '/admin/users',
         '/attachments/status', '/attachments/refresh-dry-run', '/attachments/refresh',
         '/attachments/history-backfill-dry-run', '/attachments/history-backfill',
-        '/customs-products/import-dry-run', '/customs-products/import-confirm',
+        '/customs-products/import-confirm',
     }
     if request.path in admin_exact:
         return True
@@ -315,7 +315,8 @@ def require_login():
     if _is_logged_in():
         if _admin_path_required() and not _is_admin():
             if _wants_json():
-                return jsonify({'success': False, 'error': '只有管理员可以进入设置'}), 403
+                error = '只有管理员可以导入或维护报关商品资料' if request.path.startswith('/customs-products/') else '只有管理员可以进入设置'
+                return jsonify({'success': False, 'error': error}), 403
             return redirect('/jdy')
         return None
     if _wants_json():
@@ -13045,7 +13046,16 @@ def customs_products_import_dry_run():
     """只读预览智谱 Excel 导入，不写 SQLite，不修改 Excel。"""
     try:
         body = request.get_json(silent=True) or {}
-        excel_path = _customs_product_source_path(body.get('excel_path') or body.get('path') or '')
+        requested_excel_path = str(body.get('excel_path') or body.get('path') or '').strip()
+        if requested_excel_path and not _is_admin():
+            return jsonify({
+                'success': False,
+                'dry_run': True,
+                'would_write': False,
+                'called_jdy': False,
+                'error': '只有管理员可以指定自定义Excel路径',
+            }), 403
+        excel_path = _customs_product_source_path(requested_excel_path)
         if not excel_path:
             return jsonify({
                 'success': False,
