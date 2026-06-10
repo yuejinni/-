@@ -394,8 +394,9 @@ body {
 .customs-products-table th.sort-asc::after { content: "↑"; color: #1a2c5b; }
 .customs-products-table th.sort-desc::after { content: "↓"; color: #1a2c5b; }
 .customs-products-table thead tr.customs-filter-row th {
-  top: 32px;
-  z-index: 4;
+  position: static;
+  top: auto;
+  z-index: 1;
   padding: 3px 6px;
   background: #f8fbff;
 }
@@ -412,7 +413,9 @@ body {
   background: #e6eef8;
 }
 .customs-products-table thead tr.customs-filter-row th.sticky-col {
-  z-index: 5;
+  position: sticky;
+  top: auto;
+  z-index: 3;
   background: #f4f8fe;
 }
 .customs-products-table .c-code { left: 0; min-width: 132px; width: 132px; }
