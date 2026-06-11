@@ -52,6 +52,7 @@ from ai_identify import (
     preview_from_license, write_confirmed_license,
 )
 import jdy_api
+import product_create_workflow as product_create
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -202,6 +203,10 @@ def _admin_path_required():
     if request.path in admin_exact:
         return True
     if request.path.startswith('/customs-products/') and request.method in ('PATCH', 'PUT', 'DELETE'):
+        return True
+    if request.path.startswith('/product-create/drafts/') and request.path.endswith('/submit'):
+        return True
+    if request.path.startswith('/product-create/drafts/') and request.path.endswith('/promote-customs'):
         return True
     return request.path.startswith('/admin/users/')
 
@@ -3722,6 +3727,7 @@ def _sales_cache_conn():
         conn.execute('ALTER TABLE sales_product_quantities ADD COLUMN stock_factory REAL DEFAULT 0')
         cols.add('stock_factory')
     _ensure_reorder_item_columns(conn)
+    product_create.ensure_schema(conn)
     return conn
 
 
@@ -4872,7 +4878,7 @@ def _customs_product_list_response():
                 code = str(row['product_number'] or '').strip()
                 if code and code not in product_map:
                     product_map[code] = _customs_product_row_to_dict(row)
-        all_codes = sorted(product_map.keys()) if has_jdy else sorted(customs_map.keys())
+        all_codes = sorted(set(product_map.keys()) | set(customs_map.keys()))
         filtered = []
         counts = {
             'complete': 0,
@@ -13676,6 +13682,419 @@ def customs_products_precheck():
     except Exception as e:
         tb = traceback.format_exc()
         print(f'[ERROR] customs_products_precheck: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+def _product_create_account_defaults():
+    cfg1 = _load_jdy_config()
+    cfg2 = _load_jdy_config2()
+    return {
+        'account1': cfg1.get('name') or 'account1',
+        'account2': cfg2.get('name') or 'account2',
+    }
+
+
+def _product_create_account_from_body(body):
+    accounts = _product_create_account_defaults()
+    account_key = str(body.get('account_key') or body.get('accountKey') or '').strip()
+    account = str(body.get('account') or '').strip()
+    if not account_key and account:
+        for key, name in accounts.items():
+            if account == name or account == key:
+                account_key = key
+                break
+    if account_key not in ('account1', 'account2'):
+        account_key = 'account1'
+    if not account:
+        account = accounts.get(account_key) or account_key
+    return account_key, account
+
+
+def _product_create_conn(readonly=False):
+    conn = _sales_readonly_conn() if readonly else _sales_cache_conn()
+    if conn:
+        conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _product_create_json_error(message, status=400, **extra):
+    payload = {
+        'success': False,
+        'local_first': True,
+        'called_jdy': False,
+        'error': message,
+    }
+    payload.update(extra)
+    return jsonify(payload), status
+
+
+def _product_create_mock_ai_items(text):
+    text = str(text or '').strip()
+    lines = [line.strip() for line in re.split(r'[\r\n]+', text) if line.strip()]
+    joined = ' '.join(lines)
+    price = 0
+    qty = 1
+    m_price = re.search(r'(?:price|cost|采购价|单价)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)', joined, re.I)
+    if m_price:
+        price = float(m_price.group(1))
+    m_qty = re.search(r'(?:qty|quantity|数量)\s*[:：]?\s*([0-9]+)', joined, re.I)
+    if m_qty:
+        qty = int(m_qty.group(1))
+    name = ''
+    spec = ''
+    for line in lines:
+        lowered = line.lower()
+        if not name and not any(key in lowered for key in ('price', 'cost', 'qty', 'quantity')):
+            name = line
+        elif not spec:
+            spec = line
+    if not name:
+        name = joined[:80]
+    return [{
+        'product_name': name[:120],
+        'spec': spec[:120],
+        'purchase_price': price,
+        'purchase_qty': qty,
+        'remark': 'mock-ai-preview' if text else '',
+    }]
+
+
+def _product_create_meta_response():
+    body_account = {
+        'account_key': request.args.get('account_key') or request.args.get('accountKey') or '',
+        'account': request.args.get('account') or '',
+    }
+    account_key, account = _product_create_account_from_body(body_account)
+    q = str(request.args.get('q') or request.args.get('search') or '').strip()
+    conn = _product_create_conn(readonly=True)
+    try:
+        categories = product_create.read_categories(_BASE, account_key)
+        suppliers = product_create.search_suppliers(conn, account=account, q=q, limit=80) if conn else []
+        units = product_create.read_units(conn, account=account, limit=80) if conn else []
+        next_seq = product_create.peek_next_seq(conn, account_key) if conn else 1
+        return {
+            'success': True,
+            'local_first': True,
+            'local_only': True,
+            'called_jdy': False,
+            'account_key': account_key,
+            'account': account,
+            'accounts': [
+                {'account_key': key, 'account': name}
+                for key, name in _product_create_account_defaults().items()
+            ],
+            'categories': categories,
+            'suppliers': suppliers,
+            'units': units,
+            'next_seq_preview': next_seq,
+            'sources': {
+                'categories': 'category_code_map.json',
+                'suppliers': 'jdy_suppliers',
+                'units': 'jdy_products',
+                'sequence': 'product_create_sequences',
+            },
+        }, 200
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+@app.route('/product-create/meta', methods=['GET'])
+def product_create_meta():
+    try:
+        payload, status = _product_create_meta_response()
+        return jsonify(payload), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_meta: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/preview', methods=['POST'])
+def product_create_preview():
+    try:
+        body = request.get_json(force=True) or {}
+        account_key, account = _product_create_account_from_body(body)
+        items = body.get('items') or body.get('item') or []
+        conn = _product_create_conn(readonly=True)
+        if not conn:
+            return _product_create_json_error('local sales cache sqlite does not exist', 404)
+        try:
+            result = product_create.preview_payload(conn, _BASE, account_key, account, items)
+            return jsonify(result)
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_preview: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/ai-preview', methods=['POST'])
+def product_create_ai_preview():
+    """Local mock AI parser. It never calls JDY or external AI services."""
+    try:
+        body = request.get_json(force=True) or {}
+        items = _product_create_mock_ai_items(body.get('text') or body.get('prompt') or '')
+        return jsonify({
+            'success': True,
+            'local_first': True,
+            'called_jdy': False,
+            'called_ai': False,
+            'mock': True,
+            'source': 'local_text_parser',
+            'items': items,
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_ai_preview: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'called_ai': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts', methods=['GET'])
+def product_create_drafts_list():
+    try:
+        account_key = str(request.args.get('account_key') or request.args.get('accountKey') or 'all').strip() or 'all'
+        status = str(request.args.get('status') or '').strip()
+        limit = _bounded_query_int(request.args.get('limit'), 50, 1, 200)
+        conn = _product_create_conn(readonly=False)
+        try:
+            return jsonify({
+                'success': True,
+                'local_first': True,
+                'called_jdy': False,
+                'source': 'product_create_draft',
+                'items': product_create.list_drafts(conn, account_key=account_key, status=status, limit=limit),
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_drafts_list: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts', methods=['POST'])
+def product_create_draft_create():
+    try:
+        body = request.get_json(force=True) or {}
+        account_key, account = _product_create_account_from_body(body)
+        items = body.get('items') or body.get('item') or []
+        conn = _product_create_conn(readonly=False)
+        try:
+            draft = product_create.create_draft(
+                conn,
+                _BASE,
+                account_key,
+                account,
+                body.get('title') or '',
+                items,
+                _current_user() or {},
+            )
+            return jsonify({
+                'success': True,
+                'local_first': True,
+                'called_jdy': False,
+                'written_table': 'product_create_draft/product_create_draft_item',
+                'draft': draft,
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_create: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>', methods=['GET'])
+def product_create_draft_get(draft_id):
+    try:
+        conn = _product_create_conn(readonly=False)
+        if not conn:
+            return _product_create_json_error('local sales cache sqlite does not exist', 404)
+        try:
+            draft = product_create.read_draft(conn, draft_id)
+            if not draft:
+                return _product_create_json_error('draft not found', 404)
+            return jsonify({'success': True, 'local_first': True, 'called_jdy': False, 'draft': draft})
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_get: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>', methods=['PUT', 'PATCH'])
+def product_create_draft_update(draft_id):
+    try:
+        body = request.get_json(force=True) or {}
+        account_key, account = _product_create_account_from_body(body)
+        items = body.get('items') or body.get('item') or []
+        conn = _product_create_conn(readonly=False)
+        try:
+            result = product_create.update_draft(
+                conn,
+                _BASE,
+                draft_id,
+                account_key,
+                account,
+                body.get('title') or '',
+                items,
+                _current_user() or {},
+            )
+            status = 200 if result.get('success') else 400
+            return jsonify({**result, 'local_first': True, 'called_jdy': False}), status
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_update: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>', methods=['DELETE'])
+def product_create_draft_delete(draft_id):
+    try:
+        conn = _product_create_conn(readonly=False)
+        try:
+            result = product_create.delete_draft(conn, draft_id)
+            status = 200 if result.get('success') else 400
+            return jsonify({**result, 'local_first': True, 'called_jdy': False}), status
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_delete: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>/dry-run', methods=['POST'])
+def product_create_draft_dry_run(draft_id):
+    try:
+        conn = _product_create_conn(readonly=False)
+        try:
+            result = product_create.dry_run_draft(conn, draft_id)
+            status = 200 if result.get('success') else 400
+            return jsonify(result), status
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_dry_run: {tb}')
+        return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>/submit', methods=['POST'])
+def product_create_draft_submit(draft_id):
+    body = request.get_json(force=True) or {}
+    use_real_jdy = bool(body.get('use_real_jdy') or body.get('real_jdy'))
+    allow_real = os.environ.get('QIHANG_ALLOW_REAL_JDY_PRODUCT_CREATE') == '1'
+    if use_real_jdy and not allow_real:
+        return jsonify({
+            'success': False,
+            'called_jdy': False,
+            'would_call_jdy': True,
+            'error': 'real JDY product creation is disabled by QIHANG_ALLOW_REAL_JDY_PRODUCT_CREATE',
+        }), 403
+    try:
+        submitter = None
+        mock = True
+        if use_real_jdy:
+            if str(body.get('confirm_real_jdy') or '').strip() != product_create.CONFIRM_REAL_JDY_CODE:
+                return jsonify({
+                    'success': False,
+                    'called_jdy': False,
+                    'would_call_jdy': True,
+                    'error': 'missing real JDY confirm token REAL_JDY_PRODUCT_CREATE',
+                }), 400
+            mock = False
+            submitter = product_create.RealJdySubmitter()
+        conn = _product_create_conn(readonly=False)
+        try:
+            result = product_create.submit_draft(
+                conn,
+                draft_id,
+                _current_user() or {},
+                confirm_code=str(body.get('confirm') or '').strip(),
+                dry_run_confirmed=bool(body.get('dry_run_confirmed')),
+                submitter=submitter,
+                mock=mock,
+                confirm_real_jdy=str(body.get('confirm_real_jdy') or '').strip(),
+            )
+            status = 200 if result.get('success') else 400
+            return jsonify(result), status
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_submit: {tb}')
+        return jsonify({'success': False, 'called_jdy': use_real_jdy, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/product-create/drafts/<int:draft_id>/promote-customs', methods=['POST'])
+def product_create_draft_promote_customs(draft_id):
+    body = request.get_json(force=True) or {}
+    if str(body.get('confirm') or '').strip() != 'PROMOTE_PRODUCT_CREATE_CUSTOMS':
+        return jsonify({
+            'success': False,
+            'called_jdy': False,
+            'would_write': True,
+            'error': 'missing confirm token PROMOTE_PRODUCT_CREATE_CUSTOMS',
+        }), 400
+    try:
+        conn = _product_create_conn(readonly=False)
+        user = _current_user() or {}
+        updated_by = user.get('username') or user.get('name') or 'admin'
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            draft = product_create.read_draft(conn, draft_id)
+            if not draft:
+                return _product_create_json_error('draft not found', 404)
+            if draft.get('status') != 'submitted':
+                return _product_create_json_error('draft must be submitted before customs promotion', 400)
+            inserted = updated = unchanged = skipped = 0
+            for item in draft.get('items') or []:
+                if not item.get('product_number'):
+                    skipped += 1
+                    continue
+                customs_item = product_create.customs_item_from_draft_item(item)
+                action = _customs_upsert_product(
+                    conn,
+                    customs_item,
+                    updated_by=updated_by,
+                    change_source='quick_create',
+                    now=now,
+                )
+                if action == 'inserted':
+                    inserted += 1
+                elif action == 'updated':
+                    updated += 1
+                elif action == 'unchanged':
+                    unchanged += 1
+                else:
+                    skipped += 1
+            conn.commit()
+            return jsonify({
+                'success': True,
+                'local_first': True,
+                'called_jdy': False,
+                'written_table': 'customs_product_master',
+                'change_source': 'quick_create',
+                'draft_id': draft_id,
+                'inserted': inserted,
+                'updated': updated,
+                'unchanged': unchanged,
+                'skipped': skipped,
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] product_create_draft_promote_customs: {tb}')
         return jsonify({'success': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
 
 

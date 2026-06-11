@@ -439,6 +439,145 @@ body {
   background: #f7f9fb;
   font-size: 11px;
 }
+.product-create-shell {
+  width: 100%;
+  min-width: 0;
+  height: calc(100vh - 92px);
+  display: grid;
+  grid-template-columns: minmax(360px, 520px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px;
+  overflow: hidden;
+}
+.product-create-panel {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.product-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf0f3;
+  background: #fbfcfd;
+}
+.product-create-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #1d2b3a;
+}
+.product-create-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.product-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.product-create-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.product-create-field.full {
+  grid-column: 1 / -1;
+}
+.product-create-field label {
+  font-size: 12px;
+  color: #5f6e7d;
+  font-weight: 700;
+}
+.product-create-field input,
+.product-create-field select,
+.product-create-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d9e1e8;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.product-create-field textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+.product-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #edf0f3;
+  background: #fbfcfd;
+}
+.product-create-status {
+  padding: 8px 12px;
+  min-height: 34px;
+  border-top: 1px solid #edf0f3;
+  color: #657486;
+  font-size: 12px;
+}
+.product-create-result {
+  display: grid;
+  gap: 10px;
+}
+.product-create-preview-card,
+.product-create-draft-card {
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+.product-create-preview-card b,
+.product-create-draft-card b {
+  color: #1d2b3a;
+}
+.product-create-preview-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.product-create-preview-grid span:nth-child(odd) {
+  color: #738295;
+}
+.product-create-draft-card {
+  cursor: pointer;
+}
+.product-create-draft-card.active {
+  border-color: #1a2c5b;
+  box-shadow: inset 3px 0 0 #1a2c5b;
+}
+.product-create-log {
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #263442;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+@media (max-width: 900px) {
+  .product-create-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: auto;
+  }
+}
 .customs-status-pill {
   display: inline-flex;
   align-items: center;
@@ -2159,6 +2298,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <button class="subtab-btn" data-sub-page="order-list" onclick="showPage('order-list')">调拨/报关单</button>
   <button class="subtab-btn" data-sub-page="purchase-list" onclick="showPage('purchase-list')">购货辅助</button>
   <button class="subtab-btn" data-sub-page="customs-products" onclick="showPage('customs-products')">商品资料</button>
+  <button class="subtab-btn" data-sub-page="product-create" onclick="showPage('product-create')">快速建款</button>
   <button class="subtab-btn" data-sub-page="fill-page" onclick="showPage('fill-page')">资料补全</button>
 </div>
 
@@ -2627,6 +2767,120 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="empty">正在读取本地商品……</div>
       </div>
       <div class="sales-total-bar" id="local-product-total-bar">共 <b>0</b> 款</div>
+    </div>
+  </div>
+</div>
+
+<div class="page" id="page-product-create">
+  <div class="product-create-shell">
+    <div class="product-create-panel">
+      <div class="product-create-head">
+        <div>
+          <div class="product-create-title">快速建款</div>
+          <div class="tip">草稿、预览和 mock 提交都走本地 SQLite；真实 JDY 写入默认关闭。</div>
+        </div>
+        <button type="button" class="sales-icon-btn" onclick="loadProductCreateMeta(true)" title="刷新本地选项" aria-label="刷新本地选项">↻</button>
+      </div>
+      <div class="product-create-body">
+        <div class="product-create-grid">
+          <div class="product-create-field">
+            <label>账套</label>
+            <select id="pc-account" onchange="loadProductCreateMeta(true)">
+              <option value="account1">account1</option>
+              <option value="account2">account2</option>
+            </select>
+          </div>
+          <div class="product-create-field">
+            <label>草稿标题</label>
+            <input id="pc-title" placeholder="例如：6月新款发夹">
+          </div>
+          <div class="product-create-field full">
+            <label>供应商</label>
+            <input id="pc-supplier-search" placeholder="输入供应商编号 / 名称后刷新" onkeydown="if(event.key==='Enter') loadProductCreateMeta(true)">
+            <select id="pc-supplier"></select>
+          </div>
+          <div class="product-create-field full">
+            <label>分类</label>
+            <select id="pc-category"></select>
+          </div>
+          <div class="product-create-field">
+            <label>商品名称</label>
+            <input id="pc-product-name" placeholder="商品名称 / AI 识别结果">
+          </div>
+          <div class="product-create-field">
+            <label>规格</label>
+            <input id="pc-spec" placeholder="颜色 / 尺寸 / 包装">
+          </div>
+          <div class="product-create-field">
+            <label>单位</label>
+            <select id="pc-unit"></select>
+          </div>
+          <div class="product-create-field">
+            <label>采购价</label>
+            <input id="pc-purchase-price" type="number" step="0.0001" min="0" placeholder="0">
+          </div>
+          <div class="product-create-field">
+            <label>采购数量</label>
+            <input id="pc-purchase-qty" type="number" step="1" min="1" value="1">
+          </div>
+          <div class="product-create-field">
+            <label>备注</label>
+            <input id="pc-remark" placeholder="JDY 商品备注">
+          </div>
+          <div class="product-create-field full">
+            <label>图片 Base64 / URL 占位</label>
+            <textarea id="pc-image-b64" placeholder="可留空；真实图片上传后续可替换为本地附件流程"></textarea>
+          </div>
+          <div class="product-create-field full">
+            <label>AI 识别文本 / 图片备注 mock</label>
+            <textarea id="pc-ai-text" placeholder="粘贴同事发来的新款描述；当前只做本地 mock 解析，不调用外部 AI。"></textarea>
+          </div>
+          <div class="product-create-field">
+            <label>报关中文名</label>
+            <input id="pc-customs-cn" placeholder="可后续在商品资料维护">
+          </div>
+          <div class="product-create-field">
+            <label>海关编码</label>
+            <input id="pc-hs-code" placeholder="可后续补全">
+          </div>
+          <div class="product-create-field">
+            <label>材质</label>
+            <input id="pc-material" placeholder="material">
+          </div>
+          <div class="product-create-field">
+            <label>用途</label>
+            <input id="pc-usage" placeholder="usage">
+          </div>
+        </div>
+      </div>
+      <div class="product-create-actions">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="productCreateAiPreview()">mock AI 识别</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="productCreatePreview()">预览编号</button>
+        <button type="button" class="btn btn-success btn-sm" onclick="productCreateSaveDraft()">保存草稿</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="productCreateDryRun()">JDY dry-run</button>
+        <button type="button" class="btn btn-warn btn-sm" onclick="productCreateSubmitMock()">mock 提交</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="productCreatePromoteCustoms()">写回报关资料</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="productCreateDeleteDraft()">取消草稿</button>
+      </div>
+      <div class="product-create-status" id="pc-status">等待输入。真实 JDY 写入必须管理员二次确认，并且服务端环境开关开启。</div>
+    </div>
+    <div class="product-create-panel">
+      <div class="product-create-head">
+        <div>
+          <div class="product-create-title">草稿与 dry-run</div>
+          <div class="tip" id="pc-draft-tip">本页不会生成报关文件，不会修改智谱 Excel。</div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="loadProductCreateDrafts()">刷新草稿</button>
+      </div>
+      <div class="product-create-body">
+        <div class="product-create-result" id="pc-result">
+          <div class="empty">先预览或保存一个本地草稿。</div>
+        </div>
+        <div style="height:12px;"></div>
+        <div class="product-create-result" id="pc-draft-list">
+          <div class="empty">正在读取本地草稿。</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3876,6 +4130,7 @@ const PAGE_MAIN_GROUP = {
   'order-list': 'customs',
   'purchase-list': 'customs',
   'customs-products': 'customs',
+  'product-create': 'customs',
   'fill-page': 'customs',
   'settings': 'settings',
 };
@@ -3942,6 +4197,10 @@ function showPage(name) {
   if (name === 'customs-products' && !window._customsProductsLoaded) {
     initCustomsColumnSettings();
     loadCustomsProducts(1);
+  }
+  if (name === 'product-create' && !window._productCreateLoaded) {
+    loadProductCreateMeta();
+    loadProductCreateDrafts();
   }
 }
 
@@ -4685,6 +4944,363 @@ function renderCustomsImportResult(data) {
     `总行数 ${data.total_rows || 0}，有效编号 ${data.valid_code_count || 0}，空编号 ${data.blank_code_count || 0}，重复编号 ${data.duplicate_code_count || 0}\n` +
     `${data.dry_run ? '预计' : '实际'}新增 ${data.estimated_insert ?? data.inserted ?? 0}，更新 ${data.estimated_update ?? data.updated ?? 0}，跳过 ${data.estimated_skip ?? data.skipped ?? 0}，未变 ${data.unchanged_count ?? data.unchanged ?? 0}\n` +
     `重复商品编号：${dups}\n字段缺失：${missText}`;
+}
+
+let productCreateMeta = {accounts: [], categories: [], suppliers: [], units: []};
+let productCreateSelectedDraftId = null;
+
+function pcSetStatus(text, isError = false) {
+  const el = document.getElementById('pc-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? '#d93025' : '#657486';
+}
+
+function pcSelectedAccountKey() {
+  return document.getElementById('pc-account')?.value || 'account1';
+}
+
+function pcSupplierOptionData() {
+  const sel = document.getElementById('pc-supplier');
+  const opt = sel?.selectedOptions?.[0];
+  if (!opt) return {};
+  return {
+    supplier_id: opt.dataset.supplierId || '',
+    supplier_number: opt.dataset.supplierNumber || '',
+    supplier_name: opt.dataset.supplierName || '',
+    tax_no: opt.dataset.taxNo || '',
+  };
+}
+
+function pcUnitOptionData() {
+  const sel = document.getElementById('pc-unit');
+  const opt = sel?.selectedOptions?.[0];
+  if (!opt) return {};
+  return {
+    unit_id: opt.dataset.unitId || '',
+    unit_name: opt.dataset.unitName || sel.value || '',
+  };
+}
+
+function pcCurrentItem() {
+  const supplier = pcSupplierOptionData();
+  const unit = pcUnitOptionData();
+  return {
+    product_name: document.getElementById('pc-product-name')?.value.trim() || '',
+    spec: document.getElementById('pc-spec')?.value.trim() || '',
+    category_id: document.getElementById('pc-category')?.value || '',
+    ...supplier,
+    ...unit,
+    purchase_price: Number(document.getElementById('pc-purchase-price')?.value || 0),
+    purchase_qty: Number(document.getElementById('pc-purchase-qty')?.value || 1),
+    remark: document.getElementById('pc-remark')?.value.trim() || '',
+    image_b64: document.getElementById('pc-image-b64')?.value.trim() || '',
+    customs: {
+      customs_name_cn: document.getElementById('pc-customs-cn')?.value.trim() || '',
+      hs_code: document.getElementById('pc-hs-code')?.value.trim() || '',
+      material: document.getElementById('pc-material')?.value.trim() || '',
+      usage: document.getElementById('pc-usage')?.value.trim() || '',
+    },
+  };
+}
+
+function pcRequestBody() {
+  return {
+    account_key: pcSelectedAccountKey(),
+    title: document.getElementById('pc-title')?.value.trim() || '',
+    items: [pcCurrentItem()],
+  };
+}
+
+function pcRenderSelects(meta) {
+  const accountSel = document.getElementById('pc-account');
+  if (accountSel && Array.isArray(meta.accounts)) {
+    const current = accountSel.value || meta.account_key || 'account1';
+    accountSel.innerHTML = meta.accounts.map(row => `<option value="${salesAttr(row.account_key)}">${salesAttr(row.account || row.account_key)}</option>`).join('');
+    accountSel.value = current;
+  }
+  const supplierSel = document.getElementById('pc-supplier');
+  if (supplierSel) {
+    const rows = meta.suppliers || [];
+    supplierSel.innerHTML = rows.length
+      ? rows.map(s => `<option value="${salesAttr(s.number)}" data-supplier-id="${salesAttr(s.id)}" data-supplier-number="${salesAttr(s.number)}" data-supplier-name="${salesAttr(s.name)}" data-tax-no="${salesAttr(s.tax_no)}">${salesAttr(s.number || 'no-number')} · ${salesAttr(s.name || '')}</option>`).join('')
+      : '<option value="">本地供应商缓存为空</option>';
+  }
+  const categorySel = document.getElementById('pc-category');
+  if (categorySel) {
+    const rows = meta.categories || [];
+    categorySel.innerHTML = rows.length
+      ? rows.map(c => `<option value="${salesAttr(c.id)}"${c.ready ? '' : ' disabled'}>${salesAttr(c.path || c.id)}${c.ready ? '' : '（编码未配置）'}</option>`).join('')
+      : '<option value="">未找到分类映射</option>';
+  }
+  const unitSel = document.getElementById('pc-unit');
+  if (unitSel) {
+    const rows = meta.units || [];
+    unitSel.innerHTML = '<option value="">不指定单位</option>' + rows.map(u => `<option value="${salesAttr(u.unit_name || u.unit_id)}" data-unit-id="${salesAttr(u.unit_id)}" data-unit-name="${salesAttr(u.unit_name)}">${salesAttr(u.unit_name || u.unit_id)}</option>`).join('');
+  }
+}
+
+async function loadProductCreateMeta(force = false) {
+  const accountKey = pcSelectedAccountKey();
+  const q = document.getElementById('pc-supplier-search')?.value.trim() || '';
+  pcSetStatus('正在读取本地分类、供应商和单位缓存。');
+  try {
+    const params = new URLSearchParams({account_key: accountKey, q});
+    const data = await attachmentFetchJson(`${API}/product-create/meta?${params.toString()}`);
+    productCreateMeta = data;
+    pcRenderSelects(data);
+    window._productCreateLoaded = true;
+    pcSetStatus(`已读取本地选项：分类 ${data.categories?.length || 0}，供应商 ${data.suppliers?.length || 0}，单位 ${data.units?.length || 0}；called_jdy=false`);
+    if (force) loadProductCreateDrafts();
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+function pcRenderPreview(data) {
+  const box = document.getElementById('pc-result');
+  if (!box) return;
+  const items = data.items || [];
+  const cards = items.map(item => {
+    const errors = item.validation?.errors || [];
+    const warnings = item.validation?.warnings || [];
+    const payloads = item.payloads || {};
+    return `
+      <div class="product-create-preview-card">
+        <b>${salesAttr(item.product_number || item.product_name || '未生成编号')}</b>
+        <div class="product-create-preview-grid">
+          <span>状态</span><span>${item.ready ? '可提交' : '需修正'}</span>
+          <span>EAN-13</span><span>${salesAttr(item.ean13 || '—')}</span>
+          <span>供应商</span><span>${salesAttr(item.supplier_number || item.supplier_name || '—')}</span>
+          <span>分类</span><span>${salesAttr(item.category_name || item.category_id || '—')}</span>
+          <span>JDY product/add</span><span>${salesAttr(JSON.stringify(payloads.product_add || {}, null, 0))}</span>
+          <span>错误</span><span>${salesAttr(errors.join('；') || '无')}</span>
+          <span>提醒</span><span>${salesAttr(warnings.join('；') || '无')}</span>
+        </div>
+      </div>`;
+  }).join('');
+  box.innerHTML = cards || '<div class="empty">暂无预览结果。</div>';
+}
+
+async function productCreatePreview() {
+  pcSetStatus('正在本地预览编号和 JDY payload，不写 JDY。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/preview`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(pcRequestBody()),
+    });
+    pcRenderPreview(data);
+    pcSetStatus(`预览完成：ready=${data.ready ? 'true' : 'false'}，called_jdy=${data.called_jdy ? 'true' : 'false'}。`);
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreateAiPreview() {
+  const text = document.getElementById('pc-ai-text')?.value.trim() || '';
+  if (!text) {
+    pcSetStatus('请先粘贴一段新款描述。', true);
+    return;
+  }
+  pcSetStatus('正在执行本地 mock AI 识别，不调用外部 AI/JDY。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/ai-preview`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const item = (data.items || [])[0] || {};
+    if (item.product_name) document.getElementById('pc-product-name').value = item.product_name;
+    if (item.spec) document.getElementById('pc-spec').value = item.spec;
+    if (item.purchase_price) document.getElementById('pc-purchase-price').value = item.purchase_price;
+    if (item.purchase_qty) document.getElementById('pc-purchase-qty').value = item.purchase_qty;
+    pcSetStatus(`mock AI 识别完成：called_ai=${data.called_ai ? 'true' : 'false'}，called_jdy=${data.called_jdy ? 'true' : 'false'}。`);
+    productCreatePreview();
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreateSaveDraft() {
+  pcSetStatus('正在保存本地草稿。');
+  try {
+    const body = pcRequestBody();
+    const url = productCreateSelectedDraftId ? `${API}/product-create/drafts/${productCreateSelectedDraftId}` : `${API}/product-create/drafts`;
+    const data = await attachmentFetchJson(url, {
+      method: productCreateSelectedDraftId ? 'PUT' : 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const draft = data.draft || {};
+    productCreateSelectedDraftId = draft.id || productCreateSelectedDraftId;
+    pcRenderPreview({items: draft.items || []});
+    await loadProductCreateDrafts();
+    pcSetStatus(`草稿已保存到本地 SQLite：#${productCreateSelectedDraftId}，called_jdy=false。`);
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreateDeleteDraft() {
+  if (!productCreateSelectedDraftId) {
+    pcSetStatus('请先选择一个草稿。', true);
+    return;
+  }
+  const ok = window.confirm('确认取消这个本地草稿？不会调用 JDY。');
+  if (!ok) return;
+  pcSetStatus('正在取消本地草稿。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/drafts/${productCreateSelectedDraftId}`, {
+      method: 'DELETE',
+    });
+    productCreateSelectedDraftId = null;
+    pcRenderPreview({items: []});
+    await loadProductCreateDrafts();
+    pcSetStatus(`草稿已取消：called_jdy=${data.called_jdy ? 'true' : 'false'}。`);
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+function pcRenderDrafts(list) {
+  const box = document.getElementById('pc-draft-list');
+  if (!box) return;
+  window._productCreateDraftItems = list || [];
+  if (!list || !list.length) {
+    box.innerHTML = '<div class="empty">暂无本地草稿。</div>';
+    return;
+  }
+  box.innerHTML = list.map(d => `
+    <div class="product-create-draft-card ${d.id === productCreateSelectedDraftId ? 'active' : ''}" onclick="productCreateOpenDraft(${Number(d.id)})">
+      <b>#${salesAttr(d.id)} ${salesAttr(d.title || d.draft_no)}</b>
+      <div class="tip">${salesAttr(d.account || d.account_key)} · ${salesAttr(d.status)} · ${salesAttr(d.item_count || 0)} 款 · ${salesAttr(d.updated_at || '')}</div>
+      <div class="tip">幂等键 ${salesAttr(d.idempotency_key || '')}</div>
+    </div>
+  `).join('');
+}
+
+async function loadProductCreateDrafts() {
+  try {
+    const params = new URLSearchParams({account_key: pcSelectedAccountKey(), limit: '30'});
+    const data = await attachmentFetchJson(`${API}/product-create/drafts?${params.toString()}`);
+    pcRenderDrafts(data.items || []);
+  } catch (err) {
+    const box = document.getElementById('pc-draft-list');
+    if (box) box.innerHTML = `<div class="empty">${salesAttr(err.message || String(err))}</div>`;
+  }
+}
+
+async function productCreateOpenDraft(id) {
+  productCreateSelectedDraftId = id;
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/drafts/${id}`);
+    const draft = data.draft || {};
+    const item = (draft.items || [])[0] || {};
+    document.getElementById('pc-title').value = draft.title || '';
+    document.getElementById('pc-account').value = draft.account_key || 'account1';
+    await loadProductCreateMeta();
+    document.getElementById('pc-product-name').value = item.product_name || '';
+    document.getElementById('pc-spec').value = item.spec || '';
+    document.getElementById('pc-category').value = item.category_id || '';
+    document.getElementById('pc-purchase-price').value = item.purchase_price || '';
+    document.getElementById('pc-purchase-qty').value = item.purchase_qty || 1;
+    document.getElementById('pc-remark').value = item.remark || '';
+    document.getElementById('pc-customs-cn').value = item.customs?.customs_name_cn || '';
+    document.getElementById('pc-hs-code').value = item.customs?.hs_code || '';
+    document.getElementById('pc-material').value = item.customs?.material || '';
+    document.getElementById('pc-usage').value = item.customs?.usage || '';
+    const supplierSel = document.getElementById('pc-supplier');
+    if (supplierSel && item.supplier_number) supplierSel.value = item.supplier_number;
+    pcRenderPreview({items: draft.items || []});
+    pcSetStatus(`已打开本地草稿 #${id}，called_jdy=false。`);
+    loadProductCreateDrafts();
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreateDryRun() {
+  if (!productCreateSelectedDraftId) {
+    pcSetStatus('请先保存或选择一个草稿。', true);
+    return;
+  }
+  pcSetStatus('正在生成 JDY dry-run 计划，不调用 JDY。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/drafts/${productCreateSelectedDraftId}/dry-run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({}),
+    });
+    const box = document.getElementById('pc-result');
+    if (box) {
+      box.innerHTML = `
+        <div class="product-create-preview-card">
+          <b>JDY dry-run</b>
+          <div class="product-create-preview-grid">
+            <span>ready</span><span>${data.ready ? 'true' : 'false'}</span>
+            <span>called_jdy</span><span>${data.called_jdy ? 'true' : 'false'}</span>
+            <span>would_call_jdy</span><span>${data.would_call_jdy ? 'true' : 'false'}</span>
+            <span>写入点</span><span>${salesAttr((data.write_actions || []).join(', '))}</span>
+          </div>
+        </div>
+        <pre class="product-create-log">${salesAttr(JSON.stringify(data, null, 2))}</pre>`;
+    }
+    pcSetStatus(`dry-run 完成：called_jdy=${data.called_jdy ? 'true' : 'false'}，would_call_jdy=${data.would_call_jdy ? 'true' : 'false'}。`);
+    loadProductCreateDrafts();
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreateSubmitMock() {
+  if (!productCreateSelectedDraftId) {
+    pcSetStatus('请先保存或选择一个草稿。', true);
+    return;
+  }
+  const ok = window.confirm('确认执行 mock 提交？这不会调用真实 JDY，但会写本地提交日志和状态。');
+  if (!ok) return;
+  pcSetStatus('正在执行 mock 提交。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/drafts/${productCreateSelectedDraftId}/submit`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        confirm: 'SUBMIT_PRODUCT_CREATE',
+        dry_run_confirmed: true,
+        mock: true,
+      }),
+    });
+    const box = document.getElementById('pc-result');
+    if (box) box.innerHTML = `<pre class="product-create-log">${salesAttr(JSON.stringify(data, null, 2))}</pre>`;
+    pcSetStatus(`mock 提交完成：success=${data.success ? 'true' : 'false'}，called_jdy=${data.called_jdy ? 'true' : 'false'}，后续需同步校准 jdy_products。`);
+    loadProductCreateDrafts();
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
+}
+
+async function productCreatePromoteCustoms() {
+  if (!productCreateSelectedDraftId) {
+    pcSetStatus('请先保存或选择一个草稿。', true);
+    return;
+  }
+  const ok = window.confirm('确认把草稿基础资料写入本地 customs_product_master？不会修改 JDY 或智谱 Excel。');
+  if (!ok) return;
+  pcSetStatus('正在写回本地报关商品资料。');
+  try {
+    const data = await attachmentFetchJson(`${API}/product-create/drafts/${productCreateSelectedDraftId}/promote-customs`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: 'PROMOTE_PRODUCT_CREATE_CUSTOMS'}),
+    });
+    const box = document.getElementById('pc-result');
+    if (box) box.innerHTML = `<pre class="product-create-log">${salesAttr(JSON.stringify(data, null, 2))}</pre>`;
+    pcSetStatus(`已写回本地 customs_product_master：inserted=${data.inserted || 0}，updated=${data.updated || 0}，called_jdy=false。`);
+    window._customsProductsLoaded = false;
+  } catch (err) {
+    pcSetStatus(err.message || String(err), true);
+  }
 }
 
 async function runCustomsImportDryRun() {
