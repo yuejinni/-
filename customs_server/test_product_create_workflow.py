@@ -7,6 +7,36 @@ from pathlib import Path
 import product_create_workflow as workflow
 
 
+class CountingSubmitter(workflow.MockJdySubmitter):
+    def __init__(self):
+        self.calls = []
+
+    def create_product(self, account_key, payload):
+        self.calls.append(("product_add", payload.get("productNumber")))
+        return super().create_product(account_key, payload)
+
+    def update_product_price(self, account_key, product_number, price):
+        self.calls.append(("product_price_update", product_number))
+        return super().update_product_price(account_key, product_number, price)
+
+    def create_purchase_order(self, account_key, payload):
+        self.calls.append(("purchase_order_add", payload.get("supplier_number")))
+        return super().create_purchase_order(account_key, payload)
+
+
+class FailsOnceSubmitter(CountingSubmitter):
+    def __init__(self):
+        super().__init__()
+        self.failed_once = False
+
+    def create_product(self, account_key, payload):
+        self.calls.append(("product_add", payload.get("productNumber")))
+        if not self.failed_once:
+            self.failed_once = True
+            return {"ok": False, "mock": True, "error": "temporary failure"}
+        return workflow.MockJdySubmitter.create_product(self, account_key, payload)
+
+
 def make_conn():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -217,6 +247,130 @@ def test_real_submit_requires_second_confirm_token():
         tmp.cleanup()
 
 
+def test_submit_log_idempotency_skips_replayed_jdy_actions():
+    tmp, base = make_base_dir()
+    try:
+        conn = make_conn()
+        draft = workflow.create_draft(
+            conn,
+            base,
+            "account1",
+            "account1-name",
+            "Replay Draft",
+            sample_items(),
+            {"username": "tester", "role": "admin"},
+        )
+        submitter = CountingSubmitter()
+        first = workflow.submit_draft(
+            conn,
+            draft["id"],
+            {"username": "admin", "role": "admin"},
+            confirm_code=workflow.CONFIRM_SUBMIT_CODE,
+            dry_run_confirmed=True,
+            submitter=submitter,
+            mock=True,
+        )
+        assert first["success"] is True
+        first_call_count = len(submitter.calls)
+        assert first_call_count >= 3
+
+        conn.execute(
+            "UPDATE product_create_draft SET status='dry_run', submitted_at='' WHERE id=?",
+            (draft["id"],),
+        )
+        conn.commit()
+        replay = workflow.submit_draft(
+            conn,
+            draft["id"],
+            {"username": "admin", "role": "admin"},
+            confirm_code=workflow.CONFIRM_SUBMIT_CODE,
+            dry_run_confirmed=True,
+            submitter=submitter,
+            mock=True,
+        )
+        assert replay["success"] is True
+        assert len(submitter.calls) == first_call_count
+        logs = conn.execute(
+            "SELECT action, COUNT(*) AS c FROM product_create_submit_log GROUP BY action"
+        ).fetchall()
+        assert {row["action"]: row["c"] for row in logs} == {
+            "product_add": 1,
+            "product_price_update": 1,
+            "purchase_order_add": 1,
+        }
+    finally:
+        tmp.cleanup()
+
+
+def test_failed_submit_log_can_retry_then_become_idempotent():
+    tmp, base = make_base_dir()
+    try:
+        conn = make_conn()
+        draft = workflow.create_draft(
+            conn,
+            base,
+            "account1",
+            "account1-name",
+            "Retry Draft",
+            sample_items(),
+            {"username": "tester", "role": "admin"},
+        )
+        submitter = FailsOnceSubmitter()
+        first = workflow.submit_draft(
+            conn,
+            draft["id"],
+            {"username": "admin", "role": "admin"},
+            confirm_code=workflow.CONFIRM_SUBMIT_CODE,
+            dry_run_confirmed=True,
+            submitter=submitter,
+            mock=True,
+        )
+        assert first["success"] is False
+        assert len(submitter.calls) == 1
+
+        conn.execute(
+            "UPDATE product_create_draft SET status='dry_run', submitted_at='', last_error='' WHERE id=?",
+            (draft["id"],),
+        )
+        conn.commit()
+        retry = workflow.submit_draft(
+            conn,
+            draft["id"],
+            {"username": "admin", "role": "admin"},
+            confirm_code=workflow.CONFIRM_SUBMIT_CODE,
+            dry_run_confirmed=True,
+            submitter=submitter,
+            mock=True,
+        )
+        assert retry["success"] is True
+        retry_call_count = len(submitter.calls)
+        product_log = conn.execute(
+            "SELECT status, attempts, error FROM product_create_submit_log WHERE action='product_add'"
+        ).fetchone()
+        assert product_log["status"] == "mock_success"
+        assert product_log["attempts"] == 2
+        assert product_log["error"] == ""
+
+        conn.execute(
+            "UPDATE product_create_draft SET status='dry_run', submitted_at='' WHERE id=?",
+            (draft["id"],),
+        )
+        conn.commit()
+        replay = workflow.submit_draft(
+            conn,
+            draft["id"],
+            {"username": "admin", "role": "admin"},
+            confirm_code=workflow.CONFIRM_SUBMIT_CODE,
+            dry_run_confirmed=True,
+            submitter=submitter,
+            mock=True,
+        )
+        assert replay["success"] is True
+        assert len(submitter.calls) == retry_call_count
+    finally:
+        tmp.cleanup()
+
+
 def test_generate_local_first_guard_strings_present():
     server_path = Path(__file__).with_name("server.py")
     text = server_path.read_text(encoding="utf-8", errors="ignore")
@@ -235,6 +389,8 @@ def run_all():
         test_preview_is_local_only_and_does_not_create_draft_rows,
         test_draft_dry_run_and_mock_submit_never_call_real_jdy,
         test_real_submit_requires_second_confirm_token,
+        test_submit_log_idempotency_skips_replayed_jdy_actions,
+        test_failed_submit_log_can_retry_then_become_idempotent,
         test_generate_local_first_guard_strings_present,
     ]
     for test in tests:
@@ -244,4 +400,3 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-

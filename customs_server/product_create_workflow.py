@@ -1145,7 +1145,7 @@ def _insert_submit_log(
 ) -> None:
     now = now_text()
     phash = payload_hash(payload)
-    conn.execute(
+    cur = conn.execute(
         """
         INSERT OR IGNORE INTO product_create_submit_log
         (draft_id, item_id, action, endpoint, status, idempotency_key, payload_hash, payload_json,
@@ -1172,6 +1172,58 @@ def _insert_submit_log(
             now if status in ("success", "failed", "mock_success", "skipped") else "",
         ),
     )
+    if cur.rowcount:
+        return
+    conn.execute(
+        """
+        UPDATE product_create_submit_log
+        SET status = ?, endpoint = ?, response_json = ?, error = ?, attempts = attempts + 1,
+            called_jdy = CASE WHEN ? THEN 1 ELSE called_jdy END,
+            dry_run = ?, actor = ?, actor_role = ?, finished_at = ?
+        WHERE idempotency_key = ? AND action = ? AND payload_hash = ?
+          AND status NOT IN ('success', 'mock_success', 'skipped')
+        """,
+        (
+            status,
+            endpoint,
+            json_dumps(response or {}),
+            clean_text(error),
+            1 if called_jdy else 0,
+            1 if dry_run else 0,
+            clean_text((user or {}).get("username")),
+            clean_text((user or {}).get("role")),
+            now if status in ("success", "failed", "mock_success", "skipped") else "",
+            idempotency_key,
+            action,
+            phash,
+        ),
+    )
+
+
+def _submit_log_existing(conn: sqlite3.Connection, idempotency_key: str, action: str, payload: dict) -> dict | None:
+    phash = payload_hash(payload)
+    row = conn.execute(
+        """
+        SELECT status, response_json, error
+        FROM product_create_submit_log
+        WHERE idempotency_key = ? AND action = ? AND payload_hash = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (idempotency_key, action, phash),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "status": row["status"],
+        "response": json_loads(row["response_json"]),
+        "error": row["error"] or "",
+        "idempotent_replay": True,
+    }
+
+
+def _submit_log_success(entry: dict | None) -> bool:
+    return bool(entry and entry.get("status") in ("success", "mock_success", "skipped"))
 
 
 def _safe_response_payload(response: dict) -> dict:
@@ -1281,7 +1333,13 @@ def submit_draft(
         item_key = f"{draft['idempotency_key']}:{item['id']}:{item['product_number']}"
 
         product_payload = item_payloads.get("product_add") or {}
-        product_result = submitter.create_product(item["account_key"], product_payload)
+        existing = _submit_log_existing(conn, item_key, "product_add", product_payload)
+        if _submit_log_success(existing):
+            product_result = existing["response"]
+            product_result.setdefault("ok", True)
+            product_result["idempotent_replay"] = True
+        else:
+            product_result = submitter.create_product(item["account_key"], product_payload)
         product_ok = bool(product_result.get("ok"))
         item_ok = item_ok and product_ok
         action_results["product_add"] = product_result
@@ -1300,12 +1358,14 @@ def submit_draft(
             called_jdy=called_jdy,
             dry_run=mock,
         )
+        conn.commit()
         if not product_ok:
             all_ok = False
             conn.execute(
                 "UPDATE product_create_draft_item SET status='failed', jdy_error=?, updated_at=? WHERE id=?",
                 (product_result.get("msg") or product_result.get("error") or "product_add failed", now_text(), item["id"]),
             )
+            conn.commit()
             results.append({"item_id": item["id"], "ok": False, **action_results})
             continue
 
@@ -1315,7 +1375,13 @@ def submit_draft(
         image_payload = item_payloads.get("product_image_update")
         if image_payload:
             image_b64 = ((image_payload.get("items") or [{}])[0].get("multiImg") or [""])[0]
-            image_result = submitter.update_product_image(item["account_key"], jdy_product_id, item["product_number"], image_b64)
+            existing = _submit_log_existing(conn, item_key, "product_image_update", image_payload)
+            if _submit_log_success(existing):
+                image_result = existing["response"]
+                image_result.setdefault("ok", True)
+                image_result["idempotent_replay"] = True
+            else:
+                image_result = submitter.update_product_image(item["account_key"], jdy_product_id, item["product_number"], image_b64)
             image_ok = bool(image_result.get("ok"))
             item_ok = item_ok and image_ok
             action_results["product_image_update"] = image_result
@@ -1334,10 +1400,17 @@ def submit_draft(
                 called_jdy=called_jdy,
                 dry_run=mock,
             )
+            conn.commit()
 
         price_payload = item_payloads.get("product_price_update")
         if price_payload:
-            price_result = submitter.update_product_price(item["account_key"], item["product_number"], item.get("purchase_price") or 0)
+            existing = _submit_log_existing(conn, item_key, "product_price_update", price_payload)
+            if _submit_log_success(existing):
+                price_result = existing["response"]
+                price_result.setdefault("ok", True)
+                price_result["idempotent_replay"] = True
+            else:
+                price_result = submitter.update_product_price(item["account_key"], item["product_number"], item.get("purchase_price") or 0)
             price_ok = bool(price_result.get("ok"))
             item_ok = item_ok and price_ok
             action_results["product_price_update"] = price_result
@@ -1356,6 +1429,7 @@ def submit_draft(
                 called_jdy=called_jdy,
                 dry_run=mock,
             )
+            conn.commit()
 
         all_ok = all_ok and item_ok
         conn.execute(
@@ -1366,13 +1440,20 @@ def submit_draft(
             """,
             ("submitted" if item_ok else "failed", jdy_product_id, "" if item_ok else "optional JDY update failed", now_text(), item["id"]),
         )
+        conn.commit()
         results.append({"item_id": item["id"], "ok": item_ok, **action_results})
 
     refreshed_draft = read_draft(conn, draft_id, include_image=True) or draft
     purchase_payload = build_purchase_order_payload(refreshed_draft, refreshed_draft["items"])
     purchase_result = None
     if all_ok and purchase_payload:
-        purchase_result = submitter.create_purchase_order(refreshed_draft["account_key"], purchase_payload)
+        existing = _submit_log_existing(conn, refreshed_draft["idempotency_key"], "purchase_order_add", purchase_payload)
+        if _submit_log_success(existing):
+            purchase_result = existing["response"]
+            purchase_result.setdefault("ok", True)
+            purchase_result["idempotent_replay"] = True
+        else:
+            purchase_result = submitter.create_purchase_order(refreshed_draft["account_key"], purchase_payload)
         po_ok = bool(purchase_result.get("ok"))
         _insert_submit_log(
             conn,
@@ -1389,6 +1470,7 @@ def submit_draft(
             called_jdy=called_jdy,
             dry_run=mock,
         )
+        conn.commit()
         all_ok = all_ok and po_ok
 
     final_status = "submitted" if all_ok else "failed"
