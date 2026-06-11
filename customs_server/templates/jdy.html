@@ -393,7 +393,7 @@ body {
 }
 .customs-products-table th.sort-asc::after { content: "↑"; color: #1a2c5b; }
 .customs-products-table th.sort-desc::after { content: "↓"; color: #1a2c5b; }
-.customs-products-table thead tr.customs-filter-row th {
+.customs-products-table tbody tr.customs-filter-row td {
   position: static;
   top: auto;
   z-index: 1;
@@ -412,7 +412,7 @@ body {
   z-index: 5;
   background: #e6eef8;
 }
-.customs-products-table thead tr.customs-filter-row th.sticky-col {
+.customs-products-table tbody tr.customs-filter-row td.sticky-col {
   position: sticky;
   top: auto;
   z-index: 3;
@@ -4590,7 +4590,7 @@ function renderCustomsProducts(list, data) {
     const click = sortable ? ` onclick="setCustomsSort('${salesAttr(col.key)}')"` : '';
     return `<th class="${cls}"${click}>${salesAttr(col.label)}</th>`;
   }).join('');
-  const filters = columns.map(col => `<th class="${col.fixed ? 'sticky-col ' + col.fixed : ''}">${customsFilterControl(col)}</th>`).join('');
+  const filters = columns.map(col => `<td class="${col.fixed ? 'sticky-col ' + col.fixed : ''}">${customsFilterControl(col)}</td>`).join('');
   const rows = (list || []).map((row, idx) => {
     const cells = columns.map(col => {
       const cls = col.fixed ? `sticky-col ${col.fixed}` : '';
@@ -4609,7 +4609,7 @@ function renderCustomsProducts(list, data) {
     return `<tr ondblclick="openCustomsEditModal(${idx})">${cells}</tr>`;
   }).join('');
   const emptyRow = rows || `<tr><td colspan="${columns.length}" class="empty">${total ? '当前页暂无商品' : '暂无匹配商品，可调整筛选条件或先做导入预览。'}</td></tr>`;
-  grid.innerHTML = `<table class="customs-products-table"><thead><tr>${head}</tr><tr class="customs-filter-row">${filters}</tr></thead><tbody>${emptyRow}</tbody></table>`;
+  grid.innerHTML = `<table class="customs-products-table"><thead><tr>${head}</tr></thead><tbody><tr class="customs-filter-row">${filters}</tr>${emptyRow}</tbody></table>`;
   if (totalBar) totalBar.innerHTML = `共 <b>${salesAttr(total)}</b> 款，当前页 <b>${salesAttr((list || []).length)}</b> 款；双击行可编辑本地报关字段`;
   bindSalesProductImages();
 }
