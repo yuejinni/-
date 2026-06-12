@@ -53,6 +53,7 @@ from ai_identify import (
 )
 import jdy_api
 import product_create_workflow as product_create
+import db_backend
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -3404,6 +3405,10 @@ _LOCAL_JSON_CACHE = {}
 
 
 def _sales_cache_conn():
+    if db_backend.is_mssql_enabled():
+        conn = db_backend.connect_cache(readonly=False)
+        db_backend.ensure_mssql_cache_schema(conn)
+        return conn
     os.makedirs(_SALES_CACHE_DIR, exist_ok=True)
     conn = sqlite3.connect(_SALES_CACHE_DB, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -3781,8 +3786,26 @@ def _ensure_jdy_product_columns(conn):
             cols.add(key)
 
 
+def _cache_mssql_upsert(conn, table, values, key_columns, preserve_update_columns=()):
+    if not db_backend.is_mssql_connection(conn):
+        return ''
+    return db_backend.upsert_by_key(conn, table, values, key_columns, preserve_update_columns)
+
+
 def _cache_upsert_sales_order(conn, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return _cache_mssql_upsert(conn, 'sales_orders', {
+            'account': order.get('account') or '',
+            'number': order.get('number') or '',
+            'date': order.get('date') or '',
+            'customer_name': order.get('customerName') or '',
+            'total_qty': _num(order.get('totalQty')),
+            'total_amount': _num(order.get('totalAmount')),
+            'check_status': str(order.get('checkStatusName') or ''),
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
     conn.execute('''
         INSERT OR REPLACE INTO sales_orders
         (account, number, date, customer_name, total_qty, total_amount, check_status, data_json, updated_at)
@@ -3802,6 +3825,14 @@ def _cache_upsert_sales_order(conn, order):
 
 def _cache_upsert_sales_detail(conn, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return _cache_mssql_upsert(conn, 'sales_details', {
+            'account': order.get('account') or '',
+            'number': order.get('number') or '',
+            'date': order.get('date') or '',
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
     conn.execute('''
         INSERT OR REPLACE INTO sales_details
         (account, number, date, data_json, updated_at)
@@ -3817,6 +3848,25 @@ def _cache_upsert_sales_detail(conn, order):
 
 def _cache_upsert_sales_product_quantity(conn, account, code, stock, factory_qty, error=''):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        def stock_bucket(*terms):
+            source = stock or {}
+            for key, value in source.items():
+                text = str(key or '')
+                if all(term in text for term in terms):
+                    return _num(value)
+            return 0
+        return _cache_mssql_upsert(conn, 'sales_product_quantities', {
+            'account': account or '',
+            'code': code or '',
+            'stock_new': stock_bucket('新') or stock_bucket('new'),
+            'stock_transit': stock_bucket('在途') or stock_bucket('transit'),
+            'stock_local': stock_bucket('本地') or stock_bucket('local'),
+            'stock_factory': stock_bucket('工厂') or stock_bucket('factory'),
+            'factory_qty': _num(factory_qty),
+            'updated_at': now,
+            'error': str(error or ''),
+        }, ['account', 'code'])
     conn.execute('''
         INSERT OR REPLACE INTO sales_product_quantities
         (account, code, stock_new, stock_transit, stock_local, stock_factory, factory_qty, updated_at, error)
@@ -3956,6 +4006,8 @@ def _read_cached_sales_detail(order_no, account=''):
 
 
 def _sales_readonly_conn():
+    if db_backend.is_mssql_enabled():
+        return db_backend.connect_cache(readonly=True)
     if not os.path.exists(_SALES_CACHE_DB):
         return None
     uri = 'file:' + os.path.abspath(_SALES_CACHE_DB).replace('\\', '/') + '?mode=ro'
@@ -3990,6 +4042,9 @@ CUSTOMS_PRODUCT_MUTABLE_FIELDS = [
 
 
 def _ensure_customs_product_tables(conn):
+    if db_backend.is_mssql_connection(conn):
+        db_backend.ensure_mssql_cache_schema(conn, ['customs_product_master', 'customs_product_master_history'])
+        return
     conn.execute('''
         CREATE TABLE IF NOT EXISTS customs_product_master (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4479,10 +4534,7 @@ def _customs_load_existing_map(conn):
     if not conn:
         return {}
     try:
-        exists = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customs_product_master'"
-        ).fetchone()
-        if not exists:
+        if not db_backend.table_exists(conn, 'customs_product_master'):
             return {}
         rows = conn.execute('SELECT * FROM customs_product_master').fetchall()
         return {
@@ -4862,7 +4914,7 @@ def _customs_product_list_response():
         }
         product_map = {}
         if has_jdy:
-            clauses, params = ['COALESCE(product_number, "") != ""'], []
+            clauses, params = ["COALESCE(product_number, '') != ''"], []
             if account != 'all':
                 clauses.append('account = ?')
                 params.append(account)
@@ -5056,7 +5108,7 @@ def _customs_product_status_response():
                 if code:
                     customs_map[code] = data
         if has_jdy:
-            clauses, params = ['COALESCE(product_number, "") != ""'], []
+            clauses, params = ["COALESCE(product_number, '') != ''"], []
             if account != 'all':
                 clauses.append('account = ?')
                 params.append(account)
@@ -5148,7 +5200,7 @@ JDY_SUPPLIER_EXTRA_COLUMNS = {
 
 def _jdy_supplier_columns(conn):
     try:
-        return [str(row['name'] if isinstance(row, sqlite3.Row) else row[1]) for row in conn.execute('PRAGMA table_info(jdy_suppliers)').fetchall()]
+        return db_backend.table_columns(conn, 'jdy_suppliers')
     except Exception:
         return []
 
@@ -5159,6 +5211,9 @@ def _missing_jdy_supplier_columns(columns):
 
 
 def _ensure_jdy_suppliers_schema(conn):
+    if db_backend.is_mssql_connection(conn):
+        db_backend.ensure_mssql_cache_schema(conn, ['jdy_suppliers'])
+        return []
     columns = _jdy_supplier_columns(conn)
     if not columns:
         return []
@@ -5399,7 +5454,7 @@ def _webhook_status_snapshot(limit=20):
               AND COALESCE(resource, '') <> ''
               AND COALESCE(bill_no, '') <> ''
             GROUP BY resource, bill_no
-            HAVING c > 1
+            HAVING COUNT(*) > 1
             ORDER BY c DESC, resource, bill_no
             LIMIT 20
         '''):
@@ -5420,7 +5475,7 @@ def _webhook_status_snapshot(limit=20):
               AND COALESCE(resource, '') <> ''
               AND COALESCE(bill_no, '') <> ''
             GROUP BY resource, bill_no
-            HAVING c > 1
+            HAVING COUNT(*) > 1
             ORDER BY c DESC, resource, bill_no
             LIMIT 20
         '''):
@@ -5805,14 +5860,10 @@ def _cache_sqlite_table_count(conn, table):
     if not conn:
         return result
     try:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-        if not row:
+        if not db_backend.table_exists(conn, table):
             return result
         result['exists'] = True
-        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {table}').fetchone()
+        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {db_backend.quote_table(table) if db_backend.is_mssql_connection(conn) else table}').fetchone()
         result['count'] = int(count_row['c'] if isinstance(count_row, sqlite3.Row) else count_row[0])
     except Exception as e:
         result['error'] = str(e)
@@ -5891,7 +5942,7 @@ def _local_products_response():
                 COALESCE(q.factory_qty, 0) AS factory_qty,
                 CASE WHEN q.code IS NULL THEN 0 ELSE 1 END AS has_quantity_cache
             '''
-        clauses = ['COALESCE(p.product_number, "") != ""']
+        clauses = ["COALESCE(p.product_number, '') != ''"]
         params = []
         if account and account != 'all':
             clauses.append('p.account = ?')
@@ -5918,7 +5969,7 @@ def _local_products_response():
             kw = f'%{supplier}%'
             params.extend([kw, kw])
         if category and category != 'all':
-            clauses.append('LOWER(COALESCE(p.category_name, "")) LIKE ?')
+            clauses.append("LOWER(COALESCE(p.category_name, '')) LIKE ?")
             params.append(f'%{category}%')
         if has_image in ('1', 'true', 'yes', 'y', 'has'):
             clauses.append("COALESCE(p.image_url, '') != ''")
@@ -6151,16 +6202,13 @@ def _sync_coverage_table_info(conn, table):
         info['error'] = 'table is not allowed'
         return info
     try:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-        if not row:
+        if not db_backend.table_exists(conn, table):
             return info
-        cols = [str(r['name']) for r in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+        cols = db_backend.table_columns(conn, table)
         info['exists'] = True
         info['columns'] = cols
-        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {table}').fetchone()
+        count_table = db_backend.quote_table(table) if db_backend.is_mssql_connection(conn) else table
+        count_row = conn.execute(f'SELECT COUNT(*) AS c FROM {count_table}').fetchone()
         info['count'] = int(count_row['c'] if count_row else 0)
         for col in ('updated_at', 'last_seen_at', 'processed_at', 'created_at', 'synced_at', 'date', 'order_date'):
             if col in cols:
@@ -6491,11 +6539,7 @@ def _realtime_health_table_exists(conn, table):
     if conn is None:
         return False
     try:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-        return bool(row)
+        return db_backend.table_exists(conn, table)
     except Exception:
         return False
 
@@ -6506,7 +6550,7 @@ def _realtime_health_table_columns(conn, table):
     try:
         if not _realtime_health_table_exists(conn, table):
             return []
-        return [str(row['name']) for row in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+        return db_backend.table_columns(conn, table)
     except Exception:
         return []
 
@@ -7297,28 +7341,22 @@ def _attachment_table_info(conn, table_name, include_count=True):
     table_name = str(table_name or '').strip()
     if not table_name:
         return {'exists': False, 'count': 0, 'columns': []}
-    exists = bool(conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table_name,),
-    ).fetchone())
+    exists = db_backend.table_exists(conn, table_name)
     info = {'exists': exists, 'count': 0, 'columns': []}
     if not exists:
         return info
-    cols = conn.execute(f'PRAGMA table_info({table_name})').fetchall()
-    info['columns'] = [row['name'] if isinstance(row, sqlite3.Row) else row[1] for row in cols]
+    info['columns'] = db_backend.table_columns(conn, table_name)
     if include_count:
         try:
-            info['count'] = int(conn.execute(f'SELECT COUNT(*) AS c FROM {table_name}').fetchone()['c'] or 0)
+            count_table = db_backend.quote_table(table_name) if db_backend.is_mssql_connection(conn) else table_name
+            info['count'] = int(conn.execute(f'SELECT COUNT(*) AS c FROM {count_table}').fetchone()['c'] or 0)
         except Exception:
             info['count'] = 0
     return info
 
 
 def _attachment_has_table(conn, table_name):
-    return bool(conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (str(table_name or '').strip(),),
-    ).fetchone())
+    return db_backend.table_exists(conn, str(table_name or '').strip())
 
 
 def _attachment_config_dates():
@@ -7948,6 +7986,9 @@ def _attachment_limit(value, default=20, maximum=50):
 
 
 def _ensure_purchase_attachment_items_table(conn):
+    if db_backend.is_mssql_connection(conn):
+        db_backend.ensure_mssql_cache_schema(conn, ['purchase_attachment_items'])
+        return
     conn.execute('''
         CREATE TABLE IF NOT EXISTS purchase_attachment_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7994,6 +8035,14 @@ def _ensure_purchase_attachment_items_table(conn):
 
 
 def _history_backfill_write_conn():
+    if db_backend.is_mssql_enabled():
+        conn = _sales_cache_conn()
+        if not _attachment_has_table(conn, 'bill_attachments'):
+            conn.close()
+            return None, 'bill_attachments table missing; write stopped'
+        _ensure_purchase_attachment_items_table(conn)
+        conn.commit()
+        return conn, ''
     if not os.path.exists(_SALES_CACHE_DB):
         return None, '本地销售缓存不存在'
     conn = sqlite3.connect(_SALES_CACHE_DB, timeout=30)
@@ -8137,6 +8186,35 @@ def _upsert_purchase_attachment_item(conn, source, entry, attachment_key, attach
     if not data['product_code']:
         return False
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        existing = conn.execute('''
+            SELECT id, created_at FROM purchase_attachment_items
+            WHERE account=? AND source_type=? AND source_number=? AND product_code=? AND attachment_key=?
+        ''', (
+            source.get('account') or '', source.get('source_type') or '', source.get('source_number') or '',
+            data['product_code'], attachment_key,
+        )).fetchone()
+        db_backend.upsert_by_key(conn, 'purchase_attachment_items', {
+            'account': source.get('account') or '',
+            'source_type': source.get('source_type') or '',
+            'source_number': source.get('source_number') or '',
+            'source_date': source.get('source_date') or '',
+            'supplier_number': source.get('supplier_number') or '',
+            'supplier_name': source.get('supplier_name') or '',
+            'product_code': data['product_code'],
+            'product_name': data['product_name'],
+            'spec': data['spec'],
+            'qty': data['qty'],
+            'unit': data['unit'],
+            'price': data['price'],
+            'amount': data['amount'],
+            'attachment_key': attachment_key,
+            'attachment_id': attachment_id,
+            'data_json': json.dumps(entry or {}, ensure_ascii=False),
+            'created_at': (existing['created_at'] if existing else now),
+            'updated_at': now,
+        }, ['account', 'source_type', 'source_number', 'product_code', 'attachment_key'], preserve_update_columns=['created_at'])
+        return True
     conn.execute('''
         INSERT OR REPLACE INTO purchase_attachment_items
         (id, account, source_type, source_number, source_date, supplier_number, supplier_name,
@@ -8165,6 +8243,12 @@ def _upsert_purchase_attachment_item(conn, source, entry, attachment_key, attach
 
 
 def _bill_attachments_existing_write_conn():
+    if db_backend.is_mssql_enabled():
+        conn = _sales_cache_conn()
+        if not _attachment_has_table(conn, 'bill_attachments'):
+            conn.close()
+            return None, 'bill_attachments table missing; write stopped'
+        return conn, ''
     if not os.path.exists(_SALES_CACHE_DB):
         return None, '本地销售缓存不存在'
     conn = sqlite3.connect(_SALES_CACHE_DB, timeout=30)
@@ -8184,6 +8268,35 @@ def _upsert_bill_attachment_metadata(conn, meta):
     ''', (
         meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key']
     )).fetchone()
+    if db_backend.is_mssql_connection(conn):
+        created_at = ''
+        if existing:
+            row = conn.execute('''
+                SELECT created_at FROM bill_attachments
+                WHERE account = ? AND source_type = ? AND source_number = ? AND attachment_key = ?
+            ''', (
+                meta['account'], meta['source_type'], meta['source_number'], meta['attachment_key']
+            )).fetchone()
+            created_at = row['created_at'] if row else ''
+        db_backend.upsert_by_key(conn, 'bill_attachments', {
+            'account': meta['account'],
+            'source_type': meta['source_type'],
+            'source_number': meta['source_number'],
+            'source_date': meta['source_date'],
+            'bill_type': meta['bill_type'],
+            'attachment_key': meta['attachment_key'],
+            'name': meta['name'],
+            'url': meta['url'],
+            'local_path': meta.get('local_path') or '',
+            'file_mime': meta['file_mime'],
+            'file_size': meta['file_size'],
+            'download_status': meta.get('download_status') or 'metadata_only',
+            'download_error': meta.get('download_error') or '',
+            'data_json': meta['data_json'],
+            'created_at': created_at or now,
+            'updated_at': now,
+        }, ['account', 'source_type', 'source_number', 'attachment_key'], preserve_update_columns=['created_at'])
+        return 'updated' if existing else 'inserted'
     conn.execute('''
         INSERT OR REPLACE INTO bill_attachments
         (id, account, source_type, source_number, source_date, bill_type, attachment_key,
@@ -8670,6 +8783,35 @@ def _read_historical_purchase_attachments(conn, item, limit=50):
 def _cache_upsert_purchase_inbound(conn, account, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     number = _first_value(order, ['number', 'billNo', 'id'], '')
+    if db_backend.is_mssql_connection(conn):
+        db_backend.upsert_by_key(conn, 'purchase_inbounds', {
+            'account': account or '',
+            'number': number or '',
+            'date': str(_first_value(order, ['date', 'billDate', 'createTime'], ''))[:10],
+            'supplier_number': _first_value(order, ['supplierNumber', 'supplierNo', 'vendorNumber'], ''),
+            'supplier_name': _first_value(order, ['supplierName', 'vendorName'], ''),
+            'total_qty': _num(_first_value(order, ['totalQty', 'qty', 'totalQuantity'], 0)),
+            'total_amount': _num(_first_value(order, ['totalAmount', 'amount'], 0)),
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
+        for idx, att in enumerate(_extract_purchase_attachments(order)):
+            key = att.get('id') or att.get('url') or att.get('name') or str(idx)
+            existing = conn.execute('''
+                SELECT local_path FROM purchase_inbound_attachments
+                WHERE account=? AND number=? AND attachment_key=?
+            ''', (account or '', number or '', key)).fetchone()
+            db_backend.upsert_by_key(conn, 'purchase_inbound_attachments', {
+                'account': account or '',
+                'number': number or '',
+                'attachment_key': key,
+                'name': att.get('name') or '',
+                'url': att.get('url') or '',
+                'local_path': (existing['local_path'] if existing else '') or '',
+                'data_json': json.dumps(att, ensure_ascii=False),
+                'updated_at': now,
+            }, ['account', 'number', 'attachment_key'], preserve_update_columns=['local_path'])
+        return
     conn.execute('''
         INSERT OR REPLACE INTO purchase_inbounds
         (account, number, date, supplier_number, supplier_name, total_qty, total_amount, data_json, updated_at)
@@ -8708,11 +8850,7 @@ def _read_cached_purchase_history(account, code, limit=20, date_from='', date_to
     if not conn:
         return records
     def table_exists(name):
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (name,),
-        ).fetchone()
-        return bool(row)
+        return db_backend.table_exists(conn, name)
     def date_ok(value):
         value = str(value or '')[:10]
         if date_from and value and value < date_from:
@@ -9007,7 +9145,7 @@ def _cache_insert_reorder_item(conn, item):
             data_json, now, existing['id'],
         ))
         return existing['id'], False
-    cur = conn.execute('''
+    insert_sql = '''
         INSERT INTO reorder_items
         (account, supplier_number, supplier_name, code, name, spec, barcode, unit,
          image_url, source_type, source_number, source_date, source_customer, source_user,
@@ -9015,7 +9153,14 @@ def _cache_insert_reorder_item(conn, item):
          suggested_qty, confirmed_qty, status, note, created_by, created_by_name,
          reorder_price, data_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?, ?, ?, ?, ?)
-    ''', (
+    '''
+    if db_backend.is_mssql_connection(conn):
+        insert_sql = insert_sql.replace(
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,',
+            'OUTPUT INSERTED.id AS id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,',
+            1,
+        )
+    cur = conn.execute(insert_sql, (
         item.get('account') or '', item.get('supplierNumber') or '', item.get('supplierName') or '',
         item.get('code') or '', item.get('name') or '', item.get('spec') or '',
         item.get('barcode') or '', item.get('unit') or '', item.get('imageUrl') or '',
@@ -9027,6 +9172,9 @@ def _cache_insert_reorder_item(conn, item):
         item.get('createdBy') or '', item.get('createdByName') or '未知添加人',
         _num(item.get('reorderPrice')), data_json, now, now,
     ))
+    if db_backend.is_mssql_connection(conn):
+        row = cur.fetchone()
+        return (row['id'] if row else 0), True
     return cur.lastrowid, True
 
 
@@ -9238,6 +9386,25 @@ def _cache_upsert_transfer_order(conn, order):
     account = order.get('_account') or order.get('account') or ''
     number = order.get('number') or order.get('billNo') or order.get('id') or ''
     date_str = str(order.get('date') or order.get('billDate') or order.get('createTime') or '')[:10]
+    if db_backend.is_mssql_connection(conn):
+        db_backend.upsert_by_key(conn, 'transfer_orders', {
+            'account': account,
+            'number': number,
+            'date': date_str,
+            'out_location': order.get('_outLocName') or '',
+            'check_status': str(order.get('checkStatusName') or order.get('statusName') or order.get('checkStatus') or ''),
+            'remark': order.get('remark') or '',
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
+        db_backend.upsert_by_key(conn, 'transfer_details', {
+            'account': account,
+            'number': number,
+            'date': date_str,
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
+        return
     conn.execute('''
         INSERT OR REPLACE INTO transfer_orders
         (account, number, date, out_location, check_status, remark, data_json, updated_at)
@@ -9648,10 +9815,10 @@ def _webhook_failed_where(params, recorded_only=False):
         clauses.append('resource = ?')
         values.append(resource)
     if error_keyword:
-        clauses.append('LOWER(COALESCE(error, "")) LIKE ?')
+        clauses.append("LOWER(COALESCE(error, '')) LIKE ?")
         values.append(f'%{error_keyword.lower()}%')
     if recorded_only:
-        clauses.append('(LOWER(COALESCE(error, "")) LIKE ? OR COALESCE(error, "") LIKE ?)')
+        clauses.append("(LOWER(COALESCE(error, '')) LIKE ? OR COALESCE(error, '') LIKE ?)")
         values.extend(['%recorded only%', '%仅记录%'])
     return ' AND '.join(clauses), values
 
@@ -10590,6 +10757,16 @@ def _save_webhook_runtime_settings():
     settings = _webhook_runtime_settings_from_state()
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with _sales_cache_conn() as conn:
+        if db_backend.is_mssql_connection(conn):
+            db_backend.upsert_by_key(conn, 'webhook_runtime_settings', {
+                'id': 1,
+                'processing_mode': settings['processing_mode'],
+                'auto_enabled': 1 if settings['auto_enabled'] else 0,
+                'paused': 1 if settings['paused'] else 0,
+                'updated_at': now,
+            }, ['id'])
+            conn.commit()
+            return settings
         conn.execute('''
             INSERT INTO webhook_runtime_settings
             (id, processing_mode, auto_enabled, paused, updated_at)
@@ -11335,6 +11512,16 @@ def _cache_upsert_jdy_supplier(conn, account, supplier, status_code=None, now=No
     now = now or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     columns = set(_jdy_supplier_columns(conn))
     if 'status_code' not in columns:
+        if db_backend.is_mssql_connection(conn):
+            db_backend.upsert_by_key(conn, 'jdy_suppliers', {
+                'account': account or '',
+                'number': number,
+                'name': name,
+                'category_text': _supplier_category_text(supplier),
+                'data_json': json.dumps(supplier, ensure_ascii=False),
+                'updated_at': now,
+            }, ['account', 'number'])
+            return
         conn.execute('''
             INSERT INTO jdy_suppliers
             (account, number, name, category_text, data_json, updated_at)
@@ -11356,6 +11543,28 @@ def _cache_upsert_jdy_supplier(conn, account, supplier, status_code=None, now=No
     status_code_val, status_val, status_name = _supplier_status_parts(supplier, status_code)
     last_seen_enabled_at = now if status_val == 'enabled' else ''
     disabled_at = '' if status_val == 'enabled' else (now if status_val == 'disabled' else '')
+    if db_backend.is_mssql_connection(conn):
+        existing = conn.execute(
+            'SELECT last_seen_enabled_at, disabled_at FROM jdy_suppliers WHERE account=? AND number=?',
+            (account or '', number),
+        ).fetchone()
+        db_backend.upsert_by_key(conn, 'jdy_suppliers', {
+            'account': account or '',
+            'number': number,
+            'name': name,
+            'category_text': _supplier_category_text(supplier),
+            'data_json': json.dumps(supplier, ensure_ascii=False),
+            'updated_at': now,
+            'status_code': status_code_val,
+            'status': status_val,
+            'status_name': status_name,
+            'contact': _supplier_contact_text(supplier),
+            'phone': _supplier_phone_text(supplier),
+            'last_seen_at': now,
+            'last_seen_enabled_at': last_seen_enabled_at or (existing['last_seen_enabled_at'] if existing else ''),
+            'disabled_at': '' if status_val == 'enabled' else (disabled_at or (existing['disabled_at'] if existing else '')),
+        }, ['account', 'number'])
+        return
     conn.execute('''
         INSERT INTO jdy_suppliers
         (account, number, name, category_text, data_json, updated_at,
@@ -11908,6 +12117,21 @@ def _normalize_accessory_purchase_order(row, account, supplier=None):
 
 def _cache_upsert_accessory_purchase_order(conn, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return db_backend.upsert_by_key(conn, 'accessory_purchase_orders', {
+            'account': order.get('account') or '',
+            'number': order.get('number') or '',
+            'date': order.get('date') or '',
+            'supplier_name': order.get('supplierName') or '',
+            'supplier_number': order.get('supplierNumber') or '',
+            'total_qty': _num(order.get('totalQty')),
+            'total_amount': _num(order.get('totalAmount')),
+            'bill_status': str(order.get('billStatus') or ''),
+            'bill_status_name': str(order.get('billStatusName') or ''),
+            'entries_count': len(order.get('entries') or []),
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
     conn.execute('''
         INSERT OR REPLACE INTO accessory_purchase_orders
         (account, number, date, supplier_name, supplier_number, total_qty,
@@ -12185,6 +12409,15 @@ def _refresh_accessory_product_stocks_from_inventory(cli, account, conn):
 
 def _cache_upsert_accessory_product(conn, product):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return db_backend.upsert_by_key(conn, 'accessory_products', {
+            'account': product.get('account') or '',
+            'code': product.get('code') or '',
+            'name': product.get('name') or '',
+            'category': product.get('category') or '',
+            'data_json': json.dumps(product, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'code'])
     conn.execute('''
         INSERT OR REPLACE INTO accessory_products
         (account, code, name, category, data_json, updated_at)
@@ -12701,10 +12934,7 @@ def _local_products_inventory_snapshot_factory_fallback(conn, products):
         return result
 
     try:
-        cols = {
-            str(row['name'] if isinstance(row, sqlite3.Row) else row[1])
-            for row in conn.execute('PRAGMA table_info(inventory_snapshots)').fetchall()
-        }
+        cols = set(db_backend.table_columns(conn, 'inventory_snapshots'))
     except Exception:
         return result
     required = {'account', 'warehouse_name', 'quantity', 'snapshot_at'}

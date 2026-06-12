@@ -15,6 +15,8 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Mapping
 
+import db_backend
+
 
 CONFIRM_SUBMIT_CODE = "SUBMIT_PRODUCT_CREATE"
 CONFIRM_REAL_JDY_CODE = "REAL_JDY_PRODUCT_CREATE"
@@ -70,6 +72,20 @@ def short_hash(payload: Any, size: int = 12) -> str:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    if db_backend.is_mssql_connection(conn):
+        db_backend.ensure_mssql_cache_schema(
+            conn,
+            [
+                "product_create_sequences",
+                "product_create_draft",
+                "product_create_draft_item",
+                "product_create_submit_log",
+                "jdy_products",
+                "jdy_suppliers",
+                "customs_product_master",
+            ],
+        )
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS product_create_sequences (
@@ -232,6 +248,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_columns(conn: sqlite3.Connection, table: str, additions: Mapping[str, str]) -> None:
+    if db_backend.is_mssql_connection(conn):
+        return
     cols = {
         str(row["name"]).lower()
         for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -512,11 +530,7 @@ def normalize_items(input_items: Any) -> list[dict]:
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
-        (name,),
-    ).fetchone()
-    return bool(row)
+    return db_backend.table_exists(conn, name)
 
 
 def validate_and_enrich_item(
@@ -755,31 +769,45 @@ def create_draft(
         }
     )[:32]
     phash = payload_hash(preview.get("items") or [])
-    conn.execute(
-        """
-        INSERT INTO product_create_draft
-        (draft_no, account_key, account, title, status, idempotency_key, payload_hash, source,
-         created_by, created_by_name, created_at, updated_at, validated_at, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            draft_no,
-            account_key,
-            account,
-            clean_text(title) or "Quick product draft",
-            "validated" if preview.get("ready") else "draft",
-            idempotency,
-            phash,
-            source,
-            username,
-            display_name,
-            now,
-            now,
-            now if preview.get("ready") else "",
-            json_dumps({"preview_summary": preview.get("summary")}),
-        ),
+    insert_params = (
+        draft_no,
+        account_key,
+        account,
+        clean_text(title) or "Quick product draft",
+        "validated" if preview.get("ready") else "draft",
+        idempotency,
+        phash,
+        source,
+        username,
+        display_name,
+        now,
+        now,
+        now if preview.get("ready") else "",
+        json_dumps({"preview_summary": preview.get("summary")}),
     )
-    draft_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    if db_backend.is_mssql_connection(conn):
+        row = conn.execute(
+            """
+            INSERT INTO product_create_draft
+            (draft_no, account_key, account, title, status, idempotency_key, payload_hash, source,
+             created_by, created_by_name, created_at, updated_at, validated_at, data_json)
+            OUTPUT INSERTED.id AS id
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            insert_params,
+        ).fetchone()
+        draft_id = row["id"]
+    else:
+        conn.execute(
+            """
+            INSERT INTO product_create_draft
+            (draft_no, account_key, account, title, status, idempotency_key, payload_hash, source,
+             created_by, created_by_name, created_at, updated_at, validated_at, data_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            insert_params,
+        )
+        draft_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
     _replace_draft_items(conn, draft_id, account_key, account, preview["items"], now)
     conn.commit()
     return read_draft(conn, draft_id) or {}
@@ -1145,6 +1173,58 @@ def _insert_submit_log(
 ) -> None:
     now = now_text()
     phash = payload_hash(payload)
+    if db_backend.is_mssql_connection(conn):
+        inserted = db_backend.insert_if_missing(
+            conn,
+            "product_create_submit_log",
+            {
+                "draft_id": draft_id,
+                "item_id": item_id or 0,
+                "action": action,
+                "endpoint": endpoint,
+                "status": status,
+                "idempotency_key": idempotency_key,
+                "payload_hash": phash,
+                "payload_json": json_dumps(payload),
+                "response_json": json_dumps(response or {}),
+                "error": clean_text(error),
+                "attempts": 1,
+                "called_jdy": 1 if called_jdy else 0,
+                "dry_run": 1 if dry_run else 0,
+                "actor": clean_text((user or {}).get("username")),
+                "actor_role": clean_text((user or {}).get("role")),
+                "created_at": now,
+                "finished_at": now if status in ("success", "failed", "mock_success", "skipped") else "",
+            },
+            ["idempotency_key", "action", "payload_hash"],
+        )
+        if inserted:
+            return
+        conn.execute(
+            """
+            UPDATE product_create_submit_log
+            SET status = ?, endpoint = ?, response_json = ?, error = ?, attempts = attempts + 1,
+                called_jdy = CASE WHEN ? = 1 THEN 1 ELSE called_jdy END,
+                dry_run = ?, actor = ?, actor_role = ?, finished_at = ?
+            WHERE idempotency_key = ? AND action = ? AND payload_hash = ?
+              AND status NOT IN ('success', 'mock_success', 'skipped')
+            """,
+            (
+                status,
+                endpoint,
+                json_dumps(response or {}),
+                clean_text(error),
+                1 if called_jdy else 0,
+                1 if dry_run else 0,
+                clean_text((user or {}).get("username")),
+                clean_text((user or {}).get("role")),
+                now if status in ("success", "failed", "mock_success", "skipped") else "",
+                idempotency_key,
+                action,
+                phash,
+            ),
+        )
+        return
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO product_create_submit_log
@@ -1296,7 +1376,7 @@ def submit_draft(
 
     now = now_text()
     lock_token = uuid.uuid4().hex
-    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("BEGIN TRANSACTION" if db_backend.is_mssql_connection(conn) else "BEGIN IMMEDIATE")
     cur = conn.execute(
         """
         UPDATE product_create_draft
