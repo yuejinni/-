@@ -221,6 +221,29 @@ def write_snapshots(
         ensure_inventory_snapshot_schema(conn)
         count = 0
         for row in rows:
+            product_number = row.get("product_number") or ""
+            normalized_product_number = row.get("normalized_product_number") or ""
+            barcode = row.get("barcode") or ""
+            warehouse_name = row.get("warehouse_name") or ""
+            conn.execute(
+                """
+                DELETE FROM inventory_snapshots
+                WHERE account = ?
+                  AND product_number = ?
+                  AND normalized_product_number = ?
+                  AND barcode = ?
+                  AND warehouse_name = ?
+                  AND snapshot_at = ?
+                """,
+                (
+                    account,
+                    product_number,
+                    normalized_product_number,
+                    barcode,
+                    warehouse_name,
+                    snapshot_at,
+                ),
+            )
             conn.execute(
                 """
                 INSERT INTO inventory_snapshots (
@@ -231,11 +254,11 @@ def write_snapshots(
                 """,
                 (
                     account,
-                    row.get("product_number") or "",
-                    row.get("normalized_product_number") or "",
-                    row.get("barcode") or "",
+                    product_number,
+                    normalized_product_number,
+                    barcode,
                     row.get("product_name") or "",
-                    row.get("warehouse_name") or "",
+                    warehouse_name,
                     _num(row.get("quantity")),
                     row.get("unit") or "",
                     snapshot_at,
