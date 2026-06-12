@@ -989,61 +989,46 @@ def generate():
             _accts = set(fn.__name__ for fn in code_account_map.values())
             print(f'[SUPPLIER] per-code 账套映射: {len(code_account_map)} 个商品, 账套: {_accts}')
 
+        customs_context = _customs_generation_local_context(
+            items,
+            supplier_overrides=data.get('supplier_overrides') or {},
+        )
+        if not customs_context.get('success', True):
+            return jsonify({
+                'success': False,
+                'called_jdy': False,
+                'source': customs_context.get('source') or 'customs_product_master+jdy_products',
+                'error': customs_context.get('error') or '本地报关资料读取失败',
+            }), 500
+        if customs_context.get('missing_products') or customs_context.get('missing_fields'):
+            return jsonify({
+                'success': False,
+                'called_jdy': False,
+                'source': customs_context.get('source'),
+                'error': '本地报关商品资料不完整，请先在“报关 -> 商品资料”维护后再生成',
+                'missing_customs_products': customs_context.get('missing_products') or [],
+                'missing_customs_fields': customs_context.get('missing_fields') or [],
+                'allowed_empty_fields': customs_context.get('allowed_empty_fields') or [],
+            }), 400
+        data['customs_base_map'] = customs_context.get('base_map') or {}
+        data['supplier_map'] = customs_context.get('supplier_map') or {}
+        data['api_dims_map'] = customs_context.get('api_dims_map') or {}
+        print(
+            f'[CUSTOMS LOCAL] base={len(data["customs_base_map"])} '
+            f'suppliers={len(data["supplier_map"])} dims={len(data["api_dims_map"])}'
+        )
+
         # ── 手工填写的 proLicense（格式：品名*材料*分类简称，来自前端弹窗）──
         manual_licenses = data.get('manual_licenses') or []
         if manual_licenses:
-            from ai_identify import fill_from_license, _load_config, _find_excel
-            from jdy_api import parse_dimensions as _parse_dims
-            _ai_cfg     = _load_ai_config()
-            _excel_path = _find_excel(_ai_cfg)
-            for ml in manual_licenses:
-                _code    = (ml.get('code') or '').strip()
-                _raw     = (ml.get('pro_license') or '').strip()   # 格式：品名*材料*分类简称
-                if not (_code and _raw):
-                    continue
-                # 拆分：至少需要 品名 和 材料
-                _parts   = [p.strip() for p in _raw.split('*')]
-                _name    = _parts[0] if len(_parts) > 0 else ''
-                _mat     = _parts[1] if len(_parts) > 1 else ''
-                _cat_str = _parts[2] if len(_parts) > 2 else ''
-                if not (_name and _mat):
-                    print(f'[WARN] manual_license {_code}: 格式错误 "{_raw}"，需要 品名*材料')
-                    continue
-                # 从 JDY 取 product id / dimensions 等额外字段，并回写 proLicense
-                _extra = {}
-                _prod_id = None
-                try:
-                    _cli_fn = (code_account_map or {}).get(_code) or preferred_cli_fn
-                    _cli = _cli_fn() if _cli_fn else (_ensure_jdy_client() or _ensure_jdy_client2())
-                    if _cli:
-                        _prod = _cli.get_product_by_code(_code)
-                        if _prod:
-                            _prod_id = _prod.get('id')
-                            _cfg2  = _load_jdy_config2()
-                            _acct  = _cfg2['name'] if _cli is _ensure_jdy_client2() else _load_jdy_config()['name']
-                            _extra = {
-                                'category':   _cat_str or _prod.get('categoryName') or '',
-                                'dimensions': _parse_dims(_prod.get('registrationNo') or ''),
-                                'account':    _acct,
-                            }
-                            # 回写 proLicense 到精斗云
-                            try:
-                                _cli.update_product_pro_license(_prod_id, _raw)
-                                print(f'[LICENSE MANUAL] {_code} proLicense 已回写 JDY: {_raw!r}')
-                            except Exception as _we:
-                                print(f'[WARN] {_code} 回写 JDY 失败: {_we}')
-                except Exception as _e:
-                    print(f'[WARN] manual_license extra fields {_code}: {_e}')
-                if _excel_path:
-                    try:
-                        fill_from_license(_excel_path, _code, _name, _mat,
-                                          extra_fields=_extra, cat_str=_cat_str or None)
-                        print(f'[LICENSE MANUAL] {_code} 手工补全完成: {_name}/{_mat}' +
-                              (f', 分类简称: {_cat_str}' if _cat_str else ''))
-                    except Exception as _e:
-                        print(f'[WARN] manual_license fill {_code}: {_e}')
+            return jsonify({
+                'success': False,
+                'called_jdy': False,
+                'modified_excel': False,
+                'error': '生成流程已切换为本地报关商品资料，不再运行时写 JDY 或智谱 Excel；请在“报关 -> 商品资料”维护后重试。',
+            }), 400
 
-        # ── 生成前自动档案补全：缺失商品先用 proLicense 填表（限定同账套）──
+        # ── 生成主流程不再运行时自动补全；缺资料已在本地表预检阶段返回 ──
         auto_filled, no_license_items = _auto_license_fill(
             items, preferred_cli_fn=preferred_cli_fn, code_account_map=code_account_map)
         if auto_filled:
@@ -1058,20 +1043,9 @@ def generate():
             })
 
         # 查询供应商映射（用于生成采购合同）
-        supplier_overrides = data.get('supplier_overrides') or {}
-        try:
-            supplier_map, needs_select = _lookup_suppliers(
-                items,
-                preferred_cli_fn=preferred_cli_fn,
-                supplier_overrides=supplier_overrides,
-                code_account_map=code_account_map,
-            )
-            data['supplier_map'] = supplier_map
-            print(f'[SUPPLIER] 查到 {len(supplier_map)} 个商品的供应商，待选 {len(needs_select)} 个')
-        except Exception as e:
-            print(f'[WARN] 供应商查询失败: {e}')
-            data['supplier_map'] = {}
-            needs_select = {}
+        supplier_map = data.get('supplier_map') or {}
+        needs_select = {}
+        print(f'[SUPPLIER LOCAL] 从本地缓存读取 {len(supplier_map)} 个商品的供应商')
 
         # 若有商品供应商待选，先返回给前端弹窗确认
         if needs_select:
@@ -1081,62 +1055,8 @@ def generate():
                 'select_items': needs_select,
             })
 
-        # 批量查 API 尺寸（registrationNo），缓存命中直接跳过
-        try:
-            cache = _load_code_cache()
-            all_codes = list({(it.get('code') or '').strip() for it in items if it.get('code')})
-
-            # 区分：缓存有效 vs 需要重新拉取
-            api_dims_map = {}
-            for c in all_codes:
-                if _cache_valid(cache.get(c, {})) and 'dims' in cache.get(c, {}):
-                    api_dims_map[c] = cache[c]['dims']   # 直接用缓存
-
-            codes_need_dims = [c for c in all_codes if c not in api_dims_map]
-
-            if codes_need_dims:
-                _dim_fn_to_codes = {}
-                _dim_no_acct = []
-                for _code in codes_need_dims:
-                    _fn = code_account_map.get(_code) or preferred_cli_fn
-                    if _fn:
-                        _dim_fn_to_codes.setdefault(_fn, []).append(_code)
-                    else:
-                        _dim_no_acct.append(_code)
-                for _fn2 in [_ensure_jdy_client, _ensure_jdy_client2]:
-                    _dim_fn_to_codes.setdefault(_fn2, []).extend(_dim_no_acct)
-
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                for _fn, _codes in _dim_fn_to_codes.items():
-                    if not _codes:
-                        continue
-                    try:
-                        cli = _fn()
-                        if not cli:
-                            continue
-                        for i in range(0, len(_codes), 30):
-                            batch = cli.get_products_by_codes(_codes[i:i+30])
-                            for prod in (batch or []):
-                                c   = prod.get('number') or prod.get('code', '')
-                                reg = prod.get('registrationNo', '')
-                                if c and reg:
-                                    d = jdy_api.parse_dimensions(reg)
-                                    if d:
-                                        api_dims_map[c] = d
-                                        # 写入磁盘缓存
-                                        if c not in cache:
-                                            cache[c] = {}
-                                        cache[c]['dims'] = d
-                                        cache[c].setdefault('fetched_at', now_str)
-                    except Exception as e:
-                        print(f'[WARN] api_dims_map {_fn.__name__}: {e}')
-                _save_code_cache(cache)
-
-            data['api_dims_map'] = api_dims_map
-            print(f'[DIMS] API 尺寸 {len(api_dims_map)} 个（其中 {len(all_codes)-len(codes_need_dims)} 个命中缓存）')
-        except Exception as e:
-            print(f'[WARN] api_dims 失败: {e}')
-            data['api_dims_map'] = {}
+        # 尺寸只使用本地 jdy_products.data_json 或 customs_product_master，不再运行时调用 JDY。
+        print(f'[DIMS LOCAL] 从本地缓存读取 {len(data.get("api_dims_map") or {})} 个商品尺寸')
 
         # total_cbm：前端可传入，默认满柜 68CBM
         total_cbm = data.get('total_cbm')
@@ -1579,29 +1499,12 @@ def _do_license_fill_one(code, account='', preferred_cli_fn=None):
 
 def _auto_license_fill(items, preferred_cli_fn=None, code_account_map=None):
     """
-    生成前检查哪些商品不在基础资料里，自动用 proLicense 补全。
-    code_account_map：{code: cli_fn}，优先级高于 preferred_cli_fn。
-    返回 (filled_codes, no_license_items)
-      filled_codes:    成功补全的 code 列表
-      no_license_items: proLicense 为空、需要手工填写的 [{code, cn_name}]
+    兼容旧调用签名。
+    生成主流程已经改为读取本地 customs_product_master；缺资料由本地预检返回。
     """
-    try:
-        from excel_gen import load_base_data
-        base   = load_base_data()
-        codes  = [it['code'] for it in items if it.get('code')]
-        missing = [c for c in codes if c not in base]
-        filled, no_license_items = [], []
-        for code in missing:
-            code_cli_fn = (code_account_map or {}).get(code) or preferred_cli_fn
-            r = _do_license_fill_one(code, preferred_cli_fn=code_cli_fn)
-            if r and r.get('status') == 'ok':
-                filled.append(code)
-            elif r and r.get('status') == 'no_license':
-                no_license_items.append({'code': code, 'cn_name': r.get('cn_name', '')})
-        return filled, no_license_items
-    except Exception as e:
-        print(f'[WARN] _auto_license_fill: {e}')
-        return [], []
+    # 生成主流程已经切换为本地 customs_product_master。
+    # 不再运行时读取智谱 Excel、调用 JDY 或写回 proLicense。
+    return [], []
 
 
 # 模块级缓存：服务器运行期间，同一商品编码不重复查询
@@ -3359,11 +3262,12 @@ def process_pdf():
         if supplier_map:
             print(f'[PDF] 使用 items.json 缓存的 supplier_map（{len(supplier_map)} 个）')
         else:
-            print('[PDF] items.json 无 supplier_map，降级调 API...')
+            print('[PDF] items.json 无 supplier_map，改用本地缓存读取供应商')
             try:
-                supplier_map, _ = _lookup_suppliers(saved.get('items', []))
+                local_context = _customs_generation_local_context(saved.get('items', []))
+                supplier_map = local_context.get('supplier_map') or {}
             except Exception as e:
-                print(f'[WARN] 退税联供应商查询失败: {e}')
+                print(f'[WARN] 退税联本地供应商查询失败: {e}')
                 supplier_map = {}
 
         # 从外管局获取本月汇率（与汇率按钮逻辑相同），用于发票 RMB 金额换算
@@ -4221,6 +4125,311 @@ def _clean_excel_number(value):
         return float(str(value).replace(',', '').strip())
     except Exception:
         return None
+
+
+CUSTOMS_GENERATION_REQUIRED_FIELDS = [
+    ('hs_code', '海关编码'),
+    ('customs_name', '报关商品名称'),
+    ('en_customs_name', '英文报关品名'),
+    ('material', '材料'),
+    ('usage', '用途'),
+]
+CUSTOMS_GENERATION_ALLOWED_EMPTY_FIELDS = [
+    'gross_weight_per_pkg', 'net_weight_per_pkg',
+    'carton_length', 'carton_width', 'carton_height', 'carton_volume',
+]
+
+
+def _customs_generation_codes(items):
+    seen = set()
+    codes = []
+    for item in items or []:
+        code = str((item or {}).get('code') or '').strip()
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+def _customs_generation_fetch_by_codes(conn, table, code_column, codes):
+    if not conn or not codes:
+        return []
+    rows = []
+    for i in range(0, len(codes), 500):
+        batch = codes[i:i + 500]
+        marks = ','.join(['?'] * len(batch))
+        rows.extend(conn.execute(
+            f'SELECT * FROM {table} WHERE {code_column} IN ({marks})',
+            batch,
+        ).fetchall())
+    return rows
+
+
+def _customs_generation_dimensions(row):
+    length = _clean_excel_number((row or {}).get('carton_length'))
+    width = _clean_excel_number((row or {}).get('carton_width'))
+    height = _clean_excel_number((row or {}).get('carton_height'))
+    volume = _clean_excel_number((row or {}).get('carton_volume'))
+    if length or width or height:
+        return {
+            'l': float(length or 0),
+            'w': float(width or 0),
+            'h': float(height or 0),
+            'vol': float(volume) if volume is not None else None,
+        }
+    return None
+
+
+def _customs_generation_base_item(customs_row, jdy_row=None):
+    customs_row = customs_row or {}
+    jdy_row = jdy_row or {}
+    unit = (
+        _clean_excel_text(customs_row.get('customs_unit'))
+        or _clean_excel_text(customs_row.get('unit'))
+        or _clean_excel_text(jdy_row.get('unit_name'))
+        or 'PCS'
+    )
+    pcs_per_pkg = _clean_excel_number(customs_row.get('pcs_per_pkg')) or 1
+    if pcs_per_pkg <= 0:
+        pcs_per_pkg = 1
+    gw = _clean_excel_number(customs_row.get('gross_weight_per_pkg'))
+    nw = _clean_excel_number(customs_row.get('net_weight_per_pkg'))
+    return {
+        'code': _clean_excel_text(customs_row.get('product_code')),
+        'cn_name': (
+            _clean_excel_text(customs_row.get('product_name'))
+            or _clean_excel_text(jdy_row.get('product_name'))
+        ),
+        'category': (
+            _clean_excel_text(customs_row.get('category_name'))
+            or _clean_excel_text(jdy_row.get('category_name'))
+        ),
+        'hs_code': _clean_excel_text(customs_row.get('hs_code')),
+        'customs_name': _clean_excel_text(customs_row.get('customs_name_cn')),
+        'unit': unit,
+        'origin': _clean_excel_text(customs_row.get('origin')) or '义乌',
+        'material': _clean_excel_text(customs_row.get('material')),
+        'usage': _clean_excel_text(customs_row.get('usage')),
+        'gw_per_pkg': gw,
+        'nw_per_pkg': nw,
+        'gross_weight': float(gw) if gw is not None else 0.0,
+        'net_weight': float(nw) if nw is not None else 0.0,
+        'dimensions': _customs_generation_dimensions(customs_row),
+        'pcs_per_pkg': pcs_per_pkg,
+        'tax_code': _clean_excel_text(customs_row.get('tax_code')),
+        'en_customs_name': _clean_excel_text(customs_row.get('customs_name_en')),
+        'is_tax_refund': _clean_excel_text(customs_row.get('is_tax_refund')) or '是',
+        'project_name': _clean_excel_text(customs_row.get('tax_category_short_name')),
+    }
+
+
+def _customs_generation_missing_fields(base_item):
+    return [
+        {'field': field, 'label': label}
+        for field, label in CUSTOMS_GENERATION_REQUIRED_FIELDS
+        if not _clean_excel_text((base_item or {}).get(field))
+    ]
+
+
+def _customs_generation_decode_product_row(row):
+    data = _customs_product_row_to_dict(row)
+    raw = {}
+    try:
+        raw = json.loads(data.get('data_json') or '{}')
+        if not isinstance(raw, dict):
+            raw = {}
+    except Exception:
+        raw = {}
+    data['_raw'] = raw
+    return data
+
+
+def _customs_generation_pick_jdy_row(code, account, candidates):
+    rows = candidates.get(code) or []
+    if not rows:
+        return {}
+    account = str(account or '').strip()
+    if account:
+        for row in rows:
+            if str(row.get('account') or '').strip() == account:
+                return row
+    return rows[0]
+
+
+def _customs_generation_supplier_origin(supplier):
+    supplier = supplier or {}
+    contacts = supplier.get('contacts') or []
+    if isinstance(contacts, list):
+        for contact in contacts:
+            if not isinstance(contact, dict):
+                continue
+            county = _clean_excel_text(contact.get('county'))
+            city = _clean_excel_text(contact.get('city'))
+            if county:
+                return county
+            if city:
+                return city
+    return (
+        _clean_excel_text(supplier.get('county'))
+        or _clean_excel_text(supplier.get('city'))
+        or _clean_excel_text(supplier.get('origin_city'))
+    )
+
+
+def _customs_generation_local_context(items, supplier_overrides=None):
+    supplier_overrides = supplier_overrides or {}
+    codes = _customs_generation_codes(items)
+    result = {
+        'success': True,
+        'source': 'customs_product_master+jdy_products',
+        'called_jdy': False,
+        'base_map': {},
+        'supplier_map': {},
+        'api_dims_map': {},
+        'missing_products': [],
+        'missing_fields': [],
+        'allowed_empty_fields': CUSTOMS_GENERATION_ALLOWED_EMPTY_FIELDS,
+    }
+    if not codes:
+        return result
+    conn = _sales_readonly_conn()
+    if conn is None:
+        result.update({
+            'success': False,
+            'error': '本地 SQLite sales_cache 不存在，无法读取 customs_product_master',
+        })
+        return result
+    try:
+        if not _cache_sqlite_table_count(conn, 'customs_product_master').get('exists'):
+            result.update({
+                'success': False,
+                'error': '本地表 customs_product_master 不存在',
+            })
+            return result
+
+        customs_rows = _customs_generation_fetch_by_codes(conn, 'customs_product_master', 'product_code', codes)
+        customs_map = {
+            _clean_excel_text(row['product_code']): _customs_product_row_to_dict(row)
+            for row in customs_rows
+            if _clean_excel_text(row['product_code'])
+        }
+
+        jdy_candidates = {}
+        if _cache_sqlite_table_count(conn, 'jdy_products').get('exists'):
+            jdy_rows = _customs_generation_fetch_by_codes(conn, 'jdy_products', 'product_number', codes)
+            for row in jdy_rows:
+                item = _customs_generation_decode_product_row(row)
+                code = _clean_excel_text(item.get('product_number'))
+                if code:
+                    jdy_candidates.setdefault(code, []).append(item)
+
+        account_by_code = {}
+        for item in items or []:
+            code = _clean_excel_text((item or {}).get('code'))
+            account = _clean_excel_text((item or {}).get('account'))
+            if code and account and code not in account_by_code:
+                account_by_code[code] = account
+
+        jdy_map = {
+            code: _customs_generation_pick_jdy_row(code, account_by_code.get(code), jdy_candidates)
+            for code in codes
+        }
+
+        supplier_numbers = set()
+        for code in codes:
+            jdy = jdy_map.get(code) or {}
+            customs = customs_map.get(code) or {}
+            for value in (
+                jdy.get('default_supplier_number'),
+                customs.get('supplier_number'),
+                (supplier_overrides.get(code) or {}).get('supplierNumber') if isinstance(supplier_overrides.get(code), dict) else '',
+            ):
+                value = _clean_excel_text(value)
+                if value:
+                    supplier_numbers.add(value)
+
+        supplier_lookup = {}
+        if supplier_numbers and _cache_sqlite_table_count(conn, 'jdy_suppliers').get('exists'):
+            supplier_rows = _customs_generation_fetch_by_codes(
+                conn, 'jdy_suppliers', 'number', list(supplier_numbers)
+            )
+            for row in supplier_rows:
+                supplier = _supplier_row_to_dict(row)
+                number = _clean_excel_text(supplier.get('number') or supplier.get('supplierNumber'))
+                account = _clean_excel_text(supplier.get('account'))
+                if number:
+                    supplier_lookup.setdefault(('', number), supplier)
+                    if account:
+                        supplier_lookup[(account, number)] = supplier
+
+        supplier_order = {}
+
+        def _supplier_idx(name):
+            if name not in supplier_order:
+                supplier_order[name] = len(supplier_order) + 1
+            return supplier_order[name]
+
+        for code in codes:
+            customs = customs_map.get(code)
+            jdy = jdy_map.get(code) or {}
+            if not customs:
+                result['missing_products'].append({
+                    'code': code,
+                    'reason': 'customs_product_master 无记录',
+                })
+                continue
+
+            base_item = _customs_generation_base_item(customs, jdy)
+            missing = _customs_generation_missing_fields(base_item)
+            if missing:
+                result['missing_fields'].append({
+                    'code': code,
+                    'fields': missing,
+                })
+            result['base_map'][code] = base_item
+
+            raw = jdy.get('_raw') or {}
+            reg_no = _clean_excel_text(
+                raw.get('registrationNo')
+                or raw.get('registration_no')
+                or raw.get('registration')
+            )
+            if reg_no:
+                dims = jdy_api.parse_dimensions(reg_no)
+                if dims:
+                    result['api_dims_map'][code] = dims
+
+            override = supplier_overrides.get(code) if isinstance(supplier_overrides.get(code), dict) else {}
+            supplier_number = (
+                _clean_excel_text(override.get('supplierNumber') if override else '')
+                or _clean_excel_text(jdy.get('default_supplier_number'))
+                or _clean_excel_text(customs.get('supplier_number'))
+            )
+            supplier_account = _clean_excel_text(jdy.get('account') or customs.get('account'))
+            supplier = (
+                supplier_lookup.get((supplier_account, supplier_number))
+                or supplier_lookup.get(('', supplier_number))
+                or {}
+            )
+            supplier_name = (
+                _clean_excel_text(override.get('supplierName') if override else '')
+                or _clean_excel_text(jdy.get('default_supplier_name'))
+                or _clean_excel_text(supplier.get('name') or supplier.get('supplierName'))
+                or '未知供应商'
+            )
+            result['supplier_map'][code] = {
+                'supplierName': supplier_name,
+                'supplierNumber': supplier_number,
+                'origin_city': _customs_generation_supplier_origin(supplier),
+                'supplierIdx': _supplier_idx(supplier_name),
+                'source': 'local_sqlite',
+            }
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return result
 
 
 def _customs_json_for_compare(data):

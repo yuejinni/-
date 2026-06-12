@@ -263,16 +263,17 @@ def _calc_cbm(dimensions, qty):
 
 
 def process_items(raw_items, exchange_rate, target_total_usd=None,
-                  weighed_total_gw=None, api_dims_map=None, origin_map=None, total_cbm=None):
+                  weighed_total_gw=None, api_dims_map=None, origin_map=None, total_cbm=None,
+                  base_data=None):
     """
     raw_items: [{'code': str, 'unit': str, 'qty': float, 'rmb_price': float,
                  'remark': str, 'boxes': int|None}]
     weighed_total_gw: 货物过磅总重量(KGS)，可选，用于分配 G.W.
-    api_dims_map: {code: {'l','w','h'}} 来自精斗云 registrationNo
+    api_dims_map: {code: {'l','w','h'}} 来自本地缓存中的 registrationNo
     origin_map:   {code: city_str} 来自供应商联系人城市
     返回处理好的 items 列表
     """
-    base = load_base_data()
+    base = base_data if base_data is not None else load_base_data()
     if api_dims_map is None:
         api_dims_map = {}
     if origin_map is None:
@@ -2040,6 +2041,7 @@ def generate_all(data):
         api_dims_map=data.get('api_dims_map'),
         origin_map=origin_map,
         total_cbm=data.get('total_cbm'),
+        base_data=data.get('customs_base_map'),
     )
 
     # ── 退税分流：R列='否' 的商品单独生成报关单，不参与其他步骤 ──
@@ -2879,7 +2881,7 @@ def process_tax_pdf(data):
     """
     阶段二主函数：生成发票导入模板 + 凌航发票。
     pdf_path 可选：
-      - 有 PDF → 解析 HS→单位，同时更新基础资料 G列
+      - 有 PDF → 解析 HS→单位，不再回写智谱基础资料 Excel
       - 无 PDF → pdf_hs_data={} 直接用 items.json 里的单位填表，跳过基础资料更新
     data = {
         invoice_no:   str,
@@ -2911,8 +2913,8 @@ def process_tax_pdf(data):
         pdf_hs_data, pdf_meta, _ = parse_tax_pdf(pdf_path)
         print(f'[PDF] 解析到 {len(pdf_hs_data)} 个 HS 编码: {list(pdf_hs_data.keys())}')
         print(f'[PDF] 表头元数据: {pdf_meta}')
-        # 更新基础资料 G列（单位）
-        diff_log = update_base_data_units(invoice_no, pdf_hs_data, items_json_path, output_path)
+        # 本地数据库优先：不再在生成阶段回写智谱基础资料 Excel。
+        diff_log = None
         # 全面对比（件数、毛重、HS码、数量、金额）
         try:
             compare_log, comparison_lines = compare_pdf_vs_items(
