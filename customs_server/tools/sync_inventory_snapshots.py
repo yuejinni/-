@@ -31,6 +31,7 @@ from jdy_api import JDYClient
 DEFAULT_PROD_DB = Path(r"G:\祺航本地项目运行\服务端\_sales_cache\sales_cache.sqlite3")
 DEFAULT_PROD_CONFIG = Path(r"G:\祺航本地项目运行\服务端\ai_config.json")
 IMPORTANT_WAREHOUSE_TERMS = ("厂家订单", "工厂订单", "工厂", "在途仓库", "在途", "新大仓库", "新大", "金华")
+PRODUCTION_CONFIRM_TOKEN = "WRITE_INVENTORY_SNAPSHOT"
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -190,15 +191,30 @@ def ensure_inventory_snapshot_schema(conn: sqlite3.Connection) -> None:
         conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON inventory_snapshots ({cols})")
 
 
-def _refuse_production_write(path: Path) -> None:
+def _is_production_db(path: Path) -> bool:
     target = os.path.normcase(str(path.resolve()))
     prod = os.path.normcase(str(DEFAULT_PROD_DB.resolve()))
-    if target == prod:
-        raise RuntimeError("refusing to write production SQLite; copy it to a temporary path and pass --db")
+    return target == prod
 
 
-def write_snapshots(db_path: Path, account: str, rows: Sequence[Dict[str, Any]], snapshot_at: str) -> int:
-    _refuse_production_write(db_path)
+def validate_write_target(db_path: Path, allow_production_db: bool = False, confirm: str = "") -> None:
+    if not _is_production_db(db_path):
+        return
+    if not allow_production_db:
+        raise RuntimeError("refusing to write production SQLite without --allow-production-db")
+    if confirm != PRODUCTION_CONFIRM_TOKEN:
+        raise RuntimeError(f"refusing to write production SQLite without --confirm {PRODUCTION_CONFIRM_TOKEN}")
+
+
+def write_snapshots(
+    db_path: Path,
+    account: str,
+    rows: Sequence[Dict[str, Any]],
+    snapshot_at: str,
+    allow_production_db: bool = False,
+    confirm: str = "",
+) -> int:
+    validate_write_target(db_path, allow_production_db=allow_production_db, confirm=confirm)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), timeout=30)
     try:
@@ -265,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default="", help="写入的临时 SQLite 路径；--write 时必填")
     parser.add_argument("--preview", action="store_true", help="只预览，不写库")
     parser.add_argument("--write", action="store_true", help="写入指定临时 SQLite")
+    parser.add_argument("--allow-production-db", action="store_true", help="允许写默认生产 SQLite；必须配合 --confirm")
+    parser.add_argument("--confirm", default="", help=f"生产写入确认口令：{PRODUCTION_CONFIRM_TOKEN}")
     parser.add_argument("--snapshot-at", default="", help="快照时间，默认当前时间")
     parser.add_argument("--verbose-jdy-logs", action="store_true", help="显示 JDY 客户端请求日志")
     return parser
@@ -285,7 +303,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("jdy_account:", account_label)
     print_preview(args.account, rows, snapshot_at)
     if args.write:
-        written = write_snapshots(Path(args.db), args.account, rows, snapshot_at)
+        written = write_snapshots(
+            Path(args.db),
+            args.account,
+            rows,
+            snapshot_at,
+            allow_production_db=args.allow_production_db,
+            confirm=args.confirm,
+        )
         print()
         print("written:", written)
         print("db:", args.db)
