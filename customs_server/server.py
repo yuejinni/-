@@ -5953,6 +5953,14 @@ def _local_products_response():
             }
             for row in rows
         ])
+        snapshot_factory = _local_products_inventory_snapshot_factory_fallback(conn, [
+            {
+                'account': row['account'] or '',
+                'product_number': row['product_number'] or '',
+                'barcode': row['barcode'] or '',
+            }
+            for row in rows
+        ])
         items = []
         for row in rows:
             item = {
@@ -5984,6 +5992,16 @@ def _local_products_response():
                     'stock_transit': item['stock_transit'],
                     'sources': transfer_fallback.get('sources') or [],
                 }
+            factory_fallback = snapshot_factory.get((item['account'], item['product_number']))
+            if _num(item['factory_qty']) <= 0 and _num(item['stock_factory']) <= 0 and factory_fallback:
+                item['stock_factory'] = _num(factory_fallback.get('stock_factory'))
+                if item.get('quantity_fallback') and item.get('quantity_fallback') != 'inventory_snapshots':
+                    item['quantity_fallback'] = str(item['quantity_fallback']) + '+inventory_snapshots'
+                else:
+                    item['quantity_fallback'] = 'inventory_snapshots'
+                detail = item.setdefault('quantity_fallback_detail', {})
+                detail['stock_factory'] = item['stock_factory']
+                detail['factory_sources'] = factory_fallback.get('sources') or []
             item.update({
                 'code': item['product_number'],
                 'name': item['product_name'],
@@ -12541,6 +12559,11 @@ def _is_factory_order_location(name):
     return bool(name and ('工厂订单' in name or '厂家订单' in name))
 
 
+def _is_factory_snapshot_location(name):
+    name = str(name or '').strip()
+    return bool(name and (_is_factory_order_location(name) or '工厂' in name))
+
+
 def _is_factory_transfer_source_location(name):
     name = str(name or '').strip()
     return bool(name and ('工厂' in name or '厂家' in name))
@@ -12667,6 +12690,139 @@ def _local_products_transfer_transit_fallback(conn, products):
         }
         for pk, data in result.items()
         if _num(data.get('stock_transit')) > 0
+    }
+
+
+def _local_products_inventory_snapshot_factory_fallback(conn, products):
+    result = {}
+    if not conn or not products:
+        return result
+    if not _cache_sqlite_table_count(conn, 'inventory_snapshots').get('exists'):
+        return result
+
+    try:
+        cols = {
+            str(row['name'] if isinstance(row, sqlite3.Row) else row[1])
+            for row in conn.execute('PRAGMA table_info(inventory_snapshots)').fetchall()
+        }
+    except Exception:
+        return result
+    required = {'account', 'warehouse_name', 'quantity', 'snapshot_at'}
+    if not required.issubset(cols):
+        return result
+
+    target_by_key = {}
+    accounts = []
+    codes = set()
+    barcodes = set()
+    for product in products:
+        account = str(product.get('account') or '').strip()
+        code = str(product.get('product_number') or product.get('code') or '').strip()
+        barcode = str(product.get('barcode') or '').strip()
+        if not account or not code:
+            continue
+        pk = (account, code)
+        result.setdefault(pk, {'stock_factory': 0, 'sources': [], 'snapshot_at': ''})
+        if account not in accounts:
+            accounts.append(account)
+        for key in _local_product_transfer_match_keys(code, barcode):
+            target_by_key.setdefault((account, key), set()).add(pk)
+        if code:
+            codes.add(code)
+            no_prefix = _product_code_without_alpha_prefix(code)
+            if no_prefix:
+                codes.add(no_prefix)
+        if barcode:
+            barcodes.add(barcode)
+    if not target_by_key or not accounts:
+        return {}
+
+    clauses = []
+    params = []
+    clauses.append('account IN ({})'.format(','.join('?' for _ in accounts)))
+    params.extend(accounts)
+    clauses.append('''
+        (
+            warehouse_name LIKE ?
+            OR warehouse_name LIKE ?
+            OR warehouse_name LIKE ?
+        )
+    ''')
+    params.extend(['%厂家订单%', '%工厂订单%', '%工厂%'])
+
+    match_clauses = []
+    if 'product_number' in cols and codes:
+        match_clauses.append('product_number IN ({})'.format(','.join('?' for _ in codes)))
+        params.extend(sorted(codes))
+    if 'normalized_product_number' in cols and codes:
+        match_clauses.append('normalized_product_number IN ({})'.format(','.join('?' for _ in codes)))
+        params.extend(sorted(codes))
+    if 'barcode' in cols and barcodes:
+        match_clauses.append('barcode IN ({})'.format(','.join('?' for _ in barcodes)))
+        params.extend(sorted(barcodes))
+    if not match_clauses:
+        return {}
+    clauses.append('(' + ' OR '.join(match_clauses) + ')')
+
+    select_cols = [
+        'id', 'account', 'warehouse_name', 'quantity', 'unit', 'snapshot_at',
+    ]
+    for optional in ['product_number', 'normalized_product_number', 'barcode', 'product_name', 'source']:
+        if optional in cols:
+            select_cols.append(optional)
+        else:
+            select_cols.append("'' AS " + optional)
+
+    try:
+        rows = conn.execute(f'''
+            SELECT {', '.join(select_cols)}
+            FROM inventory_snapshots
+            WHERE {' AND '.join(clauses)}
+            ORDER BY snapshot_at DESC, id DESC
+        ''', params).fetchall()
+    except Exception:
+        return {}
+
+    for row in rows:
+        account = str(row['account'] or '').strip()
+        warehouse = str(row['warehouse_name'] or '').strip()
+        if not _is_factory_snapshot_location(warehouse):
+            continue
+        row_keys = _local_product_transfer_match_keys(row['product_number'], row['barcode'])
+        normalized = str(row['normalized_product_number'] or '').strip()
+        if normalized:
+            row_keys.add('code:' + normalized.upper())
+        matched = set()
+        for key in row_keys:
+            matched.update(target_by_key.get((account, key), set()))
+        if not matched:
+            continue
+        snapshot_at = str(row['snapshot_at'] or '').strip()
+        qty = _num(row['quantity'])
+        if not qty:
+            continue
+        for pk in matched:
+            current_snapshot = str(result[pk].get('snapshot_at') or '')
+            if current_snapshot and snapshot_at < current_snapshot:
+                continue
+            if snapshot_at > current_snapshot:
+                result[pk] = {'stock_factory': 0, 'sources': [], 'snapshot_at': snapshot_at}
+            result[pk]['stock_factory'] += qty
+            if len(result[pk]['sources']) < 20:
+                result[pk]['sources'].append({
+                    'snapshot_at': snapshot_at,
+                    'warehouse_name': warehouse,
+                    'qty': qty,
+                    'unit': row['unit'] or '',
+                    'product_number': row['product_number'] or '',
+                    'barcode': row['barcode'] or '',
+                    'source': row['source'] or 'inventory_snapshots',
+                })
+
+    return {
+        pk: data
+        for pk, data in result.items()
+        if _num(data.get('stock_factory')) > 0
     }
 
 
