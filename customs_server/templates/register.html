@@ -317,6 +317,55 @@ textarea { resize: vertical; min-height: 60px; }
 .result-item.new      { background: #f6ffed; border: 1px solid #b7eb8f; }
 .result-item.existing { background: #e6f7ff; border: 1px solid #91d5ff; }
 .result-item.error    { background: #fff1f0; border: 1px solid #ffa39e; }
+.result-item.pending  { background: #fffbe6; border: 1px solid #ffe58f; }
+.result-item.done     { background: #f6ffed; border: 1px solid #b7eb8f; }
+
+/* ── 草稿箱 ─────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  padding: 0 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.draft-batch {
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.draft-batch-header {
+  background: #f5f5f5;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.draft-batch-header strong { color: #333; font-size: 13px; }
+.draft-item {
+  padding: 8px 12px;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.draft-item .di-pno { font-weight: 600; flex: 1; min-width: 0; }
+.draft-item .di-name { color: #666; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.draft-item .di-err { font-size: 11px; color: #cf1322; }
+.draft-item .di-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.draft-status { font-size: 18px; flex-shrink: 0; }
 .result-item .ri-icon { font-size: 16px; flex-shrink: 0; }
 .result-item .ri-info { flex: 1; }
 .result-item .ri-pno  { font-weight: 600; font-size: 13px; }
@@ -375,6 +424,7 @@ textarea { resize: vertical; min-height: 60px; }
 <div class="tab-bar">
   <div class="tab-btn active" id="tab-single-btn" onclick="switchTab('single')">单品建档</div>
   <div class="tab-btn" id="tab-batch-btn" onclick="switchTab('batch')">批量建档</div>
+  <div class="tab-btn" id="tab-drafts-btn" onclick="switchTab('drafts')">草稿箱<span id="drafts-badge" class="badge" style="display:none"></span></div>
 </div>
 
 <!-- ════════════════════════════════════════════════
@@ -455,19 +505,22 @@ textarea { resize: vertical; min-height: 60px; }
 
   <!-- 6. 确认建档 -->
   <button class="btn btn-success" id="btn-confirm" onclick="doConfirm()" style="display:none" disabled>
-    ✅ 确认建档，写入精斗云
+    💾 保存到草稿箱
   </button>
 
   <!-- 7. 成功结果 -->
   <div class="card" id="result-card" style="display:none">
-    <div class="card-title">建档成功 🎉</div>
+    <div class="card-title">已保存到草稿箱</div>
     <div class="preview-block">
       <div class="preview-code" id="res-code"></div>
       <div class="preview-row">条码: <span id="res-ean"></span></div>
       <div class="preview-row">商品名: <span id="res-name"></span></div>
     </div>
-    <div style="height:10px"></div>
-    <button class="btn btn-outline" onclick="resetForm()">继续建下一个</button>
+    <div style="font-size:13px; color:#666; margin: 8px 0 12px;">编码已生成并暂存，请前往草稿箱提交到精斗云</div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="switchTab('drafts')">→ 草稿箱</button>
+      <button class="btn btn-outline btn-sm" onclick="resetForm()">继续建下一个</button>
+    </div>
   </div>
 
 </div><!-- /tab-single -->
@@ -591,17 +644,22 @@ textarea { resize: vertical; min-height: 60px; }
   <!-- ── Step 4: 执行中 ────────────────────────────── -->
   <div id="b-step4" style="display:none">
     <div class="card" style="text-align:center; padding: 32px;">
-      <div style="font-size:36px; margin-bottom: 12px;">⚙️</div>
-      <div style="font-size:15px; font-weight:600; color:#1a2c5b;">建档中…</div>
-      <div style="font-size:13px; color:#999; margin-top:6px;">正在逐行写入精斗云，请稍等</div>
+      <div style="font-size:36px; margin-bottom: 12px;">💾</div>
+      <div style="font-size:15px; font-weight:600; color:#1a2c5b;">正在保存草稿…</div>
+      <div style="font-size:13px; color:#999; margin-top:6px;">正在生成编码并保存到草稿箱</div>
     </div>
   </div>
 
   <!-- ── Step 5: 结果 ──────────────────────────────── -->
   <div id="b-step5" style="display:none">
     <div class="card">
-      <div class="card-title">建档结果</div>
+      <div class="card-title">草稿保存结果</div>
       <div class="result-list" id="b-result-list"></div>
+    </div>
+
+    <div class="card" id="b-draft-hint-card" style="display:none">
+      <div style="font-size:13px; color:#666; margin-bottom:10px" id="b-draft-hint-text"></div>
+      <button class="btn btn-primary btn-sm" onclick="switchTab('drafts')">→ 草稿箱提交</button>
     </div>
 
     <div class="card" id="b-po-card" style="display:none">
@@ -616,6 +674,26 @@ textarea { resize: vertical; min-height: 60px; }
   </div><!-- /b-step5 -->
 
 </div><!-- /tab-batch -->
+
+
+<!-- ════════════════════════════════════════════════
+     草稿箱 Tab
+     ════════════════════════════════════════════════ -->
+<div class="tab-content" id="tab-drafts">
+
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px">
+    <button class="btn btn-outline btn-sm" onclick="loadDrafts()">刷新</button>
+    <button class="btn btn-primary btn-sm" id="btn-submit-all" onclick="submitAllPending()">提交全部待处理</button>
+  </div>
+
+  <div class="status-bar" id="drafts-status-bar"></div>
+
+  <div id="drafts-container">
+    <div style="text-align:center; color:#999; padding:32px; font-size:13px">点击刷新加载草稿</div>
+  </div>
+
+</div><!-- /tab-drafts -->
+
 
 <!-- 历史价 Popover -->
 <div class="price-popover" id="price-popover">
@@ -650,6 +728,7 @@ let _bRowCounter   = 0;
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 async function init() {
   await Promise.all([loadSuppliers(), loadCategories(), loadUnits()]);
+  refreshDraftsBadge();
 }
 
 async function loadSuppliers() {
@@ -711,15 +790,19 @@ function onAccountChange() {
   clearSupplier();
   bClearSupplier();
   bClearSupConfirm();
+  // 切换账套时刷新草稿箱
+  document.getElementById('drafts-container').innerHTML =
+    '<div style="text-align:center;color:#999;padding:32px;font-size:13px">点击刷新加载草稿</div>';
   init();
 }
 
 // ── Tab 切换 ──────────────────────────────────────────────────────────────────
 function switchTab(tab) {
-  document.getElementById('tab-single').classList.toggle('active', tab === 'single');
-  document.getElementById('tab-batch').classList.toggle('active', tab === 'batch');
-  document.getElementById('tab-single-btn').classList.toggle('active', tab === 'single');
-  document.getElementById('tab-batch-btn').classList.toggle('active', tab === 'batch');
+  ['single','batch','drafts'].forEach(t => {
+    document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+    document.getElementById(`tab-${t}-btn`).classList.toggle('active', t === tab);
+  });
+  if (tab === 'drafts') loadDrafts();
 }
 
 // ── 单品 Tab：供应商 ──────────────────────────────────────────────────────────
@@ -856,13 +939,13 @@ async function doPreview() {
   }
 }
 
-// ── 单品 Tab：确认建档 ────────────────────────────────────────────────────────
+// ── 单品 Tab：保存到草稿箱 ───────────────────────────────────────────────────
 async function doConfirm() {
   const name = document.getElementById('f-name').value.trim();
   if (!name) { showSingleStatus('请填写商品名称', 'error'); return; }
 
   const btn = document.getElementById('btn-confirm');
-  btn.innerHTML = '<span class="spinner"></span>写入精斗云…';
+  btn.innerHTML = '<span class="spinner"></span>保存草稿…';
   btn.disabled = true;
   hideSingleStatus();
 
@@ -880,7 +963,7 @@ async function doConfirm() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!data.ok) throw new Error(data.error || '建档失败');
+    if (!data.ok) throw new Error(data.error || '保存失败');
 
     document.getElementById('res-code').textContent = data.product_number;
     document.getElementById('res-ean').textContent  = data.ean13 || '—';
@@ -888,11 +971,12 @@ async function doConfirm() {
     document.getElementById('result-card').style.display = 'block';
     document.getElementById('preview-card').style.display = 'none';
     document.getElementById('btn-confirm').style.display  = 'none';
-    showSingleStatus(`建档成功！编码: ${data.product_number}`, 'success');
+    showSingleStatus(`已保存到草稿箱！编码: ${data.product_number}`, 'success');
     document.getElementById('result-card').scrollIntoView({behavior: 'smooth'});
+    refreshDraftsBadge();
   } catch(e) {
-    showSingleStatus('建档失败: ' + e.message, 'error');
-    btn.innerHTML = '✅ 确认建档，写入精斗云';
+    showSingleStatus('保存失败: ' + e.message, 'error');
+    btn.innerHTML = '💾 保存到草稿箱';
     btn.disabled = false;
   }
 }
@@ -1285,36 +1369,41 @@ async function doOrderConfirm() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    // 渲染结果
+    // 渲染草稿保存结果
     const rl = document.getElementById('b-result-list');
     rl.innerHTML = '';
-    (data.results || []).forEach(r => {
+    (data.drafts || []).forEach(r => {
       const div = document.createElement('div');
-      div.className = `result-item ${r.status}`;
-      let icon = r.status === 'new' ? '✅' : r.status === 'existing' ? '♻️' : '❌';
-      let statusLabel = r.status === 'new' ? '新建' : r.status === 'existing' ? '已有' : '失败';
+      const isPending = r.status === 'pending';
+      const isExisting = r.status === 'existing';
+      const isError = r.status === 'error';
+      div.className = `result-item ${isPending ? 'pending' : isExisting ? 'existing' : 'error'}`;
+      const icon = isPending ? '⏳' : isExisting ? '♻️' : '❌';
+      const label = isPending ? '待提交' : isExisting ? '已有' : '失败';
       div.innerHTML = `
         <span class="ri-icon">${icon}</span>
         <div class="ri-info">
-          <div class="ri-pno">${statusLabel}  ${escHtml(r.product_number || '—')}</div>
+          <div class="ri-pno">${label}  ${escHtml(r.product_number || '—')}</div>
           ${r.error ? `<div class="ri-err">${escHtml(r.error)}</div>` : ''}
         </div>`;
       rl.appendChild(div);
     });
 
-    // 购货订单卡片
-    const poCard = document.getElementById('b-po-card');
-    const poNum  = data.purchase_order_number;
-    if (poNum) {
-      document.getElementById('b-po-number').textContent = poNum;
-      document.getElementById('b-po-hint').textContent = '已生成购货订单，请在精斗云查看';
-      poCard.style.display = 'block';
-    } else if (data.purchase_order_error) {
-      document.getElementById('b-po-number').textContent = '生成失败';
-      document.getElementById('b-po-hint').textContent = data.purchase_order_error;
-      poCard.style.display = 'block';
+    // 草稿箱提示
+    const pendingCount = data.pending_count || 0;
+    const hintCard = document.getElementById('b-draft-hint-card');
+    if (pendingCount > 0) {
+      document.getElementById('b-draft-hint-text').textContent =
+        `${pendingCount} 条新品已存入草稿箱，请前往草稿箱提交到精斗云`;
+      hintCard.style.display = 'block';
+    } else {
+      hintCard.style.display = 'none';
     }
 
+    // 购货订单卡片（此时批量未提交JDY，购货订单要等"提交本批次"时生成）
+    document.getElementById('b-po-card').style.display = 'none';
+
+    refreshDraftsBadge();
     showBStep(5);
   } catch(e) {
     showBatchStatus('建档失败: ' + e.message, 'error');
@@ -1363,6 +1452,234 @@ function showBatchStatus(msg, type) {
 }
 function hideBatchStatus() {
   document.getElementById('batch-status-bar').style.display = 'none';
+}
+
+// ── 草稿箱 Tab ────────────────────────────────────────────────────────────────
+
+// 刷新草稿箱红点徽章
+async function refreshDraftsBadge() {
+  try {
+    const res  = await fetch(`${BASE}/register/drafts?account=${_account}`);
+    const data = await res.json();
+    const badge = document.getElementById('drafts-badge');
+    const total = data.total || 0;
+    if (total > 0) {
+      badge.textContent = total > 99 ? '99+' : String(total);
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch(e) {
+    console.warn('刷新草稿徽章失败:', e.message);
+  }
+}
+
+// 加载草稿箱列表
+async function loadDrafts() {
+  const container = document.getElementById('drafts-container');
+  container.innerHTML = '<div style="text-align:center;color:#999;padding:24px;font-size:13px">加载中…</div>';
+  hideDraftsStatus();
+  try {
+    const res  = await fetch(`${BASE}/register/drafts?account=${_account}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    const drafts = data.drafts || [];
+    if (drafts.length === 0) {
+      container.innerHTML = '<div style="text-align:center;color:#999;padding:32px;font-size:13px">暂无待处理草稿</div>';
+      document.getElementById('drafts-badge').style.display = 'none';
+      return;
+    }
+
+    // 按 batch_group 分组（batch_group='' 的归为单品）
+    const groups = {};
+    const singles = [];
+    for (const d of drafts) {
+      if (d.batch_group) {
+        if (!groups[d.batch_group]) groups[d.batch_group] = [];
+        groups[d.batch_group].push(d);
+      } else {
+        singles.push(d);
+      }
+    }
+
+    container.innerHTML = '';
+
+    // 渲染批次分组
+    for (const [bg, items] of Object.entries(groups)) {
+      const pending = items.filter(d => d.status === 'pending' || d.status === 'error').length;
+      const date    = items[0].created_at.slice(0, 16).replace('T', ' ');
+      const div = document.createElement('div');
+      div.className = 'draft-batch';
+      let headerHtml = `
+        <div class="draft-batch-header">
+          <strong>批次 ${escHtml(bg)}</strong>
+          <span>${date}，共${items.length}条</span>
+          ${pending > 0 ? `<span style="color:#d46b08">${pending}条待提交</span>` : ''}
+          ${pending > 0 ? `<button class="btn btn-primary btn-sm" onclick="submitBatch('${bg}')">提交本批次</button>` : ''}
+        </div>`;
+      let itemsHtml = items.map(d => buildDraftItemHtml(d)).join('');
+      div.innerHTML = headerHtml + itemsHtml;
+      container.appendChild(div);
+    }
+
+    // 渲染单品
+    if (singles.length > 0) {
+      const div = document.createElement('div');
+      div.className = 'draft-batch';
+      div.innerHTML = `
+        <div class="draft-batch-header"><strong>单品草稿</strong><span>${singles.length}条</span></div>
+        ${singles.map(d => buildDraftItemHtml(d)).join('')}`;
+      container.appendChild(div);
+    }
+
+    // 更新徽章
+    const badge = document.getElementById('drafts-badge');
+    if (drafts.length > 0) {
+      badge.textContent = drafts.length > 99 ? '99+' : String(drafts.length);
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch(e) {
+    container.innerHTML = `<div style="color:#cf1322;padding:16px;font-size:13px">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function buildDraftItemHtml(d) {
+  const statusIcon = d.status === 'pending' ? '⏳' : d.status === 'error' ? '❌' : '♻️';
+  const canSubmit = d.status === 'pending' || d.status === 'error';
+  const submitBtn = canSubmit
+    ? `<button class="btn btn-outline btn-sm" onclick="submitDraft(${d.id})">提交</button>`
+    : '';
+  const deleteBtn = canSubmit
+    ? `<button class="btn btn-danger btn-sm" onclick="deleteDraft(${d.id})">删除</button>`
+    : '';
+  return `<div class="draft-item" id="draft-item-${d.id}">
+    <span class="draft-status">${statusIcon}</span>
+    <div style="flex:1;min-width:0">
+      <div class="di-pno">${escHtml(d.product_number || '—')}</div>
+      <div class="di-name">${escHtml(d.product_name || '')}</div>
+      ${d.error_msg ? `<div class="di-err">${escHtml(d.error_msg)}</div>` : ''}
+    </div>
+    <div class="di-actions">${submitBtn}${deleteBtn}</div>
+  </div>`;
+}
+
+// 提交单条草稿
+async function submitDraft(draftId) {
+  const item = document.getElementById(`draft-item-${draftId}`);
+  if (item) item.style.opacity = '0.5';
+  hideDraftsStatus();
+  try {
+    const res  = await fetch(`${BASE}/register/draft/${draftId}/submit`, {method: 'POST'});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '提交失败');
+    showDraftsStatus(`提交成功！编码: ${data.product_number}`, 'success');
+    loadDrafts();
+  } catch(e) {
+    showDraftsStatus('提交失败: ' + e.message, 'error');
+    if (item) item.style.opacity = '1';
+  }
+}
+
+// 提交整个批次
+async function submitBatch(batchGroup) {
+  hideDraftsStatus();
+  showDraftsStatus('正在提交批次，请稍等…', '');
+  try {
+    const res  = await fetch(`${BASE}/register/batch/${batchGroup}/submit`, {method: 'POST'});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '批次提交失败');
+
+    const done  = (data.results || []).filter(r => r.status === 'done').length;
+    const error = (data.results || []).filter(r => r.status === 'error').length;
+    let msg = `批次提交完成：${done} 条成功`;
+    if (error) msg += `，${error} 条失败`;
+    if (data.purchase_order_number) msg += `，购货订单 ${data.purchase_order_number}`;
+    if (data.purchase_order_error) msg += `（购货订单失败: ${data.purchase_order_error}）`;
+    showDraftsStatus(msg, error ? 'error' : 'success');
+    loadDrafts();
+  } catch(e) {
+    showDraftsStatus('批次提交失败: ' + e.message, 'error');
+  }
+}
+
+// 提交全部待处理（所有账套当前 pending/error 草稿逐条提交）
+async function submitAllPending() {
+  hideDraftsStatus();
+  showDraftsStatus('正在获取草稿列表…', '');
+  try {
+    const res  = await fetch(`${BASE}/register/drafts?account=${_account}`);
+    const data = await res.json();
+    const pending = (data.drafts || []).filter(d => d.status === 'pending' || d.status === 'error');
+    if (pending.length === 0) {
+      showDraftsStatus('没有待处理的草稿', '');
+      return;
+    }
+
+    // 按 batch_group 分组提交
+    const batches = {};
+    const singles = [];
+    for (const d of pending) {
+      if (d.batch_group) {
+        batches[d.batch_group] = true;
+      } else {
+        singles.push(d.id);
+      }
+    }
+
+    let doneTotal = 0, errorTotal = 0, poNumbers = [];
+
+    // 提交各批次
+    for (const bg of Object.keys(batches)) {
+      const r = await fetch(`${BASE}/register/batch/${bg}/submit`, {method: 'POST'});
+      const rd = await r.json();
+      doneTotal  += (rd.results || []).filter(x => x.status === 'done').length;
+      errorTotal += (rd.results || []).filter(x => x.status === 'error').length;
+      if (rd.purchase_order_number) poNumbers.push(rd.purchase_order_number);
+    }
+
+    // 提交单品
+    for (const id of singles) {
+      const r = await fetch(`${BASE}/register/draft/${id}/submit`, {method: 'POST'});
+      const rd = await r.json();
+      if (rd.ok) doneTotal++; else errorTotal++;
+    }
+
+    let msg = `全部提交完成：${doneTotal} 条成功`;
+    if (errorTotal) msg += `，${errorTotal} 条失败`;
+    if (poNumbers.length) msg += `，购货订单 ${poNumbers.join(', ')}`;
+    showDraftsStatus(msg, errorTotal ? 'error' : 'success');
+    loadDrafts();
+  } catch(e) {
+    showDraftsStatus('提交失败: ' + e.message, 'error');
+  }
+}
+
+// 删除草稿
+async function deleteDraft(draftId) {
+  if (!confirm('确定删除此草稿？序号将被回滚。')) return;
+  hideDraftsStatus();
+  try {
+    const res  = await fetch(`${BASE}/register/drafts/${draftId}`, {method: 'DELETE'});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '删除失败');
+    showDraftsStatus('草稿已删除', 'success');
+    loadDrafts();
+  } catch(e) {
+    showDraftsStatus('删除失败: ' + e.message, 'error');
+  }
+}
+
+function showDraftsStatus(msg, type) {
+  const bar = document.getElementById('drafts-status-bar');
+  bar.textContent = msg;
+  bar.className = 'status-bar ' + (type || '');
+  bar.style.display = 'block';
+}
+function hideDraftsStatus() {
+  document.getElementById('drafts-status-bar').style.display = 'none';
 }
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
