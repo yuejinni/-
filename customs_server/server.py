@@ -3774,6 +3774,9 @@ def _ensure_jdy_product_columns(conn):
         ('default_supplier_name', 'TEXT'),
         ('image_url', 'TEXT'),
         ('status', 'TEXT'),
+        ('length', 'TEXT'),
+        ('width', 'TEXT'),
+        ('height', 'TEXT'),
         ('data_json', 'TEXT'),
         ('created_at', 'TEXT'),
         ('updated_at', 'TEXT'),
@@ -5717,6 +5720,9 @@ def _cache_upsert_jdy_product(conn, account, product, now=None):
         'SELECT id FROM jdy_products WHERE account = ? AND product_number = ?',
         (account or '', item['code']),
     ).fetchone()
+    p_length = str(product.get('length') or '').strip()
+    p_width  = str(product.get('width')  or '').strip()
+    p_height = str(product.get('height') or '').strip()
     values = (
         account or '',
         str(_first_value(product or {}, ['id', 'productId'], '') or ''),
@@ -5733,6 +5739,9 @@ def _cache_upsert_jdy_product(conn, account, product, now=None):
         item['default_supplier_name'],
         item['image_url'],
         item['status'],
+        p_length,
+        p_width,
+        p_height,
         json.dumps(product or {}, ensure_ascii=False),
         now,
         now,
@@ -5742,20 +5751,22 @@ def _cache_upsert_jdy_product(conn, account, product, now=None):
             UPDATE jdy_products
                SET product_id=?, product_name=?, spec=?, barcode=?, category_id=?, category_name=?,
                    unit_id=?, unit_name=?, default_supplier_id=?, default_supplier_number=?,
-                   default_supplier_name=?, image_url=?, status=?, data_json=?, updated_at=?, last_seen_at=?
+                   default_supplier_name=?, image_url=?, status=?, length=?, width=?, height=?,
+                   data_json=?, updated_at=?, last_seen_at=?
              WHERE account=? AND product_number=?
         ''', (
             values[1], values[3], values[4], values[5], values[6], values[7],
             values[8], values[9], values[10], values[11], values[12], values[13],
-            values[14], values[15], now, now, account or '', item['code'],
+            values[14], p_length, p_width, p_height,
+            values[19], now, now, account or '', item['code'],
         ))
         return item, 'updated'
     conn.execute('''
         INSERT INTO jdy_products
         (account, product_id, product_number, product_name, spec, barcode, category_id, category_name,
          unit_id, unit_name, default_supplier_id, default_supplier_number, default_supplier_name,
-         image_url, status, data_json, created_at, updated_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         image_url, status, length, width, height, data_json, created_at, updated_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (*values, now))
     return item, 'inserted'
 
