@@ -5875,7 +5875,8 @@ def _local_products_response():
         joins = ''
         select_qty = '''
             0 AS stock_new, 0 AS stock_transit, 0 AS stock_local,
-            0 AS stock_factory, 0 AS factory_qty
+            0 AS stock_factory, 0 AS factory_qty,
+            0 AS has_quantity_cache
         '''
         if qty_state.get('exists'):
             joins = '''
@@ -5887,7 +5888,8 @@ def _local_products_response():
                 COALESCE(q.stock_transit, 0) AS stock_transit,
                 COALESCE(q.stock_local, 0) AS stock_local,
                 COALESCE(q.stock_factory, 0) AS stock_factory,
-                COALESCE(q.factory_qty, 0) AS factory_qty
+                COALESCE(q.factory_qty, 0) AS factory_qty,
+                CASE WHEN q.code IS NULL THEN 0 ELSE 1 END AS has_quantity_cache
             '''
         clauses = ['COALESCE(p.product_number, "") != ""']
         params = []
@@ -5943,6 +5945,14 @@ def _local_products_response():
             ORDER BY p.account ASC, p.product_number ASC, p.id ASC
             LIMIT ? OFFSET ?
         ''', [*params, page_size, offset]).fetchall()
+        transfer_transit = _local_products_transfer_transit_fallback(conn, [
+            {
+                'account': row['account'] or '',
+                'product_number': row['product_number'] or '',
+                'barcode': row['barcode'] or '',
+            }
+            for row in rows
+        ])
         items = []
         for row in rows:
             item = {
@@ -5963,8 +5973,17 @@ def _local_products_response():
                 'stock_local': _num(row['stock_local']),
                 'stock_factory': _num(row['stock_factory']),
                 'factory_qty': _num(row['factory_qty']),
+                'has_quantity_cache': bool(row['has_quantity_cache']),
                 'data_source': 'jdy_products',
             }
+            transfer_fallback = transfer_transit.get((item['account'], item['product_number']))
+            if _num(item['stock_transit']) <= 0 and transfer_fallback:
+                item['stock_transit'] = _num(transfer_fallback.get('stock_transit'))
+                item['quantity_fallback'] = 'transfer_details'
+                item['quantity_fallback_detail'] = {
+                    'stock_transit': item['stock_transit'],
+                    'sources': transfer_fallback.get('sources') or [],
+                }
             item.update({
                 'code': item['product_number'],
                 'name': item['product_name'],
@@ -10692,9 +10711,10 @@ def _split_sales_factory_disabled_suppliers(text):
 
 def _sales_factory_purchase_filter_config():
     cfg = _sales_sync_config()
+    begin_date = _effective_sales_factory_new_logic_begin_date(cfg)
     return {
-        'begin_date': cfg.get('factory_purchase_begin_date') or '',
-        'new_logic_begin_date': cfg.get('factory_purchase_begin_date') or '',
+        'begin_date': begin_date or '',
+        'new_logic_begin_date': begin_date or '',
         'disabled_suppliers': _split_sales_factory_disabled_suppliers(
             cfg.get('factory_disabled_suppliers') or ''
         ),
@@ -12500,9 +12520,154 @@ def _empty_sales_stock_buckets():
     return {'新大仓库': 0, '在途': 0, '金华/本地': 0, '工厂订单': 0}
 
 
+_SALES_FACTORY_LEGACY_LAST_DATE = '2026-05-28'
+_SALES_FACTORY_NEW_LOGIC_BEGIN_DATE = '2026-05-29'
+
+
+def _effective_sales_factory_new_logic_begin_date(conf=None):
+    conf = conf or _sales_sync_config()
+    begin_date = str(
+        conf.get('factory_new_logic_begin_date')
+        or conf.get('factory_purchase_begin_date')
+        or ''
+    ).strip()
+    if begin_date and begin_date <= _SALES_FACTORY_LEGACY_LAST_DATE:
+        return _SALES_FACTORY_NEW_LOGIC_BEGIN_DATE
+    return begin_date
+
+
 def _is_factory_order_location(name):
     name = str(name or '').strip()
     return bool(name and ('工厂订单' in name or '厂家订单' in name))
+
+
+def _is_factory_transfer_source_location(name):
+    name = str(name or '').strip()
+    return bool(name and ('工厂' in name or '厂家' in name))
+
+
+def _is_transit_location(name):
+    return '在途' in str(name or '').strip()
+
+
+def _is_new_warehouse_location(name):
+    return '新大' in str(name or '').strip()
+
+
+def _is_checked_transfer_order(order):
+    raw = _first_value(order or {}, ['checkStatus', 'checkStatusName', 'statusName', 'status'], '')
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw or '').strip().lower()
+    if not text:
+        return False
+    if text in ('false', '0', 'no', 'n', 'unchecked', 'unapproved', '未审核', '未審核'):
+        return False
+    if '未审核' in text or '未審核' in text:
+        return False
+    return text in ('true', '1', 'yes', 'y', 'checked', 'approved', '已审核', '已審核') or '已审核' in text or '已審核' in text
+
+
+def _product_code_without_alpha_prefix(code):
+    code = str(code or '').strip()
+    return re.sub(r'^[A-Za-z]\.', '', code)
+
+
+def _local_product_transfer_match_keys(product_number='', barcode=''):
+    keys = set()
+    code = str(product_number or '').strip()
+    if code:
+        keys.add('code:' + code.upper())
+        no_prefix = _product_code_without_alpha_prefix(code)
+        if no_prefix:
+            keys.add('code:' + no_prefix.upper())
+    barcode = str(barcode or '').strip()
+    if barcode:
+        keys.add('barcode:' + barcode.upper())
+    return keys
+
+
+def _local_products_transfer_transit_fallback(conn, products):
+    result = {}
+    if not conn or not products:
+        return result
+    if not _cache_sqlite_table_count(conn, 'transfer_details').get('exists'):
+        return result
+
+    target_by_key = {}
+    accounts = []
+    for product in products:
+        account = str(product.get('account') or '').strip()
+        code = str(product.get('product_number') or product.get('code') or '').strip()
+        if not account or not code:
+            continue
+        pk = (account, code)
+        result.setdefault(pk, {'stock_transit': 0, 'sources': []})
+        if account not in accounts:
+            accounts.append(account)
+        for key in _local_product_transfer_match_keys(code, product.get('barcode') or ''):
+            target_by_key.setdefault((account, key), set()).add(pk)
+    if not target_by_key or not accounts:
+        return {}
+
+    placeholders = ','.join('?' for _ in accounts)
+    rows = conn.execute(f'''
+        SELECT account, number, date, data_json
+        FROM transfer_details
+        WHERE account IN ({placeholders})
+    ''', accounts).fetchall()
+    for row in rows:
+        account = str(row['account'] or '').strip()
+        try:
+            order = json.loads(row['data_json'] or '{}')
+        except Exception:
+            continue
+        if not _is_checked_transfer_order(order):
+            continue
+        number = str(order.get('number') or row['number'] or '').strip()
+        date_str = str(order.get('date') or row['date'] or '')[:10]
+        for entry in (order.get('entries') or order.get('details') or order.get('items') or order.get('lines') or []):
+            if not isinstance(entry, dict):
+                continue
+            out_loc = str(_first_value(entry, ['outLocationName', 'outWarehouseName', 'outStockName'], '') or '').strip()
+            in_loc = str(_first_value(entry, ['inLocationName', 'inWarehouseName', 'inStockName'], '') or '').strip()
+            delta = 0
+            if _is_factory_transfer_source_location(out_loc) and _is_transit_location(in_loc):
+                delta = _num(_first_value(entry, ['qty', 'baseQty', 'mainQty', 'quantity'], 0))
+            elif _is_transit_location(out_loc) and _is_new_warehouse_location(in_loc):
+                delta = -_num(_first_value(entry, ['qty', 'baseQty', 'mainQty', 'quantity'], 0))
+            if not delta:
+                continue
+
+            entry_keys = _local_product_transfer_match_keys(
+                _first_value(entry, ['productNumber', 'productCode', 'number', 'code'], ''),
+                _first_value(entry, ['barCode', 'barcode', 'productBarcode'], ''),
+            )
+            matched = set()
+            for key in entry_keys:
+                matched.update(target_by_key.get((account, key), set()))
+            if not matched:
+                continue
+            for pk in matched:
+                result[pk]['stock_transit'] += delta
+                if len(result[pk]['sources']) < 20:
+                    result[pk]['sources'].append({
+                        'number': number,
+                        'date': date_str,
+                        'out_location': out_loc,
+                        'in_location': in_loc,
+                        'qty': delta,
+                        'unit': _first_value(entry, ['unitName', 'unit', 'baseUnitName'], ''),
+                    })
+
+    return {
+        pk: {
+            **data,
+            'stock_transit': max(_num(data.get('stock_transit')), 0),
+        }
+        for pk, data in result.items()
+        if _num(data.get('stock_transit')) > 0
+    }
 
 
 def _stock_from_product(product):
@@ -12568,7 +12733,7 @@ def _stock_from_inventory_strict(cli, code):
 
 
 def _sales_order_uses_new_factory_logic(order_date=''):
-    begin_date = (_sales_sync_config().get('factory_purchase_begin_date') or '').strip()
+    begin_date = _effective_sales_factory_new_logic_begin_date()
     if not begin_date:
         return False
     order_date = str(order_date or '')[:10]
@@ -12577,7 +12742,7 @@ def _sales_order_uses_new_factory_logic(order_date=''):
 
 def _sales_quantity_logic_key(order_date=''):
     conf = _sales_sync_config()
-    begin_date = (conf.get('factory_purchase_begin_date') or '').strip()
+    begin_date = _effective_sales_factory_new_logic_begin_date(conf)
     if begin_date and str(order_date or '')[:10] >= begin_date:
         return f'factory-new:{begin_date}'
     return f'factory-warehouse-before:{begin_date or ""}'
