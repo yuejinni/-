@@ -248,6 +248,12 @@ def dashboard():
     return render_template('dashboard.html')
 
 
+# ── 13. PDA 拣货 H5 页面 ───────────────────────────────────────────────────────
+@app.get('/pda')
+def pda():
+    return render_template('pda.html')
+
+
 def run_flask_app(port: int = 5010):
     from waitress import serve
     logger.info(f"[Flask] 启动 waitress，监听 :{port}")
