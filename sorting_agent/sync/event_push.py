@@ -7,11 +7,20 @@ sync/event_push.py — 扫码事件推送到云端
 """
 import time
 import logging
+import datetime
 import requests
 
 from core.db import qval, qall, execute, get_db_conn
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize(row: dict) -> dict:
+    """把 dict 里的 datetime 转成 ISO 字符串，确保 JSON 可序列化。"""
+    return {
+        k: v.isoformat() if isinstance(v, (datetime.datetime, datetime.date)) else v
+        for k, v in row.items()
+    }
 
 
 def event_push_loop():
@@ -35,7 +44,7 @@ def event_push_loop():
             if rows:
                 resp = requests.post(
                     f"{cloud_url}/agent/events",
-                    json={"events": rows},
+                    json={"events": [_serialize(r) for r in rows]},
                     timeout=5
                 )
                 if resp.status_code == 200:
