@@ -94,6 +94,14 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
 )
 
+# ── 分拣机 Agent 接口（sorting/ 子包，仅 append，不影响现有功能）────────────────
+try:
+    from sorting.agent_api import sorting_bp
+    app.register_blueprint(sorting_bp)
+    print('[sorting] 分拣接口已注册（/agent/rules, /agent/events, /sorting/*）')
+except Exception as _sorting_import_err:
+    print(f'[sorting] 分拣接口未加载（{_sorting_import_err}）')
+
 
 def _hash_password(password, salt=''):
     salt = salt or secrets.token_hex(16)
