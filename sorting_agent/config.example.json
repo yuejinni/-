@@ -6,6 +6,6 @@
   "label_template": "print/templates/label.html",
   "wkhtmltopdf_path": "wkhtmltopdf.exe",
   "tcp_port": 8888,
-  "flask_port": 5009,
+  "flask_port": 5008,
   "use_mock_plc": false
 }

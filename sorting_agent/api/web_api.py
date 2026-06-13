@@ -248,7 +248,7 @@ def dashboard():
     return render_template('dashboard.html')
 
 
-def run_flask_app(port: int = 5009):
+def run_flask_app(port: int = 5008):
     from waitress import serve
     logger.info(f"[Flask] 启动 waitress，监听 :{port}")
     serve(app, host='0.0.0.0', port=port)
