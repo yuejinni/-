@@ -326,6 +326,9 @@ def require_login():
     public_paths = {'/health', '/login', '/register', '/favicon.ico', '/jdy-webhook'}
     if request.path in public_paths:
         return None
+    # 分拣机 Agent 机器间调用，不走浏览器 session，豁免鉴权
+    if request.path.startswith('/agent/'):
+        return None
     if _is_logged_in():
         if _admin_path_required() and not _is_admin():
             if _wants_json():
