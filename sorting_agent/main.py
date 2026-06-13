@@ -58,7 +58,7 @@ def main():
 
     plc = connect_plc(config['plc_ip'])
 
-    flask_port = config.get('flask_port', 5008)
+    flask_port = config.get('flask_port', 5010)
     tcp_port   = config.get('tcp_port', 8888)
 
     # 后台线程（均为 daemon，主线程退出时自动终止）
