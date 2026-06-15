@@ -1,0 +1,11 @@
+{
+  "plc_ip": "172.168.10.100",
+  "db_conn_str": "DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=SortingAgent;Trusted_Connection=yes;",
+  "cloud_url": "http://gongdashuai.top:5008",
+  "printer_name": "HP LaserJet",
+  "label_template": "print/templates/label.html",
+  "wkhtmltopdf_path": "wkhtmltopdf.exe",
+  "tcp_port": 8888,
+  "flask_port": 5010,
+  "use_mock_plc": false
+}

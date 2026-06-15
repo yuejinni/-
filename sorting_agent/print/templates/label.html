@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 12px; margin: 10px; }
+  .header { font-size: 18px; font-weight: bold; margin-bottom: 8px; }
+  .sub { font-size: 13px; color: #555; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }
+  th { background: #f0f0f0; font-weight: bold; }
+  tr:nth-child(even) { background: #fafafa; }
+</style>
+</head>
+<body>
+  <div class="header">格口 {{ portno }} — 共 {{ total }} 件</div>
+  <div class="sub">打印时间：{{ now if now is defined else '' }}</div>
+  <table>
+    <tr>
+      <th>条码</th>
+      <th>货号</th>
+      <th>客户</th>
+      <th>面单</th>
+      <th>喷码号</th>
+      <th>扫码时间</th>
+    </tr>
+    {% for item in items %}
+    <tr>
+      <td>{{ item.barcode }}</td>
+      <td>{{ item.goodsno or '' }}</td>
+      <td>{{ item.customer or '' }}</td>
+      <td>{{ item.label_data or '' }}</td>
+      <td>{{ item.serialnum }}</td>
+      <td>{{ item.scanned_at }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f172a">
+<title>祺航分拣</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+:root {
+  --bg:      #0f172a;
+  --card:    #1e293b;
+  --border:  #334155;
+  --accent:  #3b82f6;
+  --green:   #22c55e;
+  --red:     #ef4444;
+  --yellow:  #f59e0b;
+  --text:    #f1f5f9;
+  --muted:   #94a3b8;
+  --radius:  12px;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text);
+             font-family: "Microsoft YaHei", Arial, sans-serif; }
+
+.screen { display: none; flex-direction: column; height: 100vh; }
+.screen.active { display: flex; }
+
+/* ══════════════════════════════
+   楼层选择页
+══════════════════════════════ */
+#s-floor {
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 32px;
+}
+.brand { text-align: center; }
+.brand-logo { font-size: 48px; margin-bottom: 8px; }
+.brand-name { font-size: 26px; font-weight: 700; letter-spacing: 2px; }
+.brand-sub  { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+.floor-label { font-size: 15px; color: var(--muted); text-align: center; }
+.floor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  width: 100%;
+  max-width: 320px;
+}
+.floor-btn {
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 700;
+  padding: 32px 0;
+  cursor: pointer;
+  transition: all .15s;
+  text-align: center;
+}
+.floor-btn:active { background: var(--accent); border-color: var(--accent); transform: scale(.97); }
+.floor-btn .floor-num { display: block; }
+.floor-btn .floor-unit { font-size: 16px; font-weight: 400; color: var(--muted); }
+
+/* ══════════════════════════════
+   拣货主页
+══════════════════════════════ */
+#s-pick { overflow: hidden; }
+
+/* 顶栏 */
+.topbar {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.tb-floor {
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+.tb-batch { font-size: 13px; color: var(--muted); flex: 1;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-switch {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tb-switch:active { background: var(--border); }
+
+/* 扫码区 */
+.scan-area {
+  padding: 12px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.scan-row { display: flex; gap: 10px; align-items: center; }
+.scan-icon { font-size: 22px; flex-shrink: 0; }
+.scan-input {
+  flex: 1;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 17px;
+  padding: 10px 14px;
+  outline: none;
+  caret-color: var(--accent);
+}
+.scan-input::placeholder { color: var(--muted); }
+.scan-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59,130,246,.2); }
+
+/* 统计栏 */
+.stat-bar {
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.stat-pending { font-size: 14px; color: var(--muted); }
+.stat-num { font-size: 18px; font-weight: 700; color: var(--yellow); }
+.stat-refresh {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.stat-refresh:active { background: var(--border); }
+
+/* 列表 */
+.pick-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.pick-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-top: 10px;
+}
+.pi-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+.pi-goodsno { font-size: 17px; font-weight: 700; }
+.pi-progress {
+  background: var(--bg);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+.pi-progress.done { color: var(--green); }
+.pi-barcode { font-size: 13px; color: var(--muted); margin-bottom: 6px; font-family: monospace; }
+.pi-port {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(59,130,246,.15);
+  border: 1px solid rgba(59,130,246,.3);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #60a5fa;
+}
+
+.empty-tip {
+  text-align: center;
+  color: var(--muted);
+  font-size: 15px;
+  padding: 48px 0;
+}
+.empty-icon { font-size: 48px; margin-bottom: 12px; }
+
+/* ══════════════════════════════
+   结果遮罩
+══════════════════════════════ */
+#result-mask {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+}
+#result-mask.ok  { background: rgba(22,163,74,.92); }
+#result-mask.err { background: rgba(220,38,38,.92); }
+#result-mask .rm-icon { font-size: 72px; }
+#result-mask .rm-msg  { font-size: 22px; font-weight: 700; text-align: center; color: #fff; }
+#result-mask .rm-sub  { font-size: 16px; color: rgba(255,255,255,.8); text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ══ 楼层选择 ══ -->
+<div id="s-floor" class="screen active">
+  <div class="brand">
+    <div class="brand-logo">📦</div>
+    <div class="brand-name">祺航分拣</div>
+    <div class="brand-sub">请选择当前楼层</div>
+  </div>
+  <div class="floor-grid">
+    <button class="floor-btn" onclick="selectFloor(1)">
+      <span class="floor-num">1</span><span class="floor-unit">楼</span>
+    </button>
+    <button class="floor-btn" onclick="selectFloor(2)">
+      <span class="floor-num">2</span><span class="floor-unit">楼</span>
+    </button>
+    <button class="floor-btn" onclick="selectFloor(3)">
+      <span class="floor-num">3</span><span class="floor-unit">楼</span>
+    </button>
+    <button class="floor-btn" onclick="selectFloor(4)">
+      <span class="floor-num">4</span><span class="floor-unit">楼</span>
+    </button>
+  </div>
+</div>
+
+<!-- ══ 拣货主页 ══ -->
+<div id="s-pick" class="screen">
+  <div class="topbar">
+    <span class="tb-floor" id="tb-floor">1楼</span>
+    <span class="tb-batch" id="tb-batch">加载中...</span>
+    <button class="tb-switch" onclick="switchFloor()">换楼层</button>
+  </div>
+
+  <div class="scan-area">
+    <div class="scan-row">
+      <span class="scan-icon">🔍</span>
+      <input id="scan-input" class="scan-input" type="text"
+             placeholder="扫描或输入条码..." autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+  </div>
+
+  <div class="stat-bar">
+    <span class="stat-pending">待拣</span>
+    <span class="stat-num" id="stat-num">—</span>
+    <span class="stat-pending">件</span>
+    <button class="stat-refresh" onclick="loadList()">刷新</button>
+  </div>
+
+  <div class="pick-list" id="pick-list">
+    <div class="empty-tip"><div class="empty-icon">⏳</div>加载中...</div>
+  </div>
+</div>
+
+<!-- ══ 结果遮罩 ══ -->
+<div id="result-mask">
+  <div class="rm-icon" id="rm-icon"></div>
+  <div class="rm-msg"  id="rm-msg"></div>
+  <div class="rm-sub"  id="rm-sub"></div>
+</div>
+
+<script>
+// ── 状态 ────────────────────────────────────────────────────────
+const state = { floor: 0, batchno: '', refreshTimer: null };
+
+// ── 楼层选择 ─────────────────────────────────────────────────────
+function selectFloor(f) {
+  state.floor = f;
+  document.getElementById('tb-floor').textContent = f + '楼';
+  show('s-pick');
+  document.getElementById('scan-input').focus();
+  loadBatch();
+  loadList();
+  if (state.refreshTimer) clearInterval(state.refreshTimer);
+  state.refreshTimer = setInterval(loadList, 15000);
+}
+
+function switchFloor() {
+  if (state.refreshTimer) clearInterval(state.refreshTimer);
+  show('s-floor');
+}
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// ── 加载批次信息 ──────────────────────────────────────────────────
+async function loadBatch() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    // active_batchno 在 stats 里
+    const batchno = (data.stats && data.stats.active_batchno) ? data.stats.active_batchno : '';
+    state.batchno = batchno;
+    document.getElementById('tb-batch').textContent = batchno ? '批次 ' + batchno : '暂无批次';
+  } catch(e) {
+    document.getElementById('tb-batch').textContent = '连接失败';
+  }
+}
+
+// ── 加载拣货列表 ──────────────────────────────────────────────────
+async function loadList() {
+  try {
+    const res = await fetch('/api/pick?floor=' + state.floor + '&type=0');
+    const items = await res.json();
+    renderList(items);
+  } catch(e) {
+    document.getElementById('pick-list').innerHTML =
+      '<div class="empty-tip"><div class="empty-icon">⚠️</div>网络错误，请刷新</div>';
+  }
+}
+
+function renderList(items) {
+  const el = document.getElementById('pick-list');
+  document.getElementById('stat-num').textContent = items.length;
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-tip"><div class="empty-icon">✅</div>本楼层暂无待拣货物</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const remaining = item.num - item.anum;
+    const done = remaining <= 0;
+    return `
+    <div class="pick-item">
+      <div class="pi-top">
+        <div class="pi-goodsno">${escHtml(item.goodsnum || item.barcode)}</div>
+        <div class="pi-progress${done ? ' done' : ''}">${item.anum}/${item.num}</div>
+      </div>
+      <div class="pi-barcode">${escHtml(item.barcode)}</div>
+      <div class="pi-port">📦 格口 ${item.portno}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── 扫码处理 ──────────────────────────────────────────────────────
+const scanInput = document.getElementById('scan-input');
+let scanLock = false;
+
+scanInput.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const barcode = scanInput.value.trim();
+  if (!barcode || scanLock) return;
+  scanLock = true;
+  scanInput.value = '';
+  await doScan(barcode);
+  scanLock = false;
+  scanInput.focus();
+});
+
+async function doScan(barcode) {
+  try {
+    const res = await fetch(
+      `/api/pda/scan?barcode=${encodeURIComponent(barcode)}&floor=${state.floor}`
+    );
+    const data = await res.json();
+    if (data.ok) {
+      showResult('ok', '✅', data.msg || '扫码成功', barcode);
+      loadList();
+    } else {
+      showResult('err', '❌', data.msg || '扫码失败', barcode);
+    }
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', barcode);
+  }
+}
+
+// ── 结果遮罩 ──────────────────────────────────────────────────────
+let maskTimer = null;
+function showResult(type, icon, msg, sub) {
+  const mask = document.getElementById('result-mask');
+  document.getElementById('rm-icon').textContent = icon;
+  document.getElementById('rm-msg').textContent  = msg;
+  document.getElementById('rm-sub').textContent  = sub || '';
+  mask.className = '';
+  mask.style.display = 'flex';
+  void mask.offsetWidth; // reflow
+  mask.classList.add(type);
+  if (maskTimer) clearTimeout(maskTimer);
+  maskTimer = setTimeout(() => {
+    mask.style.display = 'none';
+    scanInput.focus();
+  }, 1500);
+}
+
+// 点击遮罩提前关闭
+document.getElementById('result-mask').addEventListener('click', () => {
+  if (maskTimer) clearTimeout(maskTimer);
+  document.getElementById('result-mask').style.display = 'none';
+  scanInput.focus();
+});
+
+// ── 工具 ─────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 保持输入框焦点（扫码枪需要）
+document.addEventListener('click', (e) => {
+  if (document.getElementById('s-pick').classList.contains('active') &&
+      e.target !== scanInput) {
+    setTimeout(() => scanInput.focus(), 0);
+  }
+});
+</script>
+</body>
+</html>

@@ -21,6 +21,7 @@ import sqlite3
 import sys
 import traceback
 import threading
+import uuid
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,7 +33,8 @@ from flask_cors import CORS
 from jdy_cache import JDYCache
 from ai_helper import identify_product, parse_order_image
 from register_product import register_product
-from code_gen import transform_vendor_code, peek_next_seq, generate_product_number
+from code_gen import (transform_vendor_code, peek_next_seq, generate_product_number,
+                      get_next_seq, rollback_seq, generate_ean13)
 from unit_manager import UnitManager
 
 # ── 路径 ──────────────────────────────────────────────────────────────────────
@@ -134,6 +136,86 @@ def _write_price_history(account: str, order_number: str, order_date: str,
         conn.close()
     except Exception as e:
         print(f'[WARN] 写入价格历史失败: {e}')
+
+
+def _draft_db_conn():
+    """连接 sales_cache.sqlite3，确保 product_drafts 表存在"""
+    os.makedirs(os.path.dirname(_SALES_DB), exist_ok=True)
+    conn = sqlite3.connect(_SALES_DB, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS product_drafts (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            account                 TEXT NOT NULL,
+            tax_no                  TEXT NOT NULL,
+            supplier_id             TEXT DEFAULT '',
+            supplier_name           TEXT DEFAULT '',
+            supplier_jdy_number     TEXT DEFAULT '',
+            cat_id                  TEXT NOT NULL,
+            cat_prefix              TEXT NOT NULL,
+            cat_small_code          TEXT NOT NULL,
+            cat_code_2d             TEXT NOT NULL,
+            product_name            TEXT NOT NULL,
+            spec                    TEXT DEFAULT '',
+            unit                    TEXT DEFAULT '',
+            remark                  TEXT DEFAULT '',
+            ka_barcode              TEXT DEFAULT '',
+            batch_group             TEXT DEFAULT '',
+            qty                     REAL DEFAULT 0,
+            price                   REAL DEFAULT 0,
+            ctn_qty                 INTEGER DEFAULT 0,
+            pcs_per_ctn             INTEGER DEFAULT 0,
+            unit_id                 TEXT DEFAULT '',
+            image_b64               TEXT DEFAULT '',
+            existing_product_number TEXT DEFAULT '',
+            product_number          TEXT DEFAULT '',
+            ean13                   TEXT DEFAULT '',
+            seq                     INTEGER DEFAULT 0,
+            transformed             TEXT DEFAULT '',
+            status                  TEXT NOT NULL DEFAULT 'pending',
+            jdy_id                  TEXT DEFAULT '',
+            error_msg               TEXT DEFAULT '',
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_drafts_account_status
+        ON product_drafts(account, status)
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_drafts_batch
+        ON product_drafts(batch_group)
+    ''')
+    return conn
+
+
+def _generate_codes_for_draft(account: str, tax_no: str, prefix: str,
+                               small_code: str, cat_code_2d: str):
+    """
+    仅生成编码（不调 JDY）。
+    返回 (codes_dict, error_str)，codes_dict 为 None 时表示失败。
+    """
+    transformed, err = transform_vendor_code(tax_no)
+    if err:
+        return None, f'档口号变换失败: {err}'
+
+    seq = get_next_seq(account)
+    product_number = generate_product_number(prefix, transformed, small_code, seq)
+
+    try:
+        ean13 = generate_ean13(cat_code_2d, seq)
+    except Exception as e:
+        rollback_seq(account)
+        return None, f'EAN-13 生成失败: {e}'
+
+    return {
+        'transformed':    transformed,
+        'seq':            seq,
+        'product_number': product_number,
+        'ean13':          ean13,
+    }, None
 
 
 def _get_price_history(account: str, product_number: str, limit: int = 5) -> list:
@@ -437,7 +519,7 @@ def api_preview():
 @app.route('/register/confirm', methods=['POST'])
 def api_confirm():
     """
-    POST /register/confirm（单品建档）
+    POST /register/confirm（单品建档 → 保存到草稿箱，不直接写 JDY）
     Body:
     {
         "account":       "account1",
@@ -451,8 +533,8 @@ def api_confirm():
     }
     返回:
     {
-        "ok": true, "product_number": "C.A1262902-0001",
-        "ean13": "...", "seq": 1, "attempts": 1, "error": null
+        "ok": true, "draft_id": 1, "product_number": "C.A1262902-0001",
+        "ean13": "...", "seq": 1, "error": null
     }
     """
     try:
@@ -471,28 +553,44 @@ def api_confirm():
         if not cat_info['prefix'] or not cat_info['code_2d']:
             return jsonify({'ok': False, 'error': f'分类 {cat_id!r} 配置不完整'}), 400
 
-        extra = {}
-        for field in ('unit', 'spec', 'remark'):
-            val = (data.get(field) or '').strip()
-            if val:
-                extra[field] = val
-        extra['category_id'] = cat_id
-        sup_id = (data.get('supplier_id') or '').strip()
-        if sup_id:
-            extra['supplier_id'] = sup_id
-
-        result = register_product(
-            account=account,
-            tax_no=tax_no,
-            prefix=cat_info['prefix'],
-            small_code=cat_info['small_code'],
-            cat_code_2d=cat_info['code_2d'],
-            product_name=product_name,
-            cfg_path=_CFG_PATH,
-            **extra,
+        # 生成编码（不调 JDY）
+        codes, err = _generate_codes_for_draft(
+            account, tax_no,
+            cat_info['prefix'], cat_info['small_code'], cat_info['code_2d']
         )
+        if err:
+            return jsonify({'ok': False, 'error': err}), 400
 
-        return jsonify(result)
+        spec        = (data.get('spec') or '').strip()
+        unit        = (data.get('unit') or '').strip()
+        remark      = (data.get('remark') or '').strip()
+        supplier_id = (data.get('supplier_id') or '').strip()
+
+        now = datetime.now().isoformat()
+        conn = _draft_db_conn()
+        cur = conn.execute('''
+            INSERT INTO product_drafts
+              (account, tax_no, supplier_id, cat_id, cat_prefix, cat_small_code, cat_code_2d,
+               product_name, spec, unit, remark, batch_group,
+               product_number, ean13, seq, transformed, status, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)
+        ''', (account, tax_no, supplier_id, cat_id,
+              cat_info['prefix'], cat_info['small_code'], cat_info['code_2d'],
+              product_name, spec, unit, remark, '',
+              codes['product_number'], codes['ean13'], codes['seq'], codes['transformed'],
+              now, now))
+        conn.commit()
+        draft_id = cur.lastrowid
+        conn.close()
+
+        return jsonify({
+            'ok':             True,
+            'draft_id':       draft_id,
+            'product_number': codes['product_number'],
+            'ean13':          codes['ean13'],
+            'seq':            codes['seq'],
+            'error':          None,
+        })
 
     except Exception as e:
         traceback.print_exc()
@@ -615,7 +713,7 @@ def api_order_parse():
 @app.route('/register/order/confirm', methods=['POST'])
 def api_order_confirm():
     """
-    POST /register/order/confirm
+    POST /register/order/confirm（批量建档 → 保存到草稿箱，不直接写 JDY）
     Body:
     {
         account, supplier_jdy_number, supplier_id,
@@ -629,9 +727,8 @@ def api_order_confirm():
     }
     返回:
     {
-        results: [{line, status("new"/"existing"/"error"),
-                   product_number, error}],
-        purchase_order_number: "XHDD..."
+        ok, batch_group, total, pending_count, existing_count,
+        drafts:[{line, product_number, ean13, status}]
     }
     """
     try:
@@ -642,164 +739,414 @@ def api_order_confirm():
         supplier_name    = (data.get('supplier_name') or '').strip()
         tax_no           = (data.get('tax_no') or '').strip()
         lines            = data.get('lines') or []
-        today            = datetime.now().strftime('%Y-%m-%d')
 
         if not supplier_jdy_no:
             return jsonify({'error': '缺少 supplier_jdy_number'}), 400
         if not lines:
             return jsonify({'error': '没有产品行'}), 400
 
-        results = []
-        order_entries = []  # 用于购货订单
+        batch_group = str(uuid.uuid4())[:8]
+        now = datetime.now().isoformat()
+        conn = _draft_db_conn()
+        drafts_result = []
+        pending_count = 0
+        existing_count = 0
 
         for i, line in enumerate(lines):
             existing_pno = (line.get('existing_product_number') or '').strip()
-            line_num = line.get('line', i + 1)
-            cat_id   = str(line.get('cat_id') or '')
-            qty      = float(line.get('qty') or 0)
-            price    = float(line.get('price') or 0)
-            unit_id  = str(line.get('unit_id') or '')
-            ctn_qty  = int(line.get('ctn_qty') or 0)
-            pcs_ctn  = int(line.get('pcs_per_ctn') or 0)
+            line_num  = line.get('line', i + 1)
+            cat_id    = str(line.get('cat_id') or '')
+            qty       = float(line.get('qty') or 0)
+            price     = float(line.get('price') or 0)
+            unit_id   = str(line.get('unit_id') or '')
+            ctn_qty   = int(line.get('ctn_qty') or 0)
+            pcs_ctn   = int(line.get('pcs_per_ctn') or 0)
             image_b64 = (line.get('image_b64') or '').strip()
-
-            # PAC 单位 ID（系统默认单位，所有产品共用）
-            pac_id = _unit_mgr.get_pcs_unit_id(account) if _unit_mgr else ''
-            # 优先用前端传来的 unit_id，否则用 PAC
-            order_unit = unit_id or pac_id
-
-            if existing_pno:
-                # ── 已有商品，跳过建档 ──
-                results.append({'line': line_num, 'status': 'existing',
-                                 'product_number': existing_pno, 'error': None})
-                # 购货订单：qty 优先用 ctn_qty（PAC 数），没有则用 qty
-                order_entries.append({
-                    'product_number': existing_pno,
-                    'productNumber':  existing_pno,
-                    'qty':    ctn_qty if ctn_qty > 0 else qty,
-                    'price':  price,
-                    'unit':   order_unit,
-                    'location': '金华仓库',
-                })
-                continue
-
-            # ── 新品建档 ──
-            cat_info = _get_cat_info(cat_id)
-            if not cat_info['prefix']:
-                results.append({'line': line_num, 'status': 'error',
-                                 'product_number': '', 'error': f'分类 {cat_id!r} 未配置'})
-                continue
-            if not tax_no:
-                results.append({'line': line_num, 'status': 'error',
-                                 'product_number': '', 'error': '未绑定供应商 taxPayerNo'})
-                continue
-
-            reg_kwargs = {
-                'category_id': cat_id,
-                'supplier_id': supplier_id,
-            }
-            if line.get('spec'):
-                reg_kwargs['spec'] = str(line['spec']).strip()
-            # 备注：优先用手填的 remark；若有 pcs_per_ctn 则自动填写（只填数字）
-            remark = str(line.get('remark') or '').strip()
+            spec      = str(line.get('spec') or '').strip()
+            remark    = str(line.get('remark') or '').strip()
             if not remark and pcs_ctn > 0:
                 remark = str(pcs_ctn)
-            if remark:
-                reg_kwargs['remark'] = remark
-            # 单位：PAC（系统默认）
-            if pac_id:
-                reg_kwargs['unit'] = pac_id
+            product_name = (line.get('name') or '').strip()
 
-            reg_result = register_product(
-                account=account,
-                tax_no=tax_no,
-                prefix=cat_info['prefix'],
-                small_code=cat_info['small_code'],
-                cat_code_2d=cat_info['code_2d'],
-                product_name=(line.get('name') or '').strip(),
-                cfg_path=_CFG_PATH,
-                **reg_kwargs,
-            )
+            pac_id = _unit_mgr.get_pcs_unit_id(account) if _unit_mgr else ''
+            cat_info = _get_cat_info(cat_id) if cat_id else {}
 
-            if not reg_result.get('ok'):
-                results.append({'line': line_num, 'status': 'error',
-                                 'product_number': reg_result.get('product_number', ''),
-                                 'error': reg_result.get('error', '建档失败')})
+            if existing_pno:
+                # ── 已有商品 ──
+                conn.execute('''
+                    INSERT INTO product_drafts
+                      (account, tax_no, supplier_id, supplier_name, supplier_jdy_number,
+                       cat_id, cat_prefix, cat_small_code, cat_code_2d,
+                       product_name, spec, unit, remark, batch_group,
+                       qty, price, ctn_qty, pcs_per_ctn, unit_id, image_b64,
+                       existing_product_number, product_number,
+                       status, created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'existing',?,?)
+                ''', (account, tax_no, supplier_id, supplier_name, supplier_jdy_no,
+                      cat_id, cat_info.get('prefix', ''), cat_info.get('small_code', ''),
+                      cat_info.get('code_2d', ''),
+                      product_name or existing_pno, spec, pac_id or unit_id, remark, batch_group,
+                      qty, price, ctn_qty, pcs_ctn, unit_id, image_b64,
+                      existing_pno, existing_pno,
+                      now, now))
+                conn.commit()
+                drafts_result.append({'line': line_num, 'product_number': existing_pno,
+                                       'ean13': '', 'status': 'existing'})
+                existing_count += 1
                 continue
 
-            pno = reg_result['product_number']
-            jdy_id = reg_result.get('jdy_id', '')
-            results.append({'line': line_num, 'status': 'new',
-                             'product_number': pno, 'error': None})
+            # ── 新品 ──
+            if not cat_info.get('prefix'):
+                drafts_result.append({'line': line_num, 'product_number': '',
+                                       'ean13': '', 'status': 'error',
+                                       'error': f'分类 {cat_id!r} 未配置'})
+                continue
+            if not tax_no:
+                drafts_result.append({'line': line_num, 'product_number': '',
+                                       'ean13': '', 'status': 'error',
+                                       'error': '未绑定供应商 taxPayerNo'})
+                continue
 
-            # 写入产品图片（异步，忽略失败）
-            if image_b64 and jdy_id and _cache:
-                def _upload_img(acc, pid, pnum, img):
-                    try:
-                        _cache.update_product_image(acc, pid, pnum, img)
-                    except Exception as ex:
-                        print(f'[WARN] 图片上传失败 {pnum}: {ex}')
-                threading.Thread(target=_upload_img,
-                                  args=(account, jdy_id, pno, image_b64),
-                                  daemon=True).start()
+            codes, err = _generate_codes_for_draft(
+                account, tax_no,
+                cat_info['prefix'], cat_info['small_code'], cat_info['code_2d']
+            )
+            if err:
+                drafts_result.append({'line': line_num, 'product_number': '',
+                                       'ean13': '', 'status': 'error', 'error': err})
+                continue
 
-            # 购货订单：qty 优先用 ctn_qty（PAC 数），没有则用 qty
-            order_entries.append({
-                'product_number': pno,
-                'productNumber':  pno,
-                'qty':    ctn_qty if ctn_qty > 0 else qty,
-                'price':  price,
-                'unit':   order_unit,
-                'location': '金华仓库',
-            })
+            cur = conn.execute('''
+                INSERT INTO product_drafts
+                  (account, tax_no, supplier_id, supplier_name, supplier_jdy_number,
+                   cat_id, cat_prefix, cat_small_code, cat_code_2d,
+                   product_name, spec, unit, remark, batch_group,
+                   qty, price, ctn_qty, pcs_per_ctn, unit_id, image_b64,
+                   product_number, ean13, seq, transformed,
+                   status, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)
+            ''', (account, tax_no, supplier_id, supplier_name, supplier_jdy_no,
+                  cat_id, cat_info['prefix'], cat_info['small_code'], cat_info['code_2d'],
+                  product_name, spec, pac_id or unit_id, remark, batch_group,
+                  qty, price, ctn_qty, pcs_ctn, unit_id, image_b64,
+                  codes['product_number'], codes['ean13'], codes['seq'], codes['transformed'],
+                  now, now))
+            conn.commit()
+            drafts_result.append({'line': line_num, 'draft_id': cur.lastrowid,
+                                   'product_number': codes['product_number'],
+                                   'ean13': codes['ean13'], 'status': 'pending'})
+            pending_count += 1
 
-        # ── 生成购货订单 ──
-        po_number = ''
-        po_error = None
-        if order_entries and _cache:
-            po_result = _cache.create_purchase_order(account, {
-                'supplier_number': supplier_jdy_no,
-                'date': today,
-                'entries': [{
-                    'productNumber': e['productNumber'],
-                    'qty': e['qty'],
-                    'price': e['price'],
-                    'unit': e['unit'],
-                    'location': e['location'],
-                } for e in order_entries],
-            })
-            if po_result.get('ok'):
-                po_number = po_result.get('order_number', '')
-                # 写入价格历史
-                _write_price_history(
-                    account, po_number, today,
-                    supplier_name, supplier_jdy_no,
-                    order_entries,
-                )
-                # 回写 elsPurPrice（异步，忽略失败）
-                for e in order_entries:
-                    if e.get('price', 0) > 0:
-                        def _update_price(acc, pnum, p):
-                            try:
-                                _cache.update_product_price(acc, pnum, p)
-                            except Exception as ex:
-                                print(f'[WARN] 价格回写失败 {pnum}: {ex}')
-                        threading.Thread(target=_update_price,
-                                          args=(account, e['product_number'], e['price']),
-                                          daemon=True).start()
-            else:
-                po_error = po_result.get('msg', '购货订单创建失败')
+        conn.close()
 
         return jsonify({
-            'results':               results,
-            'purchase_order_number': po_number,
-            'purchase_order_error':  po_error,
-            'error':                 None,
+            'ok':             True,
+            'batch_group':    batch_group,
+            'total':          len(lines),
+            'pending_count':  pending_count,
+            'existing_count': existing_count,
+            'drafts':         drafts_result,
+            'error':          None,
         })
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+# ── 草稿箱路由 ────────────────────────────────────────────────────────────────
+
+def _submit_one_draft(conn, draft: dict) -> dict:
+    """
+    提交单条草稿到 JDY，支持 46001 自动重试（最多3次）。
+    直接修改 DB；返回 {ok, product_number, ean13, jdy_id, error}
+    """
+    if not _cache:
+        return {'ok': False, 'error': '缓存未初始化'}
+
+    draft_id = draft['id']
+    account  = draft['account']
+    current_pno = draft['product_number']
+    current_ean = draft['ean13']
+
+    for attempt in range(1, 4):
+        if attempt > 1:
+            # 46001 重复：重新生成编码
+            codes, err = _generate_codes_for_draft(
+                account, draft['tax_no'],
+                draft['cat_prefix'], draft['cat_small_code'], draft['cat_code_2d']
+            )
+            if err:
+                conn.execute(
+                    'UPDATE product_drafts SET status=?,error_msg=?,updated_at=? WHERE id=?',
+                    ('error', err, datetime.now().isoformat(), draft_id))
+                conn.commit()
+                return {'ok': False, 'error': err}
+            current_pno = codes['product_number']
+            current_ean = codes['ean13']
+            conn.execute('''
+                UPDATE product_drafts
+                SET product_number=?,ean13=?,seq=?,transformed=?,updated_at=?
+                WHERE id=?
+            ''', (current_pno, current_ean, codes['seq'],
+                  codes['transformed'], datetime.now().isoformat(), draft_id))
+            conn.commit()
+
+        payload = {
+            'productNumber': current_pno,
+            'productName':   draft['product_name'],
+            'barcode':       current_ean,
+        }
+        if draft.get('cat_id'):
+            payload['categoryId'] = str(draft['cat_id'])
+        for field in ('spec', 'remark', 'unit'):
+            val = (draft.get(field) or '').strip()
+            if val:
+                payload[field] = val
+        if draft.get('supplier_id'):
+            payload['defaultSupplierId'] = str(draft['supplier_id'])
+
+        result = _cache.create_product(account, payload)
+
+        if result['ok']:
+            jdy_data = result.get('data') or {}
+            jdy_id = None
+            if isinstance(jdy_data, dict):
+                jdy_id = (jdy_data.get('id') or
+                          (jdy_data.get('items', [{}]) or [{}])[0].get('id'))
+            jdy_id_str = str(jdy_id) if jdy_id else ''
+            conn.execute('''
+                UPDATE product_drafts
+                SET status='done',jdy_id=?,product_number=?,ean13=?,error_msg='',updated_at=?
+                WHERE id=?
+            ''', (jdy_id_str, current_pno, current_ean,
+                  datetime.now().isoformat(), draft_id))
+            conn.commit()
+
+            # 异步上传图片
+            img = draft.get('image_b64') or ''
+            if img and jdy_id_str:
+                def _up(acc, pid, pnum, b64):
+                    try:
+                        _cache.update_product_image(acc, pid, pnum, b64)
+                    except Exception as ex:
+                        print(f'[WARN] 图片上传失败 {pnum}: {ex}')
+                threading.Thread(target=_up,
+                                  args=(account, jdy_id_str, current_pno, img),
+                                  daemon=True).start()
+
+            return {'ok': True, 'product_number': current_pno,
+                    'ean13': current_ean, 'jdy_id': jdy_id_str, 'error': None}
+
+        errcode   = result.get('errcode')
+        last_error = result.get('msg', '未知错误')
+
+        if errcode == 46001:
+            print(f'[DRAFT] 编号重复({current_pno})，重试 #{attempt}...')
+            continue
+
+        # 其他错误：回滚序号，终止
+        rollback_seq(account)
+        err_msg = f'JDY错误 {errcode}: {last_error}'
+        conn.execute(
+            'UPDATE product_drafts SET status=?,error_msg=?,updated_at=? WHERE id=?',
+            ('error', err_msg, datetime.now().isoformat(), draft_id))
+        conn.commit()
+        return {'ok': False, 'error': err_msg}
+
+    # 超过最大重试次数
+    rollback_seq(account)
+    err_msg = '编号重复，重试3次失败'
+    conn.execute(
+        'UPDATE product_drafts SET status=?,error_msg=?,updated_at=? WHERE id=?',
+        ('error', err_msg, datetime.now().isoformat(), draft_id))
+    conn.commit()
+    return {'ok': False, 'error': err_msg}
+
+
+@app.route('/register/draft/<int:draft_id>/submit', methods=['POST'])
+def api_submit_draft(draft_id):
+    """POST /register/draft/<draft_id>/submit  单条提交"""
+    try:
+        conn = _draft_db_conn()
+        row = conn.execute(
+            'SELECT * FROM product_drafts WHERE id=?', (draft_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'ok': False, 'error': '草稿不存在'}), 404
+
+        draft = dict(row)
+        if draft['status'] not in ('pending', 'error'):
+            conn.close()
+            return jsonify({'ok': False, 'error': f'草稿状态 {draft["status"]} 不可提交'}), 400
+
+        ret = _submit_one_draft(conn, draft)
+        conn.close()
+        return jsonify(ret)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/register/batch/<batch_group>/submit', methods=['POST'])
+def api_submit_batch(batch_group):
+    """POST /register/batch/<batch_group>/submit  批次整体提交"""
+    try:
+        conn = _draft_db_conn()
+        pending_rows = conn.execute('''
+            SELECT * FROM product_drafts
+            WHERE batch_group=? AND status IN ('pending','error')
+        ''', (batch_group,)).fetchall()
+
+        results = []
+        for row in pending_rows:
+            draft = dict(row)
+            ret = _submit_one_draft(conn, draft)
+            results.append({
+                'draft_id':       draft['id'],
+                'product_number': ret.get('product_number', draft['product_number']),
+                'status':         'done' if ret['ok'] else 'error',
+                'error':          ret.get('error'),
+            })
+
+        # 生成购货订单（done + existing）
+        po_number = ''
+        po_error  = None
+        all_ready = conn.execute('''
+            SELECT * FROM product_drafts
+            WHERE batch_group=? AND status IN ('done','existing')
+        ''', (batch_group,)).fetchall()
+
+        if all_ready and _cache:
+            first = dict(all_ready[0])
+            account         = first['account']
+            supplier_jdy_no = first['supplier_jdy_number']
+            supplier_name   = first['supplier_name']
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            order_entries = []
+            for r in all_ready:
+                rd  = dict(r)
+                pac = _unit_mgr.get_pcs_unit_id(account) if _unit_mgr else ''
+                unit = rd.get('unit_id') or rd.get('unit') or pac or ''
+                qty = rd['ctn_qty'] if rd.get('ctn_qty', 0) > 0 else rd.get('qty', 0)
+                order_entries.append({
+                    'product_number': rd['product_number'],
+                    'productNumber':  rd['product_number'],
+                    'qty':   qty,
+                    'price': rd.get('price', 0),
+                    'unit':  unit,
+                    'location': '金华仓库',
+                })
+
+            if supplier_jdy_no and order_entries:
+                po_result = _cache.create_purchase_order(account, {
+                    'supplier_number': supplier_jdy_no,
+                    'date': today,
+                    'entries': [{
+                        'productNumber': e['productNumber'],
+                        'qty':           e['qty'],
+                        'price':         e['price'],
+                        'unit':          e['unit'],
+                        'location':      e['location'],
+                    } for e in order_entries],
+                })
+                if po_result.get('ok'):
+                    po_number = po_result.get('order_number', '')
+                    _write_price_history(account, po_number, today,
+                                         supplier_name, supplier_jdy_no, order_entries)
+                    for e in order_entries:
+                        if e.get('price', 0) > 0:
+                            def _uprice(acc, pnum, p):
+                                try:
+                                    _cache.update_product_price(acc, pnum, p)
+                                except Exception as ex:
+                                    print(f'[WARN] 价格回写失败 {pnum}: {ex}')
+                            threading.Thread(target=_uprice,
+                                              args=(account, e['product_number'], e['price']),
+                                              daemon=True).start()
+                else:
+                    po_error = po_result.get('msg', '购货订单创建失败')
+
+        conn.close()
+        return jsonify({
+            'ok':                    True,
+            'results':               results,
+            'purchase_order_number': po_number,
+            'purchase_order_error':  po_error,
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/register/drafts')
+def api_get_drafts():
+    """GET /register/drafts?account=account1&status=pending（默认返回 pending+error）"""
+    try:
+        account       = request.args.get('account', 'account1')
+        status_filter = request.args.get('status', '').strip()
+
+        conn = _draft_db_conn()
+        if status_filter:
+            rows = conn.execute('''
+                SELECT id, product_name, product_number, ean13, supplier_name,
+                       status, batch_group, error_msg, created_at, seq
+                FROM product_drafts
+                WHERE account=? AND status=?
+                ORDER BY created_at DESC
+            ''', (account, status_filter)).fetchall()
+        else:
+            rows = conn.execute('''
+                SELECT id, product_name, product_number, ean13, supplier_name,
+                       status, batch_group, error_msg, created_at, seq
+                FROM product_drafts
+                WHERE account=? AND status IN ('pending','error')
+                ORDER BY created_at DESC
+            ''', (account,)).fetchall()
+        conn.close()
+
+        drafts = [dict(r) for r in rows]
+        return jsonify({'drafts': drafts, 'total': len(drafts)})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/register/drafts/<int:draft_id>', methods=['DELETE'])
+def api_delete_draft(draft_id):
+    """DELETE /register/drafts/<draft_id>  仅 pending/error 可删"""
+    try:
+        conn = _draft_db_conn()
+        row = conn.execute(
+            'SELECT * FROM product_drafts WHERE id=?', (draft_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'ok': False, 'error': '草稿不存在'}), 404
+
+        draft = dict(row)
+        if draft['status'] not in ('pending', 'error'):
+            conn.close()
+            return jsonify({'ok': False,
+                            'error': f'已提交的草稿无法删除（status={draft["status"]}）'}), 400
+
+        # 回滚序号
+        if draft.get('seq', 0) > 0:
+            rollback_seq(draft['account'])
+
+        conn.execute('DELETE FROM product_drafts WHERE id=?', (draft_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # ── 启动 ──────────────────────────────────────────────────────────────────────

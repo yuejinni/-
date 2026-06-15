@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分拣看板</title>
+<style>
+  :root {
+    --green:  #16a34a; --green-bg:  #dcfce7;
+    --yellow: #d97706; --yellow-bg: #fef9c3;
+    --red:    #dc2626; --red-bg:    #fee2e2;
+    --blue:   #2563eb; --blue-bg:   #dbeafe;
+    --gray:   #6b7280; --gray-bg:   #f3f4f6;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 13px;
+         background: #f8fafc; color: #1e293b; }
+
+  /* ── 顶部导航 ── */
+  nav {
+    display: flex; align-items: center; gap: 0;
+    background: #1e293b; color: #fff; height: 44px; padding: 0 16px;
+  }
+  nav .logo { font-size: 15px; font-weight: 700; margin-right: 24px; }
+  nav a { color: #94a3b8; text-decoration: none; padding: 0 14px;
+          height: 44px; line-height: 44px; font-size: 13px; }
+  nav a.active, nav a:hover { color: #fff; background: #334155; }
+  nav .spacer { flex: 1; }
+  nav .sys-btn { cursor: pointer; padding: 4px 10px; border-radius: 4px;
+                 background: #334155; color: #94a3b8; border: none;
+                 font-size: 12px; }
+  nav .sys-btn:hover { color: #fff; }
+
+  /* ── 状态栏 ── */
+  .status-bar {
+    display: flex; align-items: center; gap: 20px;
+    background: #fff; border-bottom: 1px solid var(--border);
+    padding: 8px 16px; font-size: 12px;
+  }
+  .status-bar .dot { width: 8px; height: 8px; border-radius: 50%;
+                     display: inline-block; margin-right: 4px; }
+  .dot.ok  { background: var(--green); }
+  .dot.err { background: var(--red); }
+  .dot.warn{ background: var(--yellow); }
+  .status-bar .batch-label { font-weight: 600; color: var(--blue); }
+  .status-bar .spacer { flex: 1; }
+  #lastSync { color: var(--gray); }
+
+  /* ── 主体布局 ── */
+  .main { display: flex; gap: 12px; padding: 12px 16px; height: calc(100vh - 120px); }
+
+  /* ── 左侧：单据配货看板（主要） ── */
+  .order-panel {
+    flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  }
+  .panel-header {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 600; font-size: 14px;
+  }
+  .panel-header .count-badge {
+    background: var(--blue-bg); color: var(--blue);
+    padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  }
+  .filter-bar { display: flex; gap: 8px; }
+  .filter-bar select, .filter-bar input {
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 12px; background: #fff;
+  }
+  .order-list {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  }
+
+  /* ── 单据卡片 ── */
+  .order-card {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; cursor: pointer;
+    border-left: 4px solid var(--gray);
+    transition: box-shadow .15s;
+  }
+  .order-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .order-card.status-ok     { border-left-color: var(--green); }
+  .order-card.status-partial{ border-left-color: var(--blue); }
+  .order-card.status-timeout{ border-left-color: var(--yellow); }
+  .order-card.status-missing{ border-left-color: var(--red); }
+
+  .order-card .row1 { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .order-card .orderno { font-weight: 700; font-size: 13px; }
+  .order-card .customer { color: var(--gray); font-size: 12px; }
+  .order-card .tag {
+    margin-left: auto; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  }
+  .tag.done    { background: var(--green-bg);  color: var(--green); }
+  .tag.partial { background: var(--blue-bg);   color: var(--blue); }
+  .tag.timeout { background: var(--yellow-bg); color: var(--yellow); }
+  .tag.missing { background: var(--red-bg);    color: var(--red); }
+
+  .order-card .row2 { display: flex; gap: 16px; font-size: 12px; color: #475569; }
+  .order-card .row2 span b { color: #1e293b; }
+
+  /* 货品进度条 */
+  .goods-progress { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+  .goods-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .goods-row .gname { width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prog-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+  .prog-fill { height: 100%; border-radius: 3px; background: var(--blue); transition: width .3s; }
+  .prog-fill.full { background: var(--green); }
+  .goods-row .prog-text { width: 40px; text-align: right; color: var(--gray); }
+
+  /* ── 右侧面板 ── */
+  .right-panel { width: 300px; display: flex; flex-direction: column; gap: 10px; }
+
+  /* 告警 */
+  .alert-box {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    overflow: hidden;
+  }
+  .box-title {
+    padding: 8px 12px; font-weight: 600; font-size: 12px;
+    background: #f8fafc; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .alert-item {
+    padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .alert-item:last-child { border-bottom: none; }
+  .alert-item .a-title { font-weight: 600; margin-bottom: 3px; }
+  .alert-item .a-sub { color: var(--gray); }
+  .alert-item .a-actions { margin-top: 6px; display: flex; gap: 6px; }
+  .btn-sm {
+    padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+    background: #fff; font-size: 11px; cursor: pointer;
+  }
+  .btn-sm:hover { background: #f1f5f9; }
+  .btn-sm.danger { color: var(--red); border-color: var(--red-bg); }
+  .btn-sm.primary { color: var(--blue); border-color: var(--blue-bg); }
+
+  /* 扫码记录 */
+  .scan-box {
+    flex: 1; background: #fff; border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .scan-list { flex: 1; overflow-y: auto; }
+  .scan-item {
+    padding: 6px 12px; border-bottom: 1px solid var(--border);
+    font-size: 11px; display: flex; gap: 8px; align-items: center;
+  }
+  .scan-item .s-time { color: var(--gray); width: 56px; flex-shrink: 0; }
+  .scan-item .s-code { font-family: monospace; flex: 1; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+  .scan-item .s-port { width: 52px; text-align: right; font-weight: 600; flex-shrink: 0; }
+  .scan-item .s-ok   { color: var(--green); }
+  .scan-item .s-err  { color: var(--red); }
+
+  /* ── 底部统计栏 ── */
+  .bottom-bar {
+    display: flex; align-items: center; gap: 20px;
+    background: #fff; border-top: 1px solid var(--border);
+    padding: 8px 16px; font-size: 12px;
+  }
+  .stat-item { display: flex; flex-direction: column; align-items: center; }
+  .stat-item .val { font-size: 18px; font-weight: 700; color: #1e293b; }
+  .stat-item .lbl { color: var(--gray); font-size: 11px; }
+  .bottom-bar .spacer { flex: 1; }
+  .btn {
+    padding: 6px 16px; border-radius: 5px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 600;
+  }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .btn.primary:hover { background: #1d4ed8; }
+  .btn.secondary { background: #f1f5f9; color: #475569; border: 1px solid var(--border); }
+  .btn.secondary:hover { background: #e2e8f0; }
+
+  /* ── 单据详情 Modal ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.4); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff; border-radius: 8px; width: 600px; max-height: 80vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,.2);
+  }
+  .modal-header {
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .modal-header h3 { font-size: 15px; flex: 1; }
+  .modal-close { background: none; border: none; cursor: pointer;
+                 color: var(--gray); font-size: 18px; }
+  .modal-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+  .modal-footer {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .detail-item .d-label { font-size: 11px; color: var(--gray); margin-bottom: 2px; }
+  .detail-item .d-val   { font-size: 14px; font-weight: 600; }
+
+  .goods-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .goods-table th { background: #f8fafc; padding: 6px 10px; text-align: left;
+                    border-bottom: 2px solid var(--border); color: var(--gray); }
+  .goods-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .goods-table tr:last-child td { border-bottom: none; }
+  .goods-table .done-row td { color: var(--gray); }
+  .status-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  }
+
+  /* ── 系统状态 Modal ── */
+  .sys-row { display: flex; align-items: center; padding: 10px 0;
+             border-bottom: 1px solid var(--border); gap: 10px; }
+  .sys-row:last-child { border-bottom: none; }
+  .sys-row .s-name { width: 100px; font-weight: 600; }
+  .sys-row .s-val  { flex: 1; font-size: 12px; }
+  .sys-row .s-status { font-size: 12px; }
+
+  /* 空状态 */
+  .empty { text-align: center; padding: 40px 0; color: var(--gray); }
+</style>
+</head>
+<body>
+
+<!-- 导航 -->
+<nav>
+  <span class="logo">⚡ 分拣系统</span>
+  <a href="/dashboard" class="active">配货看板</a>
+  <a href="/rules">规则管理</a>
+  <a href="/pick?floor=1">PDA拣货</a>
+  <span class="spacer"></span>
+  <button class="sys-btn" onclick="openSystemModal()">⚙ 系统状态</button>
+</nav>
+
+<!-- 状态栏 -->
+<div class="status-bar">
+  <span><span class="dot ok" id="plcDot"></span>PLC <span id="plcStatus">已连接</span></span>
+  <span><span class="dot ok" id="cloudDot"></span>云端 <span id="cloudStatus">同步中</span></span>
+  <span>批次：<span class="batch-label" id="batchLabel">加载中…</span></span>
+  <span class="spacer"></span>
+  <span id="lastSync">最后刷新：--</span>
+</div>
+
+<!-- 主体 -->
+<div class="main">
+
+  <!-- 左：单据配货看板 -->
+  <div class="order-panel">
+    <div class="panel-header">
+      配货进度看板
+      <span class="count-badge" id="orderCount">0 张单</span>
+      <div class="filter-bar" style="margin-left:auto">
+        <select id="filterStatus" onchange="renderOrders()">
+          <option value="">全部状态</option>
+          <option value="partial">配货中</option>
+          <option value="timeout">超时告警</option>
+          <option value="missing">缺货</option>
+          <option value="done">已完成</option>
+        </select>
+        <input id="filterKeyword" placeholder="搜索单号/客户" oninput="renderOrders()">
+      </div>
+    </div>
+    <div class="order-list" id="orderList">
+      <div class="empty">加载中…</div>
+    </div>
+  </div>
+
+  <!-- 右：告警 + 扫码记录 -->
+  <div class="right-panel">
+    <div class="alert-box">
+      <div class="box-title">
+        ⚠️ 告警格口
+        <span id="alertCount" style="color:var(--red);font-size:11px"></span>
+      </div>
+      <div id="alertList"><div class="empty" style="padding:20px">暂无告警</div></div>
+    </div>
+    <div class="scan-box">
+      <div class="box-title">📋 实时扫码</div>
+      <div class="scan-list" id="scanList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 底部统计 -->
+<div class="bottom-bar">
+  <div class="stat-item"><span class="val" id="statTotal">0</span><span class="lbl">总件数</span></div>
+  <div class="stat-item"><span class="val" id="statScanned">0</span><span class="lbl">已扫码</span></div>
+  <div class="stat-item"><span class="val" id="statDone">0</span><span class="lbl">已完成格口</span></div>
+  <div class="stat-item"><span class="val" id="statOverflow">0</span><span class="lbl">溢出待分配</span></div>
+  <div class="stat-item"><span class="val" id="statAlert" style="color:var(--yellow)">0</span><span class="lbl">超时格口</span></div>
+  <span class="spacer"></span>
+  <button class="btn secondary" onclick="if(confirm('确认重置所有格口计数？')) resetAll()">重置格口</button>
+  <button class="btn primary" onclick="oneKey()">一键上机</button>
+</div>
+
+<!-- 单据详情 Modal -->
+<div class="modal-overlay" id="orderModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">单据详情</h3>
+      <span id="modalStatusTag" class="tag"></span>
+      <button class="modal-close" onclick="closeModal('orderModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="detail-grid" id="modalMeta"></div>
+      <div style="font-weight:600;margin-bottom:8px;font-size:12px;color:var(--gray)">货品配货明细</div>
+      <table class="goods-table">
+        <thead><tr><th>货号</th><th>规格</th><th>应发</th><th>已落包</th><th>格口</th><th>状态</th></tr></thead>
+        <tbody id="modalGoodsBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeModal('orderModal')">关闭</button>
+      <button class="btn primary" onclick="printOrderLabel()">打印面单</button>
+    </div>
+  </div>
+</div>
+
+<!-- 系统状态 Modal -->
+<div class="modal-overlay" id="systemModal">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <h3>系统状态</h3>
+      <button class="modal-close" onclick="closeModal('systemModal')">✕</button>
+    </div>
+    <div class="modal-body" id="systemModalBody">加载中…</div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeModal('systemModal')">关闭</button>
+      <button class="btn primary" onclick="forceSync()">手动同步</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 状态缓存 ──────────────────────────────────────────────
+let _ports = [], _orders = [], _alerts = [], _scans = [], _sys = {};
+let _currentOrder = null;
+
+// ── 数据刷新 ──────────────────────────────────────────────
+async function refresh() {
+  try {
+    const [status, scans, sys] = await Promise.all([
+      fetch('/api/status').then(r => r.json()),
+      fetch('/api/scan_log').then(r => r.json()),
+      fetch('/api/system').then(r => r.json()),
+    ]);
+    _ports   = status.ports   || [];
+    _alerts  = status.alerts  || [];
+    _orders  = status.orders  || [];   // 单据配货汇总
+    _scans   = scans.events   || [];
+    _sys     = sys;
+
+    renderStatusBar(sys);
+    renderOrders();
+    renderAlerts();
+    renderScanLog();
+    renderStats(status);
+    document.getElementById('lastSync').textContent =
+      '最后刷新：' + new Date().toLocaleTimeString('zh-CN');
+  } catch(e) {
+    document.getElementById('plcDot').className = 'dot err';
+  }
+}
+
+// ── 状态栏 ──────────────────────────────────────────────
+function renderStatusBar(sys) {
+  const plcOk = sys.plc_connected;
+  document.getElementById('plcDot').className = 'dot ' + (plcOk ? 'ok' : 'err');
+  document.getElementById('plcStatus').textContent = plcOk ? '已连接' : '断开';
+  const cloudOk = sys.cloud_ok;
+  document.getElementById('cloudDot').className = 'dot ' + (cloudOk ? 'ok' : 'warn');
+  document.getElementById('cloudStatus').textContent = cloudOk ? '同步中' : '离线';
+  document.getElementById('batchLabel').textContent = sys.active_batchno || '无活跃批次';
+}
+
+// ── 单据配货看板（核心） ──────────────────────────────
+function renderOrders() {
+  const filterStatus  = document.getElementById('filterStatus').value;
+  const filterKeyword = document.getElementById('filterKeyword').value.trim().toLowerCase();
+
+  let list = _orders.filter(o => {
+    if (filterStatus && o.status !== filterStatus) return false;
+    if (filterKeyword &&
+        !o.orderno.toLowerCase().includes(filterKeyword) &&
+        !o.customer.toLowerCase().includes(filterKeyword)) return false;
+    return true;
+  });
+
+  document.getElementById('orderCount').textContent = list.length + ' 张单';
+
+  if (!list.length) {
+    document.getElementById('orderList').innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+
+  // 排序：超时 > 缺货 > 配货中 > 完成
+  const order = {timeout:0, missing:1, partial:2, done:3};
+  list.sort((a,b) => (order[a.status]||9) - (order[b.status]||9));
+
+  document.getElementById('orderList').innerHTML = list.map(o => `
+    <div class="order-card status-${o.status}" onclick="openOrderDetail('${o.orderno}')">
+      <div class="row1">
+        <span class="orderno">${o.orderno}</span>
+        <span class="customer">${o.customer}</span>
+        <span class="tag ${o.status}">${statusLabel(o.status)}</span>
+      </div>
+      <div class="row2">
+        <span>格口 <b>${o.ports.join(', ') || '--'}</b></span>
+        <span>应发 <b>${o.total_qty}</b> 件</span>
+        <span>已落包 <b>${o.scanned_qty}</b> 件</span>
+        <span>缺货 <b style="color:${o.missing_qty>0?'var(--red)':'inherit'}">${o.missing_qty}</b> 件</span>
+      </div>
+      ${o.goods && o.goods.length ? `
+      <div class="goods-progress">
+        ${o.goods.slice(0,3).map(g => `
+          <div class="goods-row">
+            <span class="gname">${g.goodsno}</span>
+            <div class="prog-bar">
+              <div class="prog-fill ${g.scanned>=g.total?'full':''}"
+                   style="width:${Math.min(100,g.total?g.scanned/g.total*100:0)}%"></div>
+            </div>
+            <span class="prog-text">${g.scanned}/${g.total}</span>
+          </div>`).join('')}
+        ${o.goods.length > 3 ? `<div style="font-size:11px;color:var(--gray);padding-top:2px">…还有 ${o.goods.length-3} 种货品</div>` : ''}
+      </div>` : ''}
+    </div>`).join('');
+}
+
+function statusLabel(s) {
+  return {done:'已完成', partial:'配货中', timeout:'超时⚠', missing:'缺货'}[s] || s;
+}
+
+// ── 告警格口 ──────────────────────────────────────────────
+function renderAlerts() {
+  document.getElementById('alertCount').textContent =
+    _alerts.length ? _alerts.length + ' 个' : '';
+  if (!_alerts.length) {
+    document.getElementById('alertList').innerHTML =
+      '<div class="empty" style="padding:16px">暂无告警</div>';
+    return;
+  }
+  document.getElementById('alertList').innerHTML = _alerts.map(a => `
+    <div class="alert-item">
+      <div class="a-title">格口 ${a.portno}
+        ${a.port_status===2 ? '<span style="color:var(--yellow)">超时告警</span>' : '<span style="color:var(--green)">已满可清</span>'}
+      </div>
+      <div class="a-sub">进度 ${a.fj_num}/${a.init_num} 件
+        ${a.port_status===2 ? ' · 等待时间过长' : ' · 可按格口按钮清空'}
+      </div>
+      <div class="a-actions">
+        <button class="btn-sm danger" onclick="forceComplete(${a.portno})">强制完成</button>
+        <button class="btn-sm" onclick="lockPort(${a.portno})">锁格</button>
+      </div>
+    </div>`).join('');
+}
+
+// ── 扫码记录 ──────────────────────────────────────────────
+function renderScanLog() {
+  if (!_scans.length) {
+    document.getElementById('scanList').innerHTML =
+      '<div class="empty" style="padding:20px">暂无记录</div>';
+    return;
+  }
+  document.getElementById('scanList').innerHTML = _scans.slice(0,30).map(s => `
+    <div class="scan-item">
+      <span class="s-time">${s.time}</span>
+      <span class="s-code">${s.barcode}</span>
+      <span class="s-port ${s.ok?'s-ok':'s-err'}">→ ${s.innerport===51?'错误':('格'+s.innerport)}</span>
+    </div>`).join('');
+}
+
+// ── 底部统计 ──────────────────────────────────────────────
+function renderStats(status) {
+  const ports    = status.ports || [];
+  const orders   = status.orders || [];
+  const total    = orders.reduce((s,o) => s + o.total_qty, 0);
+  const scanned  = orders.reduce((s,o) => s + o.scanned_qty, 0);
+  const done     = ports.filter(p => p.init_num > 0 && p.fj_num === p.init_num).length;
+  const overflow = (status.orders||[]).reduce((s,o) => s + (o.overflow_qty||0), 0);
+  document.getElementById('statTotal').textContent    = total;
+  document.getElementById('statScanned').textContent  = scanned;
+  document.getElementById('statDone').textContent     = done;
+  document.getElementById('statOverflow').textContent = overflow;
+  document.getElementById('statAlert').textContent    = _alerts.length;
+}
+
+// ── 单据详情 Modal ──────────────────────────────────────
+async function openOrderDetail(orderno) {
+  const o = _orders.find(x => x.orderno === orderno);
+  if (!o) return;
+  _currentOrder = o;
+
+  document.getElementById('modalTitle').textContent = '单据 ' + orderno;
+  const tag = document.getElementById('modalStatusTag');
+  tag.textContent = statusLabel(o.status);
+  tag.className = 'tag ' + o.status;
+
+  document.getElementById('modalMeta').innerHTML = `
+    <div class="detail-item"><div class="d-label">客户</div><div class="d-val">${o.customer}</div></div>
+    <div class="detail-item"><div class="d-label">格口</div><div class="d-val">${o.ports.join(', ')||'--'}</div></div>
+    <div class="detail-item"><div class="d-label">楼层</div><div class="d-val">${o.floor||'--'}F</div></div>
+    <div class="detail-item"><div class="d-label">应发件数</div><div class="d-val">${o.total_qty}</div></div>
+    <div class="detail-item"><div class="d-label">已落包</div><div class="d-val" style="color:var(--green)">${o.scanned_qty}</div></div>
+    <div class="detail-item"><div class="d-label">缺货</div><div class="d-val" style="color:var(--red)">${o.missing_qty}</div></div>`;
+
+  document.getElementById('modalGoodsBody').innerHTML = (o.goods||[]).map(g => {
+    const pct = g.total ? Math.round(g.scanned/g.total*100) : 0;
+    const st  = g.scanned >= g.total ? 'done' : (g.scanned > 0 ? 'partial' : 'missing');
+    const stl = {done:'已完成', partial:'配货中', missing:'未开始'}[st];
+    return `<tr class="${g.scanned>=g.total?'done-row':''}">
+      <td>${g.goodsno}</td>
+      <td>${g.spec||'--'}</td>
+      <td>${g.total}</td>
+      <td><b>${g.scanned}</b></td>
+      <td>${g.innerport||'--'}</td>
+      <td><span class="status-pill tag ${st}">${stl}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('orderModal').classList.add('open');
+}
+
+function printOrderLabel() {
+  if (!_currentOrder) return;
+  fetch(`/api/order/${_currentOrder.orderno}/print`, {method:'POST'})
+    .then(() => alert('打印任务已发送'));
+}
+
+// ── 系统状态 Modal ──────────────────────────────────────
+function openSystemModal() {
+  document.getElementById('systemModalBody').innerHTML = '加载中…';
+  document.getElementById('systemModal').classList.add('open');
+  fetch('/api/system').then(r => r.json()).then(s => {
+    document.getElementById('systemModalBody').innerHTML = `
+      <div class="sys-row">
+        <span class="s-name">PLC 连接</span>
+        <span class="s-val">${s.plc_ip||'172.168.10.100'}</span>
+        <span class="s-status" style="color:${s.plc_connected?'var(--green)':'var(--red)'}">${s.plc_connected?'正常':'断开'}</span>
+      </div>
+      <div class="sys-row">
+        <span class="s-name">云端同步</span>
+        <span class="s-val">${s.cloud_url}<br><small style="color:var(--gray)">最后同步：${s.last_sync||'--'}</small></span>
+        <span class="s-status" style="color:${s.cloud_ok?'var(--green)':'var(--yellow)'}">${s.cloud_ok?'正常':'离线'}</span>
+      </div>
+      <div class="sys-row">
+        <span class="s-name">TCP扫码枪</span>
+        <span class="s-val">:8888 · ${s.tcp_clients||0} 个客户端</span>
+        <span class="s-status" style="color:var(--green)">监听中</span>
+      </div>
+      <div class="sys-row">
+        <span class="s-name">打印机</span>
+        <span class="s-val">${s.printer_name||'--'}</span>
+        <span class="s-status" style="color:${s.printer_ok?'var(--green)':'var(--gray)'}">${s.printer_ok?'就绪':'未检测'}</span>
+      </div>
+      <div class="sys-row">
+        <span class="s-name">推送积压</span>
+        <span class="s-val">${s.push_backlog||0} 条待推送</span>
+        <span class="s-status" style="color:${(s.push_backlog||0)>0?'var(--yellow)':'var(--green)'}">
+          ${(s.push_backlog||0)>0?'积压中':'正常'}</span>
+      </div>`;
+  });
+}
+
+function forceSync() {
+  fetch('/api/sync/force', {method:'POST'}).then(() => { refresh(); closeModal('systemModal'); });
+}
+
+// ── 操作 ──────────────────────────────────────────────
+function oneKey() {
+  if (!confirm('一键上机：将所有"等待拣货"的条码改为可上机状态？')) return;
+  fetch('/api/batch/onekey', {method:'POST'}).then(() => refresh());
+}
+function resetAll() {
+  fetch('/api/batch/reset', {method:'POST'}).then(() => refresh());
+}
+function forceComplete(portno) {
+  if (!confirm(`强制完成格口 ${portno}？`)) return;
+  fetch(`/api/port/${portno}/force-complete`, {method:'POST'}).then(() => refresh());
+}
+function lockPort(portno) {
+  fetch(`/api/port/${portno}/remark`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({remark:1})
+  }).then(() => refresh());
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target===el) el.classList.remove('open'); });
+});
+
+// ── 启动 ──────────────────────────────────────────────
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

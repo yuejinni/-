@@ -1,4 +1,289 @@
 {
+  "_note": "从旧格式迁移于 2026-06-04 15:59，prefix 从 letter 迁移，small_code 暂用 code_2d 填充",
+  "account2": {
+    "1297078969381538": {
+      "path": "Womens Bags/Fashion Bags/Structured Single Handle",
+      "prefix": "F",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "12954339269381366": {
+      "path": "Womens Bags/Fashion Bags/Structured Double Handle",
+      "prefix": "F",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "1296601969395227": {
+      "path": "Womens Bags/Fashion Bags/Structured Double Handle with Wallet",
+      "prefix": "F",
+      "small_code": "03",
+      "code_2d": "03"
+    },
+    "1296425989370045": {
+      "path": "Womens Bags/Fashion Bags/Crossbody Bag (Ladies)",
+      "prefix": "F",
+      "small_code": "04",
+      "code_2d": "04"
+    },
+    "12922529449376106": {
+      "path": "Womens Bags/Fashion Bags/Underarm Bag",
+      "prefix": "F",
+      "small_code": "05",
+      "code_2d": "05"
+    },
+    "1297215949371836": {
+      "path": "Womens Bags/Fashion Bags/Bucket Bag",
+      "prefix": "F",
+      "small_code": "06",
+      "code_2d": "06"
+    },
+    "1297215949372041": {
+      "path": "Womens Bags/Fashion Bags/Mommy Bag",
+      "prefix": "F",
+      "small_code": "07",
+      "code_2d": "07"
+    },
+    "1297215949372275": {
+      "path": "Womens Bags/Fashion Bags/Basket Bag",
+      "prefix": "F",
+      "small_code": "08",
+      "code_2d": "08"
+    },
+    "1292113959371774": {
+      "path": "Womens Bags/Fashion Bags/Pillow Bag",
+      "prefix": "F",
+      "small_code": "09",
+      "code_2d": "09"
+    },
+    "1297210939380081": {
+      "path": "Womens Bags/Fashion Bags/Shell Bag",
+      "prefix": "F",
+      "small_code": "10",
+      "code_2d": "10"
+    },
+    "12926679129410272": {
+      "path": "Womens Bags/Wallets/Single Zip",
+      "prefix": "W",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "12954339269499273": {
+      "path": "Womens Bags/Wallets/Double Zip",
+      "prefix": "W",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "1297078969499872": {
+      "path": "Womens Bags/Wallets/Bi-fold",
+      "prefix": "W",
+      "small_code": "03",
+      "code_2d": "03"
+    },
+    "1297210939503437": {
+      "path": "Womens Bags/Wallets/Tri-fold",
+      "prefix": "W",
+      "small_code": "04",
+      "code_2d": "04"
+    },
+    "1296425989489547": {
+      "path": "Womens Bags/Wallets/Money Clip Wallet",
+      "prefix": "W",
+      "small_code": "05",
+      "code_2d": "05"
+    },
+    "1296881910960470": {
+      "path": "Womens Bags/Wallets/Card Holder",
+      "prefix": "W",
+      "small_code": "06",
+      "code_2d": "06"
+    },
+    "1297213949146413": {
+      "path": "Womens Bags/Wallets/Phone pouch",
+      "prefix": "W",
+      "small_code": "07",
+      "code_2d": "07"
+    },
+    "12922629369271756": {
+      "path": "Womens Bags/Wallets/Coin purse",
+      "prefix": "W",
+      "small_code": "08",
+      "code_2d": "08"
+    },
+    "12966049119490093": {
+      "path": "Womens Bags/Wallets/three zippered wallets",
+      "prefix": "W",
+      "small_code": "09",
+      "code_2d": "09"
+    },
+    "12954339269500816": {
+      "path": "Womens Bags/Party Bags/Full Diamond Bag",
+      "prefix": "P",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1292113959502369": {
+      "path": "Womens Bags/Party Bags/Hard Shell Bag",
+      "prefix": "P",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "12926679129492409": {
+      "path": "Womens Bags/School Bags/School Bag",
+      "prefix": "S",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296425989496414": {
+      "path": "Childrens/Small Handbags/Small Handbag",
+      "prefix": "C",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1297024916957463": {
+      "path": "Childrens/Small Handbags/Woven Handbag",
+      "prefix": "C",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "129614794959393": {
+      "path": "Childrens/School Bags/Plush School Bag",
+      "prefix": "S",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "129721394960354": {
+      "path": "Childrens/School Bags/Leather School Bag",
+      "prefix": "S",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "1297213949258739": {
+      "path": "Childrens/Kids crossbody bag/Kids crossbody bag",
+      "prefix": "K",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "12970649109494622": {
+      "path": "Mens Bags/Wallets/Card Holder",
+      "prefix": "W",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1297024916960200": {
+      "path": "Mens Bags/Wallets/Passport Holder",
+      "prefix": "W",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "129627896961830": {
+      "path": "Mens Bags/Wallets/Long Wallet",
+      "prefix": "W",
+      "small_code": "03",
+      "code_2d": "03"
+    },
+    "1296881910961271": {
+      "path": "Mens Bags/Wallets/Short Wallet",
+      "prefix": "W",
+      "small_code": "04",
+      "code_2d": "04"
+    },
+    "1296745917962217": {
+      "path": "Mens Bags/Laptop Bags/Laptop Bag",
+      "prefix": "C",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296652912964961": {
+      "path": "Mens Bags/Backpacks/Backpack",
+      "prefix": "S",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296652912962562": {
+      "path": "Mens Bags/Waist Bags/Waist Bag",
+      "prefix": "O",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "129614794966404": {
+      "path": "Mens Bags/Chest Bags/Chest Bag",
+      "prefix": "B",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296652912965985": {
+      "path": "Mens Bags/Crossbody Bags/Crossbody Bag (Men)",
+      "prefix": "M",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "12922629369153222": {
+      "path": "Mens Bags/Mens handbag/Mens handbag",
+      "prefix": "H",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296881910967561": {
+      "path": "Other Bags/Lunch Bags/Lunch Bag",
+      "prefix": "L",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1294488928972114": {
+      "path": "Other Bags/Coconut Shell Bags/Coconut Shell Bag",
+      "prefix": "C",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296881910970488": {
+      "path": "Other Bags/Straw Bags/Straw Woven Bag",
+      "prefix": "S",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1296881910971785": {
+      "path": "Other Bags/Toiletry Bags/Toiletry Set Large Bag",
+      "prefix": "W",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "1294488928974775": {
+      "path": "Other Bags/Toiletry Bags/Toiletry Set Small Bag",
+      "prefix": "W",
+      "small_code": "02",
+      "code_2d": "02"
+    },
+    "1296745917972915": {
+      "path": "Other Bags/Toiletry Bags/Single Small Toiletry Bag",
+      "prefix": "W",
+      "small_code": "03",
+      "code_2d": "03"
+    },
+    "1296745917973187": {
+      "path": "Other Bags/Toiletry Bags/Single Large Toiletry Bag",
+      "prefix": "W",
+      "small_code": "04",
+      "code_2d": "04"
+    },
+    "1296745917974268": {
+      "path": "Other Bags/Fur Bags/Fur Bag",
+      "prefix": "H",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "129721394975056": {
+      "path": "Other Bags/Canvas Bags/Canvas Bag",
+      "prefix": "P",
+      "small_code": "01",
+      "code_2d": "01"
+    },
+    "12922629369355952": {
+      "path": "Other Bags/knitted bag/knitted bag",
+      "prefix": "K",
+      "small_code": "01",
+      "code_2d": "01"
+    }
+  },
   "account1": {
     "1291509191433": {
       "path": "Accessories 饰品/Apparel 服饰",
@@ -16,10 +301,10 @@
     },
     "1292349973175": {
       "path": "Accessories 饰品/Apparel 服饰/Belt",
-      "code_2d": "",
+      "code_2d": "01",
       "odoo_code": "Ab03",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "01"
     },
     "1291509191743": {
       "path": "Accessories 饰品/Apparel 服饰/Cap",
@@ -65,10 +350,10 @@
     },
     "129104395928339": {
       "path": "Accessories 饰品/Apparel 服饰/Socks",
-      "code_2d": "",
+      "code_2d": "02",
       "odoo_code": "Aa07",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "02"
     },
     "1291509191466": {
       "path": "Accessories 饰品/Hair Accessories 发饰",
@@ -247,10 +532,10 @@
     },
     "1292316914918414": {
       "path": "Accessories 饰品/Jewelry 首饰/Forehead Chain",
-      "code_2d": "",
+      "code_2d": "04",
       "odoo_code": "Ac06",
       "prefix": "E",
-      "small_code": ""
+      "small_code": "04"
     },
     "129228992139": {
       "path": "Accessories 饰品/Jewelry 首饰/Glasses",
@@ -324,10 +609,10 @@
     },
     "1291509191113": {
       "path": "Cosmetic 美妆用品/Care Tools 护理工具/Earpick",
-      "code_2d": "",
+      "code_2d": "03",
       "odoo_code": "Mt02",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "03"
     },
     "1291509191299": {
       "path": "Cosmetic 美妆用品/Care Tools 护理工具/Empty Bottle",
@@ -387,10 +672,10 @@
     },
     "129734949240014": {
       "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nail Brush",
-      "code_2d": "",
+      "code_2d": "05",
       "odoo_code": "Mt10",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "05"
     },
     "1291509191209": {
       "path": "Cosmetic 美妆用品/Care Tools 护理工具/Nail Cliper",
@@ -429,10 +714,10 @@
     },
     "129147291793472": {
       "path": "Cosmetic 美妆用品/Care Tools 护理工具/Woundplast",
-      "code_2d": "",
+      "code_2d": "01",
       "odoo_code": "Mt16",
       "prefix": "R",
-      "small_code": ""
+      "small_code": "01"
     },
     "1292219910406": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品",
@@ -471,10 +756,10 @@
     },
     "1292384949301820": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Contour",
-      "code_2d": "",
+      "code_2d": "01",
       "odoo_code": "MY03",
       "prefix": "Y",
-      "small_code": ""
+      "small_code": "01"
     },
     "1292219910610": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Eye Shadow",
@@ -506,10 +791,10 @@
     },
     "129886989330782": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Face Clearn",
-      "code_2d": "",
+      "code_2d": "02",
       "odoo_code": "MY23",
       "prefix": "Y",
-      "small_code": ""
+      "small_code": "02"
     },
     "129816979290633": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Foundation",
@@ -534,10 +819,10 @@
     },
     "1291788939305748": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Loose Powder",
-      "code_2d": "",
+      "code_2d": "03",
       "odoo_code": "MY11",
       "prefix": "Y",
-      "small_code": ""
+      "small_code": "03"
     },
     "12926829921430": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Lotion",
@@ -548,17 +833,17 @@
     },
     "1291233929329348": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Makeup Remover",
-      "code_2d": "",
+      "code_2d": "06",
       "odoo_code": "MY19",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "06"
     },
     "1291262929300475": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Makeup Setting Spray",
-      "code_2d": "",
+      "code_2d": "04",
       "odoo_code": "MY13",
       "prefix": "Y",
-      "small_code": ""
+      "small_code": "04"
     },
     "1292219911605": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Mascara",
@@ -590,17 +875,17 @@
     },
     "1291143979308559": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Pressed Powder",
-      "code_2d": "",
+      "code_2d": "08",
       "odoo_code": "MY16",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "08"
     },
     "12912869169136495": {
       "path": "Cosmetic 美妆用品/Makeup 化妆品/Pro Makeup kit",
-      "code_2d": "",
+      "code_2d": "02",
       "odoo_code": "MY17",
       "prefix": "R",
-      "small_code": ""
+      "small_code": "02"
     },
     "1292219911646": {
       "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具",
@@ -660,10 +945,10 @@
     },
     "1293079921437": {
       "path": "Cosmetic 美妆用品/Makeup Tools 美妆工具/Pencil sharpener",
-      "code_2d": "",
+      "code_2d": "03",
       "odoo_code": "Mt20",
       "prefix": "R",
-      "small_code": ""
+      "small_code": "03"
     },
     "129228992245": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品",
@@ -695,17 +980,17 @@
     },
     "129104395928309": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Bed Sheet",
-      "code_2d": "",
+      "code_2d": "09",
       "odoo_code": "",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "09"
     },
     "12914089119382297": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Compressed towels",
-      "code_2d": "",
+      "code_2d": "10",
       "odoo_code": "",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "10"
     },
     "1291509191233": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Cotton Swab",
@@ -716,17 +1001,17 @@
     },
     "1292141979178994": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Cotton Tissue",
-      "code_2d": "",
+      "code_2d": "11",
       "odoo_code": "",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "11"
     },
     "129228992661": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Data Line",
-      "code_2d": "",
+      "code_2d": "12",
       "odoo_code": "Gd01",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "12"
     },
     "1291509191237": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Dental Floss",
@@ -772,10 +1057,10 @@
     },
     "12915469129223031": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Raincoat",
-      "code_2d": "",
+      "code_2d": "14",
       "odoo_code": "Gd03",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "14"
     },
     "12922599132447": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Shower Cap",
@@ -828,10 +1113,10 @@
     },
     "12921579149168807": {
       "path": "General Merchandise 日用百货/Daily Necessities 生活用品/Wipes",
-      "code_2d": "",
+      "code_2d": "15",
       "odoo_code": "MY18",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "15"
     },
     "129228992234": {
       "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品",
@@ -856,17 +1141,17 @@
     },
     "12922092921411": {
       "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Plastic Beads",
-      "code_2d": "",
+      "code_2d": "01",
       "odoo_code": "Gi03",
       "prefix": "F",
-      "small_code": ""
+      "small_code": "01"
     },
     "129228992359": {
       "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Ruler",
-      "code_2d": "",
+      "code_2d": "16",
       "odoo_code": "Gi04",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "16"
     },
     "129228992402": {
       "path": "General Merchandise 日用百货/Sewing Tools 缝纫用品/Safety Pin",
@@ -898,38 +1183,38 @@
     },
     "129228992344": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Phone Bag",
-      "code_2d": "",
+      "code_2d": "17",
       "odoo_code": "Gg01",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "17"
     },
     "1291220949481635": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Arm Band",
-      "code_2d": "",
+      "code_2d": "19",
       "odoo_code": "Gg02",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "19"
     },
     "1291013949481359": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Bop Bag",
-      "code_2d": "",
+      "code_2d": "21",
       "odoo_code": "Gg03",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "21"
     },
     "129228992302": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Cap",
-      "code_2d": "",
+      "code_2d": "23",
       "odoo_code": "Gg04",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "23"
     },
     "129145199358345": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Earplug",
-      "code_2d": "",
+      "code_2d": "24",
       "odoo_code": "Gg05",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "24"
     },
     "129228992318": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Goggles",
@@ -947,19 +1232,17 @@
     },
     "1291220949481571": {
       "path": "General Merchandise 日用百货/Sports Gear 运动用品/Swimming Vest",
-      "code_2d": "",
+      "code_2d": "25",
       "odoo_code": "Gg09",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "25"
     },
     "1292404979255147": {
       "path": "美人头款/Comb",
-      "code_2d": "",
+      "code_2d": "26",
       "odoo_code": "Mt17",
       "prefix": "T",
-      "small_code": ""
+      "small_code": "26"
     }
-  },
-  "account2": {},
-  "_note": "从旧格式迁移于 2026-06-04 15:15，prefix 从 letter 迁移，small_code 暂用 code_2d 填充"
+  }
 }

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>规则管理 - 分拣系统</title>
+<style>
+  :root {
+    --green:#16a34a;--green-bg:#dcfce7;--yellow:#d97706;--yellow-bg:#fef9c3;
+    --red:#dc2626;--red-bg:#fee2e2;--blue:#2563eb;--blue-bg:#dbeafe;
+    --gray:#6b7280;--gray-bg:#f3f4f6;--border:#e5e7eb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:"Microsoft YaHei",Arial,sans-serif;font-size:13px;background:#f8fafc;color:#1e293b;}
+  nav{display:flex;align-items:center;background:#1e293b;color:#fff;height:44px;padding:0 16px;gap:0;}
+  nav .logo{font-size:15px;font-weight:700;margin-right:24px;}
+  nav a{color:#94a3b8;text-decoration:none;padding:0 14px;height:44px;line-height:44px;font-size:13px;}
+  nav a.active,nav a:hover{color:#fff;background:#334155;}
+  nav .spacer{flex:1;}
+
+  .page{display:flex;height:calc(100vh - 44px);gap:0;}
+
+  /* ── 左：批次列表 ── */
+  .batch-sidebar{
+    width:240px;background:#fff;border-right:1px solid var(--border);
+    display:flex;flex-direction:column;
+  }
+  .sidebar-header{
+    padding:12px;border-bottom:1px solid var(--border);
+    font-weight:600;font-size:13px;display:flex;justify-content:space-between;align-items:center;
+  }
+  .batch-list{flex:1;overflow-y:auto;}
+  .batch-item{
+    padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;
+  }
+  .batch-item:hover{background:#f8fafc;}
+  .batch-item.active{background:var(--blue-bg);border-right:3px solid var(--blue);}
+  .batch-item .b-no{font-weight:600;font-size:12px;}
+  .batch-item .b-meta{font-size:11px;color:var(--gray);margin-top:2px;}
+  .batch-item .b-tag{
+    display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;
+  }
+  .tag-running{background:var(--blue-bg);color:var(--blue);}
+  .tag-done{background:var(--green-bg);color:var(--green);}
+
+  /* ── 右：批次详情 ── */
+  .batch-detail{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+
+  .detail-topbar{
+    display:flex;align-items:center;gap:12px;
+    padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);
+  }
+  .detail-topbar h2{font-size:15px;}
+  .detail-topbar .spacer{flex:1;}
+  .btn{
+    padding:6px 14px;border-radius:5px;border:none;cursor:pointer;
+    font-size:12px;font-weight:600;
+  }
+  .btn.primary{background:var(--blue);color:#fff;}
+  .btn.danger{background:var(--red-bg);color:var(--red);}
+  .btn.secondary{background:#f1f5f9;color:#475569;border:1px solid var(--border);}
+  .btn:hover{opacity:.85;}
+
+  /* 统计卡片 */
+  .stats-row{
+    display:flex;gap:12px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);
+  }
+  .stat-card{
+    flex:1;background:#f8fafc;border:1px solid var(--border);border-radius:6px;
+    padding:10px 14px;
+  }
+  .stat-card .val{font-size:20px;font-weight:700;}
+  .stat-card .lbl{font-size:11px;color:var(--gray);}
+
+  /* 过滤/搜索 */
+  .filter-row{
+    display:flex;gap:8px;padding:10px 16px;background:#fff;border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .filter-row select,.filter-row input{
+    border:1px solid var(--border);border-radius:4px;
+    padding:5px 9px;font-size:12px;background:#fff;
+  }
+  .filter-row input{flex:1;min-width:180px;}
+
+  /* 规则表格 */
+  .rules-table-wrap{flex:1;overflow-y:auto;padding:0 16px 16px;}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;}
+  thead th{
+    background:#f8fafc;padding:8px 10px;text-align:left;
+    border-bottom:2px solid var(--border);color:var(--gray);
+    position:sticky;top:0;
+  }
+  tbody td{padding:7px 10px;border-bottom:1px solid var(--border);}
+  tbody tr:hover td{background:#f8fafc;}
+  .status-pill{
+    display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;
+  }
+  .s0{background:#f3f4f6;color:var(--gray);}
+  .s1{background:var(--blue-bg);color:var(--blue);}
+  .s2{background:#fef9c3;color:var(--yellow);}
+  .s3{background:var(--green-bg);color:var(--green);}
+  .s4{background:#f3f4f6;color:var(--gray);}
+
+  .empty{text-align:center;padding:60px 0;color:var(--gray);}
+
+  /* Modal */
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);
+    z-index:100;align-items:center;justify-content:center;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal{
+    background:#fff;border-radius:8px;width:460px;
+    box-shadow:0 20px 60px rgba(0,0,0,.2);overflow:hidden;
+  }
+  .modal-header{
+    padding:14px 16px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px;
+  }
+  .modal-header h3{flex:1;font-size:15px;}
+  .modal-close{background:none;border:none;cursor:pointer;color:var(--gray);font-size:18px;}
+  .modal-body{padding:16px;}
+  .modal-footer{padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;}
+  .form-row{margin-bottom:12px;}
+  .form-row label{display:block;font-size:12px;color:var(--gray);margin-bottom:4px;}
+  .form-row input,.form-row select,.form-row textarea{
+    width:100%;border:1px solid var(--border);border-radius:4px;
+    padding:7px 10px;font-size:13px;
+  }
+  .form-hint{font-size:11px;color:var(--gray);margin-top:3px;}
+</style>
+</head>
+<body>
+<nav>
+  <span class="logo">⚡ 分拣系统</span>
+  <a href="/dashboard">配货看板</a>
+  <a href="/rules" class="active">规则管理</a>
+  <a href="/pick?floor=1">PDA拣货</a>
+  <span class="spacer"></span>
+</nav>
+
+<div class="page">
+  <!-- 批次列表 -->
+  <div class="batch-sidebar">
+    <div class="sidebar-header">
+      批次列表
+      <button class="btn primary" style="padding:3px 10px;font-size:11px"
+              onclick="openNewBatchModal()">+ 新建</button>
+    </div>
+    <div class="batch-list" id="batchList">
+      <div class="empty" style="padding:30px 0">加载中…</div>
+    </div>
+  </div>
+
+  <!-- 批次详情 -->
+  <div class="batch-detail" id="batchDetail">
+    <div class="detail-topbar">
+      <h2 id="detailTitle">请选择批次</h2>
+      <span id="detailTag"></span>
+      <span class="spacer"></span>
+      <button class="btn secondary" onclick="exportRules()">导出</button>
+      <button class="btn primary" onclick="oneKey()">一键上机</button>
+      <button class="btn danger" onclick="rollbackBatch()">回滚批次</button>
+    </div>
+
+    <div class="stats-row" id="statsRow" style="display:none">
+      <div class="stat-card"><div class="val" id="sc-total">0</div><div class="lbl">总条码数</div></div>
+      <div class="stat-card"><div class="val" id="sc-done" style="color:var(--green)">0</div><div class="lbl">已落包</div></div>
+      <div class="stat-card"><div class="val" id="sc-active" style="color:var(--blue)">0</div><div class="lbl">可上机</div></div>
+      <div class="stat-card"><div class="val" id="sc-wait" style="color:var(--yellow)">0</div><div class="lbl">等待拣货</div></div>
+      <div class="stat-card"><div class="val" id="sc-overflow" style="color:var(--red)">0</div><div class="lbl">溢出待分配</div></div>
+    </div>
+
+    <div class="filter-row" id="filterRow" style="display:none">
+      <select id="ruleStatus" onchange="loadRules()">
+        <option value="">全部状态</option>
+        <option value="0">待扫</option>
+        <option value="1">等待拣货</option>
+        <option value="2">可上机</option>
+        <option value="3">已落包</option>
+        <option value="4">格口已清</option>
+      </select>
+      <select id="ruleFloor" onchange="loadRules()">
+        <option value="">全部楼层</option>
+        <option value="1">1F</option>
+        <option value="2">2F</option>
+        <option value="3">3F</option>
+        <option value="4">4F</option>
+      </select>
+      <input id="ruleKeyword" placeholder="搜索条码/货号/客户" oninput="loadRules()">
+      <button class="btn secondary" onclick="loadRules()">刷新</button>
+    </div>
+
+    <div class="rules-table-wrap">
+      <div id="rulesContent"><div class="empty">请从左侧选择批次</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 新建批次 Modal -->
+<div class="modal-overlay" id="newBatchModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>新建批次</h3>
+      <button class="modal-close" onclick="closeModal('newBatchModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>批次号</label>
+        <input id="nb-batchno" placeholder="如 A2024-0612">
+      </div>
+      <div class="form-row">
+        <label>规则来源</label>
+        <select id="nb-source">
+          <option value="cloud">从云端拉取最新规则</option>
+          <option value="manual">手工录入</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>箱型</label>
+        <select id="nb-boxtype">
+          <option value="1">小箱</option>
+          <option value="2">中箱</option>
+          <option value="3">大箱</option>
+        </select>
+      </div>
+      <div class="form-hint">新建批次后，当前批次将变为历史，格口计数重置。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeModal('newBatchModal')">取消</button>
+      <button class="btn primary" onclick="createBatch()">确认新建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _currentBatchno = null;
+let _allRules = [];
+
+// ── 批次列表 ──────────────────────────────────────────
+async function loadBatches() {
+  const res = await fetch('/api/batches').then(r => r.json());
+  const batches = res.batches || [];
+  if (!batches.length) {
+    document.getElementById('batchList').innerHTML = '<div class="empty" style="padding:30px">暂无批次</div>';
+    return;
+  }
+  document.getElementById('batchList').innerHTML = batches.map(b => `
+    <div class="batch-item ${b.batchno===_currentBatchno?'active':''}"
+         onclick="selectBatch('${b.batchno}')">
+      <div class="b-no">${b.batchno}
+        <span class="b-tag ${b.status===0||b.status===1||b.status===2?'tag-running':'tag-done'}">
+          ${b.status<=2?'进行中':'已完成'}
+        </span>
+      </div>
+      <div class="b-meta">${b.total||0} 条码 · ${b.created_at||''}</div>
+    </div>`).join('');
+}
+
+// ── 选中批次 ──────────────────────────────────────────
+async function selectBatch(batchno) {
+  _currentBatchno = batchno;
+  loadBatches();  // 更新 active 样式
+
+  document.getElementById('detailTitle').textContent = '批次 ' + batchno;
+  document.getElementById('statsRow').style.display = 'flex';
+  document.getElementById('filterRow').style.display = 'flex';
+
+  // 加载统计
+  const stats = await fetch(`/api/batch/${batchno}/stats`).then(r => r.json());
+  document.getElementById('sc-total').textContent    = stats.total    || 0;
+  document.getElementById('sc-done').textContent     = stats.done     || 0;
+  document.getElementById('sc-active').textContent   = stats.active   || 0;
+  document.getElementById('sc-wait').textContent     = stats.waiting  || 0;
+  document.getElementById('sc-overflow').textContent = stats.overflow || 0;
+
+  loadRules();
+}
+
+// ── 规则列表 ──────────────────────────────────────────
+async function loadRules() {
+  if (!_currentBatchno) return;
+  const status  = document.getElementById('ruleStatus').value;
+  const floor   = document.getElementById('ruleFloor').value;
+  const keyword = document.getElementById('ruleKeyword').value.trim();
+
+  const params = new URLSearchParams({batchno: _currentBatchno});
+  if (status)  params.append('status', status);
+  if (floor)   params.append('floor', floor);
+  if (keyword) params.append('q', keyword);
+
+  const res = await fetch('/api/rules?' + params).then(r => r.json());
+  _allRules = res.rules || [];
+  renderRulesTable(_allRules);
+}
+
+const STATUS_LABELS = ['待扫','等待拣货','可上机','已落包','格口已清'];
+const STATUS_CLS    = ['s0','s1','s2','s3','s4'];
+
+function renderRulesTable(rules) {
+  if (!rules.length) {
+    document.getElementById('rulesContent').innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+  document.getElementById('rulesContent').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>条码</th><th>客户</th><th>货号</th><th>楼层</th>
+          <th>分配格口</th><th>实际格口</th><th>箱型</th><th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rules.map(r => `
+          <tr>
+            <td style="font-family:monospace">${r.barcode}</td>
+            <td>${r.customer||'--'}</td>
+            <td>${r.goodsno||'--'}</td>
+            <td>${r.floor||'--'}F</td>
+            <td>${r.portno>102?'<span style="color:var(--red)">溢出</span>':r.portno}</td>
+            <td>${r.innerport||'<span style="color:var(--gray)">待分配</span>'}</td>
+            <td>${['','小','中','大'][r.box_type]||'--'}箱</td>
+            <td><span class="status-pill ${STATUS_CLS[r.status]||'s0'}">${STATUS_LABELS[r.status]||'--'}</span></td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ── 操作 ──────────────────────────────────────────────
+function openNewBatchModal() {
+  document.getElementById('newBatchModal').classList.add('open');
+}
+async function createBatch() {
+  const batchno = document.getElementById('nb-batchno').value.trim();
+  if (!batchno) { alert('请输入批次号'); return; }
+  await fetch('/api/batches', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      batchno,
+      source: document.getElementById('nb-source').value,
+      box_type: parseInt(document.getElementById('nb-boxtype').value)
+    })
+  });
+  closeModal('newBatchModal');
+  loadBatches();
+  selectBatch(batchno);
+}
+async function oneKey() {
+  if (!_currentBatchno) return;
+  if (!confirm('一键上机：将所有"等待拣货"改为可上机？')) return;
+  await fetch('/api/batch/onekey', {method:'POST'});
+  loadRules();
+}
+async function rollbackBatch() {
+  if (!_currentBatchno) return;
+  if (!confirm(`回滚批次 ${_currentBatchno}？此操作将清除该批次所有分拣数据。`)) return;
+  await fetch(`/api/batch/${_currentBatchno}/rollback`, {method:'POST'});
+  _currentBatchno = null;
+  loadBatches();
+  document.getElementById('rulesContent').innerHTML = '<div class="empty">批次已回滚</div>';
+}
+function exportRules() {
+  if (!_currentBatchno) return;
+  window.open(`/api/batch/${_currentBatchno}/export`);
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); });
+});
+
+// ── 启动 ──────────────────────────────────────────────
+loadBatches();
+</script>
+</body>
+</html>

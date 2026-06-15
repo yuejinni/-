@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 简单图标：白色包裹盒 📦 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 外框 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,20 L80,34 L80,66 L54,80 L28,66 L28,34 Z"/>
+    <!-- 内部阴影线 -->
+    <path
+        android:fillColor="#3b82f6"
+        android:pathData="M54,20 L80,34 L54,48 L28,34 Z"/>
+    <path
+        android:fillColor="#94a3b8"
+        android:pathData="M54,48 L80,34 L80,66 L54,80 Z"/>
+    <path
+        android:fillColor="#cbd5e1"
+        android:pathData="M54,48 L28,34 L28,66 L54,80 Z"/>
+    <!-- 中间横带 -->
+    <path
+        android:fillColor="#f59e0b"
+        android:pathData="M28,44 L80,44 L80,52 L28,52 Z"/>
+</vector>

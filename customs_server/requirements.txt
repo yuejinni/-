@@ -8,3 +8,5 @@ certifi
 lxml
 waitress
 Pillow
+# Optional: required only when QIHANG_DB_BACKEND=mssql.
+# pyodbc
