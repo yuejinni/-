@@ -9,7 +9,7 @@ import time
 import threading
 import logging
 
-from plc.plc_client import _plc_lock, LIGHT_GREEN, LIGHT_YELLOW
+from plc.plc_client import _plc_lock, LIGHT_GREEN, LIGHT_YELLOW, LIGHT_YELLOW_FLASH, LIGHT_OFF
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,30 @@ def read_button_loop(db_conn, plc, config: dict):
                                   config.get("wkhtmltopdf_path", "wkhtmltopdf.exe")),
                             daemon=True
                         ).start()
+                        # 异步清格口 + 写灯（不阻塞按钮轮询）
+                        threading.Thread(
+                            target=_release_port_after_button,
+                            args=(get_db_conn(), plc, portno),
+                            daemon=True
+                        ).start()
             prev_states = states
         except Exception as e:
             logger.warning(f"[button_loop] 读取异常: {e}")
         time.sleep(0.5)
+
+
+def _release_port_after_button(db_conn, plc, portno: int):
+    """
+    按钮按下后异步执行：
+    1. auto_update_port — 清格口或把溢出包分配进来
+    2. 写灯 — 有溢出重分配 → 黄灯闪烁(5)，无 → 全灭(0)
+    """
+    from core.port_manager import auto_update_port
+    from plc.plc_client import write_port_light
+    try:
+        has_overflow = auto_update_port(db_conn, portno)
+        light = LIGHT_YELLOW_FLASH if has_overflow else LIGHT_OFF
+        write_port_light(db_conn, plc, portno, light)
+        logger.info(f"[button_loop] 格口 {portno} 清格口完成，写灯={light}")
+    except Exception as e:
+        logger.warning(f"[button_loop] 清格口失败 portno={portno}: {e}")
