@@ -10,6 +10,14 @@ import time
 import logging
 
 from core.db import qone, qval, qall, execute, get_db_conn
+from plc.plc_client import (
+    write_port_light,
+    LIGHT_OFF,
+    LIGHT_GREEN,
+    LIGHT_RED,
+    LIGHT_YELLOW,
+    LIGHT_YELLOW_FLASH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,21 +136,54 @@ def get_port_status(db_conn) -> list[dict]:
     return [r for r in rows if r["port_status"] > 0]
 
 
-def port_monitor_loop():
+def _desired_light(port: dict) -> int:
+    if port.get("is_enable", 1) == 0 or port.get("remark", 0) == 1:
+        return LIGHT_RED
+    if port.get("init_num", 0) == 0:
+        return LIGHT_OFF
+    if port.get("fj_num", 0) >= port.get("init_num", 0):
+        return LIGHT_GREEN
+    return LIGHT_YELLOW_FLASH
+
+
+def sync_port_lights(db_conn, plc):
+    ports = qall(db_conn, """
+        SELECT sp.portno, sp.init_num, sp.fj_num, sp.remark, sp.is_enable,
+               ISNULL(pl.light_val, 0) AS light_val
+        FROM sort_ports sp
+        LEFT JOIN port_lights pl ON pl.portno = sp.portno
+        ORDER BY sp.portno
+    """)
+    for port in ports:
+        desired = _desired_light(port)
+        if port["light_val"] == desired:
+            continue
+        try:
+            write_port_light(db_conn, plc, port["portno"], desired)
+            logger.info(f"[light] port={port['portno']} value={desired} "
+                        f"init={port['init_num']} fj={port['fj_num']} "
+                        f"remark={port['remark']} enable={port['is_enable']}")
+        except Exception as e:
+            logger.warning(f"[light] write failed port={port['portno']}: {e}")
+
+
+def port_monitor_loop(plc):
     """
     每 5s 检查格口超时告警，触发黄灯控制。
     替代原 C# 定时轮询。
-    ⚠️ 灯控功能需要 PLC 实例，当前留 TODO，联调时补充。
+    同步 C# HandleLightSignListen 灯控规则：
+      有任务未完成 -> 黄闪；全部扫完 -> 绿灯；关闭/停用 -> 红灯；空闲 -> 灭灯。
     """
     while True:
         try:
             db = get_db_conn()
+            sync_port_lights(db, plc)
             alerts = get_port_status(db)
             for a in alerts:
                 if a["port_status"] == 2:   # 超时告警
                     logger.warning(f"[port_monitor] 格口 {a['portno']} 超时告警（"
                                    f"init={a['init_num']}, fj={a['fj_num']}）")
-                    # TODO Phase 4: write_port_light(db, plc, a["portno"], LIGHT_YELLOW)
+                    write_port_light(db, plc, a["portno"], LIGHT_YELLOW)
         except Exception as e:
             logger.warning(f"[port_monitor_loop] 异常: {e}")
         time.sleep(5)

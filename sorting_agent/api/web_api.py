@@ -6,6 +6,7 @@ api/web_api.py — Flask Web API（:5009）
 """
 import os
 import logging
+import json
 from flask import Flask, request, jsonify, render_template
 
 from core.db import qval, qall, execute, get_db_conn
@@ -91,7 +92,184 @@ def get_status():
     alerts = get_port_status(db)
     stats  = {r['key']: r['value'] for r in qall(db,
         "SELECT [key], value FROM sys_config WHERE [key] LIKE 'stat_%'")}
-    return jsonify({"ports": ports, "cars": cars, "alerts": alerts, "stats": stats})
+    orders = _get_order_summaries(db)
+    return jsonify({
+        "ports": ports,
+        "cars": cars,
+        "alerts": alerts,
+        "stats": stats,
+        "orders": orders,
+    })
+
+
+def _order_no_expr() -> str:
+    return "COALESCE(NULLIF(label_data, ''), batchno + '-' + barcode)"
+
+
+def _get_order_summaries(db) -> list[dict]:
+    active = qval(db,
+        "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return []
+
+    order_expr = _order_no_expr()
+    rows = qall(db, f"""
+        SELECT
+            {order_expr} AS orderno,
+            COALESCE(MAX(customer), '') AS customer,
+            MAX(floor) AS floor,
+            COUNT(*) AS total_qty,
+            SUM(CASE WHEN status >= 3 THEN 1 ELSE 0 END) AS scanned_qty,
+            SUM(CASE WHEN innerport = 0 THEN 1 ELSE 0 END) AS overflow_qty
+        FROM sorting_rules
+        WHERE batchno=?
+        GROUP BY {order_expr}
+        ORDER BY orderno
+    """, (active,))
+
+    goods_rows = qall(db, f"""
+        SELECT
+            {order_expr} AS orderno,
+            COALESCE(goodsno, barcode) AS goodsno,
+            COALESCE(goodsmodel, '') AS spec,
+            MAX(innerport) AS innerport,
+            COUNT(*) AS total,
+            SUM(CASE WHEN status >= 3 THEN 1 ELSE 0 END) AS scanned
+        FROM sorting_rules
+        WHERE batchno=?
+        GROUP BY {order_expr}, COALESCE(goodsno, barcode), COALESCE(goodsmodel, '')
+        ORDER BY orderno, goodsno
+    """, (active,))
+
+    ports_rows = qall(db, f"""
+        SELECT DISTINCT {order_expr} AS orderno, innerport
+        FROM sorting_rules
+        WHERE batchno=? AND innerport != 0
+        ORDER BY orderno, innerport
+    """, (active,))
+
+    goods_by_order: dict[str, list[dict]] = {}
+    for row in goods_rows:
+        goods_by_order.setdefault(row["orderno"], []).append({
+            "goodsno": row["goodsno"],
+            "spec": row["spec"],
+            "innerport": row["innerport"],
+            "total": row["total"] or 0,
+            "scanned": row["scanned"] or 0,
+        })
+
+    ports_by_order: dict[str, list[int]] = {}
+    for row in ports_rows:
+        ports_by_order.setdefault(row["orderno"], []).append(row["innerport"])
+
+    orders = []
+    for row in rows:
+        total = row["total_qty"] or 0
+        scanned = row["scanned_qty"] or 0
+        missing = max(total - scanned, 0)
+        if scanned >= total and total:
+            status = "done"
+        elif scanned > 0:
+            status = "partial"
+        elif row["overflow_qty"]:
+            status = "missing"
+        else:
+            status = "partial"
+        orders.append({
+            "orderno": row["orderno"],
+            "customer": row["customer"] or "--",
+            "floor": row["floor"],
+            "ports": ports_by_order.get(row["orderno"], []),
+            "total_qty": total,
+            "scanned_qty": scanned,
+            "missing_qty": missing,
+            "overflow_qty": row["overflow_qty"] or 0,
+            "status": status,
+            "goods": goods_by_order.get(row["orderno"], []),
+        })
+    return orders
+
+
+@app.get('/api/scan_log')
+def get_scan_log():
+    """Recent conveyor scan events for the dashboard side panel."""
+    db = get_db_conn()
+    events = qall(db, """
+        SELECT TOP 50 id, batchno, barcode, innerport, carno, syno, serialnum,
+               is_manual, pushed, scanned_at
+        FROM scan_events
+        ORDER BY id DESC
+    """)
+    for event in events:
+        scanned_at = event.get("scanned_at")
+        if hasattr(scanned_at, "isoformat"):
+            event["scanned_at"] = scanned_at.isoformat(sep=" ")
+            event["time"] = scanned_at.strftime("%H:%M:%S")
+        else:
+            event["time"] = ""
+        event["ok"] = event.get("innerport") not in (0, 51)
+    return jsonify({"events": events})
+
+
+@app.get('/api/system')
+def get_system_status():
+    """System and sync status displayed by the dashboard modal."""
+    db = get_db_conn()
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+    try:
+        with open(config_path, encoding='utf-8') as f:
+            config = json.load(f)
+    except Exception:
+        config = {}
+
+    active_batchno = qval(
+        db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    cloud_url = qval(
+        db, "SELECT value FROM sys_config WHERE [key]='cloud_url'") or config.get("cloud_url", "")
+    rule_version = qval(
+        db, "SELECT value FROM sys_config WHERE [key]='rule_version'") or '0'
+    last_sync = qval(db, "SELECT MAX(synced_at) FROM sorting_rules")
+    if hasattr(last_sync, "isoformat"):
+        last_sync = last_sync.isoformat(sep=" ")
+
+    push_backlog = qval(
+        db, "SELECT COUNT(*) FROM scan_events WHERE pushed=0") or 0
+    rules_total = qval(
+        db, "SELECT COUNT(*) FROM sorting_rules WHERE batchno=?",
+        (active_batchno,)) if active_batchno else 0
+
+    return jsonify({
+        "plc_ip": config.get("plc_ip", ""),
+        "plc_connected": True,
+        "cloud_url": cloud_url,
+        "cloud_ok": bool(cloud_url),
+        "active_batchno": active_batchno,
+        "rule_version": rule_version,
+        "last_sync": last_sync,
+        "rules_total": rules_total or 0,
+        "push_backlog": push_backlog,
+        "tcp_clients": 0,
+        "printer_name": config.get("printer_name", ""),
+        "printer_ok": bool(config.get("printer_name")),
+    })
+
+
+@app.post('/api/sync/force')
+def force_sync():
+    """Manually trigger one cloud rule sync pass."""
+    db = get_db_conn()
+    cloud_url = qval(db,
+        "SELECT value FROM sys_config WHERE [key]='cloud_url'") or ''
+    current_ver = int(qval(db,
+        "SELECT value FROM sys_config WHERE [key]='rule_version'") or 0)
+    if not cloud_url:
+        return jsonify({"ok": False, "msg": "cloud_url is empty"}), 400
+
+    from sync.rule_sync import sync_rules_from_cloud
+    sync_rules_from_cloud(db, cloud_url, current_ver)
+    new_ver = qval(db,
+        "SELECT value FROM sys_config WHERE [key]='rule_version'") or current_ver
+    return jsonify({"ok": True, "rule_version": new_ver})
 
 
 # ── 5. 锁格/解锁 ───────────────────────────────────────────────────────────────

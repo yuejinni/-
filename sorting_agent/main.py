@@ -70,7 +70,7 @@ def main():
                          args=(get_db_conn(), plc, config), daemon=True,
                          name="button-loop"),
         threading.Thread(target=port_monitor_loop,
-                         daemon=True, name="port-monitor"),
+                         args=(plc,), daemon=True, name="port-monitor"),
         threading.Thread(target=rule_sync_loop,
                          daemon=True, name="rule-sync"),
         threading.Thread(target=event_push_loop,

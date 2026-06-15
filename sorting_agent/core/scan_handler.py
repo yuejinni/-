@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 
 from core.db import qone, qval, qall, execute
-from plc.plc_client import _plc_lock, write_start_plc
+from plc.plc_client import _plc_lock, write_start_plc, write_port_light, LIGHT_GREEN
 from core.port_manager import try_reassign_overflow
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,18 @@ def _update_stats(db_conn, ok: bool):
         logger.warning(f"[_update_stats] 统计更新失败: {e}")
 
 
+def _sync_completed_port_light(db_conn, plc, portno: int):
+    port = qone(db_conn,
+        "SELECT init_num, fj_num, remark FROM sort_ports WHERE portno=?",
+        (portno,))
+    if not port:
+        return
+    if port["remark"] == 0 and port["init_num"] != 0 and port["fj_num"] >= port["init_num"]:
+        write_port_light(db_conn, plc, portno, LIGHT_GREEN)
+        logger.info(f"[light] port={portno} green complete "
+                    f"init={port['init_num']} fj={port['fj_num']}")
+
+
 def handle_scan(db_conn, plc, carno: int, barcode: str) -> bool:
     """
     传送带扫码处理（替代 Proc_Getportinfo）。
@@ -133,6 +145,10 @@ def handle_scan(db_conn, plc, carno: int, barcode: str) -> bool:
         raise
 
     _update_stats(db_conn, ok=True)
+    try:
+        _sync_completed_port_light(db_conn, plc, innerport)
+    except Exception as e:
+        logger.warning(f"[light] write green failed port={innerport}: {e}")
     try_reassign_overflow(db_conn, innerport)
     return True
 
