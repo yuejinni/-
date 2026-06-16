@@ -136,6 +136,82 @@ def test_process_sales_order_webhook_does_not_touch_sales_cache_or_jdy(monkeypat
     assert conn.execute("SELECT COUNT(*) FROM sales_details").fetchone()[0] == 0
 
 
+def test_sales_order_request_preview_requires_configured_endpoint(monkeypatch):
+    monkeypatch.setattr(server, "_sales_order_request_list_path", lambda: "")
+    monkeypatch.setattr(
+        server,
+        "_sales_client_for_account",
+        lambda account: (_raise("missing endpoint must not call JDY"), account),
+    )
+
+    result = server._sales_order_request_fetch_preview("Accessories", "7958910390073", mode="internal_id")
+
+    assert result["success"] is False
+    assert result["called_jdy"] is False
+    assert "endpoint" in result["error"]
+
+
+def test_sales_order_request_refresh_replaces_internal_placeholder(monkeypatch):
+    conn = make_conn()
+    monkeypatch.setattr(server, "_sales_cache_conn", lambda: conn)
+    monkeypatch.setattr(server, "_sales_order_request_list_path", lambda: "/jdyscm/saleOrder/list")
+
+    placeholder = {
+        "account": "Accessories",
+        "number": "internal:7958910390074",
+        "internalId": "7958910390074",
+        "date": "",
+        "customerName": "",
+        "totalQty": 0,
+        "totalAmount": 0,
+        "billStatus": "",
+        "billStatusName": "",
+        "checkStatus": "",
+        "source": "webhook",
+        "syncStatus": "webhook_placeholder",
+        "entries": [],
+    }
+    server._cache_upsert_sales_order_request(conn, placeholder)
+    server._cache_upsert_sales_order_request_detail(conn, placeholder)
+    conn.commit()
+
+    class FakeClient:
+        def get_sales_order_requests(self, list_path, page=1, page_size=100, filters=None):
+            assert list_path == "/jdyscm/saleOrder/list"
+            return {
+                "list": [{
+                    "id": 7958910390074,
+                    "number": "XSDD20260616001",
+                    "date": "2026-06-16",
+                    "customerName": "Test Customer",
+                    "entries": [{"productNumber": "P001", "productName": "Item", "qty": 2}],
+                    "totalQty": 2,
+                    "totalAmount": 30,
+                }],
+                "total": 1,
+                "filter": filters or {},
+            }
+
+    monkeypatch.setattr(server, "_sales_client_for_account", lambda account: (FakeClient(), "Accessories"))
+
+    result = server._refresh_sales_order_request_from_jdy(
+        "Accessories",
+        "7958910390074",
+        mode="internal_id",
+    )
+
+    assert result["success"] is True
+    assert result["called_jdy"] is True
+    assert result["written"] == 1
+    rows = conn.execute("SELECT number, internal_id, data_json FROM sales_order_requests ORDER BY number").fetchall()
+    assert [r["number"] for r in rows] == ["XSDD20260616001"]
+    data = json.loads(rows[0]["data_json"])
+    assert data["syncStatus"] == "synced"
+    assert data["entries"][0]["code"] == "P001"
+    assert conn.execute("SELECT COUNT(*) FROM sales_orders").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM sales_details").fetchone()[0] == 0
+
+
 def _raise(message):
     raise AssertionError(message)
 
@@ -147,4 +223,6 @@ if __name__ == "__main__":
 
     test_sales_order_webhook_writes_separate_request_cache(MonkeyPatch())
     test_process_sales_order_webhook_does_not_touch_sales_cache_or_jdy(MonkeyPatch())
+    test_sales_order_request_preview_requires_configured_endpoint(MonkeyPatch())
+    test_sales_order_request_refresh_replaces_internal_placeholder(MonkeyPatch())
     print("sales order request cache tests passed")
