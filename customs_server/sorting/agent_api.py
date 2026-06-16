@@ -992,8 +992,33 @@ def sorting_rush_order_done(orderno):
 # ── 加急单列表：删除 ──────────────────────────────────────────────────────────
 @sorting_bp.delete('/sorting/rush/order/<orderno>')
 def sorting_rush_order_delete(orderno):
-    """DELETE /sorting/rush/order/<orderno>  从加急列表移除（不影响原始订单）。"""
+    """
+    DELETE /sorting/rush/order/<orderno>  从加急列表移除（不影响原始订单）。
+
+    回退保护：
+      - status=pending → 直接删除
+      - status=done（已完成配货）→ 需要管理员密码
+    """
     conn = _get_conn()
+    row = conn.execute(
+        "SELECT status FROM cloud_rush_orders WHERE orderno=?", (orderno,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "msg": "加急单不存在"}), 404
+
+    if row['status'] == 'done':
+        data         = request.get_json(silent=True) or {}
+        admin_user   = (data.get('admin_username') or '').strip()
+        admin_pass   = (data.get('admin_password') or '').strip()
+        if not _verify_admin_password(admin_user, admin_pass):
+            conn.close()
+            return jsonify({
+                "ok":    False,
+                "reason": "picking_done",
+                "msg":   "该加急单已完成配货，删除需要管理员密码"
+            }), 403
+
     conn.execute("DELETE FROM cloud_rush_orders WHERE orderno=?", (orderno,))
     conn.close()
     return jsonify({"ok": True, "orderno": orderno})

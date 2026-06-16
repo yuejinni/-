@@ -11942,17 +11942,69 @@ async function doneRushOrder(orderno) {
 }
 
 // 从加急列表删除
-async function deleteRushOrder(orderno) {
+// isDone=false(pending): 简单确认后直接删
+// isDone=true(done):     需要管理员密码（复用 batch-revoke-modal）
+let _rushDeleteOrdno = '';
+async function deleteRushOrder(orderno, isDone) {
+  if (!isDone) {
+    if (!confirm(`确认将「${orderno}」从加急列表移除？`)) return;
+    try {
+      const r = await fetch(`/sorting/rush/order/${encodeURIComponent(orderno)}`, {
+        method: 'DELETE', credentials: 'same-origin'
+      });
+      const d = await r.json();
+      if (d.ok) {
+        window._rushOrders.delete(orderno);
+        loadRushOrders();
+        _renderSortingOrders();
+      } else { alert(d.msg || '删除失败'); }
+    } catch(e) { alert('操作失败：' + e.message); }
+    return;
+  }
+
+  // done → 管理员密码弹窗（复用 batch-revoke-modal）
+  _revokeModal_batchno = null;
+  _rushDeleteOrdno = orderno;
+  document.getElementById('brm-content').innerHTML = `
+    <div style="font-size:15px;font-weight:600;color:#d4380d;margin-bottom:12px;">删除已完成的加急单</div>
+    <div style="color:#666;margin-bottom:16px;">「${orderno}」已完成配货，删除需要管理员验证。</div>
+    <div style="background:#f9f0ff;border:1px solid #d3adf7;border-radius:6px;padding:12px;">
+      <div style="margin-bottom:8px;">
+        <label style="font-size:12px;color:#666;">管理员账号</label><br>
+        <input id="brm-rush-user" type="text" placeholder="admin"
+               style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;margin-top:4px;">
+      </div>
+      <div>
+        <label style="font-size:12px;color:#666;">管理员密码</label><br>
+        <input id="brm-rush-pass" type="password" placeholder="••••••"
+               style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;margin-top:4px;">
+      </div>
+    </div>`;
+  document.getElementById('brm-footer').innerHTML = `
+    <button onclick="document.getElementById('batch-revoke-modal').style.display='none'"
+            style="padding:6px 16px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;">取消</button>
+    <button onclick="_brm_doDeleteRushOrder()"
+            style="padding:6px 16px;border:none;border-radius:4px;cursor:pointer;background:#d4380d;color:#fff;margin-left:8px;">确认删除</button>`;
+  document.getElementById('batch-revoke-modal').style.display = 'flex';
+}
+
+async function _brm_doDeleteRushOrder() {
+  const adminUser = (document.getElementById('brm-rush-user')?.value || '').trim();
+  const adminPass = (document.getElementById('brm-rush-pass')?.value || '').trim();
+  if (!adminUser || !adminPass) { alert('请填写管理员账号和密码'); return; }
   try {
-    const r = await fetch(`/sorting/rush/order/${encodeURIComponent(orderno)}`, {
-      method: 'DELETE', credentials: 'same-origin'
+    const r = await fetch(`/sorting/rush/order/${encodeURIComponent(_rushDeleteOrdno)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({admin_username: adminUser, admin_password: adminPass})
     });
     const d = await r.json();
     if (d.ok) {
-      window._rushOrders.delete(orderno);
+      document.getElementById('batch-revoke-modal').style.display = 'none';
+      window._rushOrders.delete(_rushDeleteOrdno);
       loadRushOrders();
       _renderSortingOrders();
-    }
+    } else { alert(d.msg || '管理员验证失败，请检查账号密码'); }
   } catch(e) { alert('操作失败：' + e.message); }
 }
 
@@ -11977,9 +12029,9 @@ async function loadRushOrders() {
 
     const renderRow = (o, isDone) => {
       const actionBtns = isDone
-        ? `<button onclick="deleteRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">删除</button>`
+        ? `<button onclick="deleteRushOrder('${o.orderno}',true)" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">删除</button>`
         : `<button onclick="doneRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #52c41a;border-radius:4px;cursor:pointer;background:#fff;color:#389e0d;margin-right:4px;">完成</button>
-           <button onclick="deleteRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">移除</button>`;
+           <button onclick="deleteRushOrder('${o.orderno}',false)" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">移除</button>`;
       const statusDot = isDone
         ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#52c41a;margin-right:4px;flex-shrink:0;"></span>`
         : `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d4380d;margin-right:4px;flex-shrink:0;"></span>`;
