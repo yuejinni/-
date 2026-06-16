@@ -2259,6 +2259,48 @@ td.code { font-family: monospace; color: #1a2c5b; }
     font-size: 17px;
   }
 }
+
+/* ── 分拣模块 ─────────────────────────────────────── */
+.sorting-shell { display:flex;flex-direction:column;gap:12px;max-width:760px;margin:0 auto;width:100%; }
+.sorting-filter-bar { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
+.sorting-filter-bar input[type=date] { border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none; }
+.sorting-order-list { display:flex;flex-direction:column;gap:0; }
+.sorting-order-item {
+  display:flex;align-items:center;gap:10px;
+  padding:12px 14px;background:#fff;border-radius:0;
+  border-bottom:1px solid #f0f0f0;cursor:pointer;
+  transition:background .1s;
+}
+.sorting-order-item:first-child { border-radius:8px 8px 0 0; }
+.sorting-order-item:last-child  { border-radius:0 0 8px 8px;border-bottom:none; }
+.sorting-order-item:only-child  { border-radius:8px; }
+.sorting-order-item:hover { background:#fafafa; }
+.sorting-order-item.selected { background:#f0f4ff; }
+.sorting-order-cb { width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:#1a2c5b; }
+.sorting-order-info { flex:1;min-width:0; }
+.sorting-order-no { font-size:13px;font-weight:600;color:#1a2c5b; }
+.sorting-order-meta { font-size:12px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.sorting-order-right { text-align:right;flex-shrink:0; }
+.sorting-order-qty { font-size:12px;color:#666; }
+.sorting-order-amount { font-size:13px;font-weight:500;color:#333; }
+.sorting-sel-bar {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;background:#fff7e6;border-radius:8px;
+  border:1px solid #ffe0a0;font-size:13px;
+}
+.sorting-sel-bar .sel-info { color:#7a5c00; }
+.sorting-config-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin-top:4px; }
+.sorting-config-grid label { font-size:12px;color:#666;display:block;margin-bottom:3px; }
+.sorting-config-grid input { border:1px solid #d9d9d9;border-radius:4px;padding:6px 10px;font-size:13px;width:100%;box-sizing:border-box;outline:none; }
+.sorting-result-card { background:#f0fff4;border:1px solid #b7ebc8;border-radius:8px;padding:14px 16px; }
+.sorting-result-card.err { background:#fff0f0;border-color:#ffb3b3; }
+.sorting-event-table { width:100%;border-collapse:collapse;font-size:12px; }
+.sorting-event-table th,.sorting-event-table td { padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:left; }
+.sorting-event-table th { background:#f5f5f5;font-weight:600;color:#555;position:sticky;top:0; }
+.sorting-event-wrap { overflow-y:auto;max-height:calc(100vh - 220px);border-radius:8px;border:1px solid #e8e8e8; }
+.btn-sorting { background:#5a3d7c;color:#fff; }
+.btn-sorting:hover { opacity:.88; }
+.sorting-badge { display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1a2c5b;color:#fff;font-size:11px;font-weight:700;flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -2273,6 +2315,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <button class="tab-btn active" data-main-nav="sales" onclick="showMainPage('sales')">销售</button>
     <button class="tab-btn" data-main-nav="accessory" onclick="showPage('accessory-list')">辅料</button>
     <button class="tab-btn" data-main-nav="customs" onclick="showMainPage('customs')">报关</button>
+    <button class="tab-btn" data-main-nav="sorting" onclick="showMainPage('sorting')">分拣</button>
     <button class="tab-btn" id="settings-tab-btn" data-main-nav="settings" data-admin-only="1" onclick="showPage('settings')">设置<span class="nav-dot"></span></button>
   </div>
   <div id="topbar-user" class="topbar-user" title="" onclick="toggleUserMenu(event)">
@@ -2300,6 +2343,11 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <button class="subtab-btn" data-sub-page="customs-products" onclick="showPage('customs-products')">商品资料</button>
   <button class="subtab-btn" data-sub-page="product-create" onclick="showPage('product-create')">快速建款</button>
   <button class="subtab-btn" data-sub-page="fill-page" onclick="showPage('fill-page')">资料补全</button>
+</div>
+<div class="secondary-nav" data-subnav="sorting">
+  <span class="secondary-label">分拣</span>
+  <button class="subtab-btn active" data-sub-page="sorting-batch" onclick="showPage('sorting-batch')">批次管理</button>
+  <button class="subtab-btn" data-sub-page="sorting-dashboard" onclick="showPage('sorting-dashboard')">扫码看板</button>
 </div>
 
 <!-- ══════════════════════════════════════════════════
@@ -3978,6 +4026,138 @@ td.code { font-family: monospace; color: #1a2c5b; }
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════
+     分拣 — 批次管理
+════════════════════════════════════════════════════ -->
+<div class="page" id="page-sorting-batch">
+  <div class="sorting-shell">
+    <!-- 筛选栏 -->
+    <div class="card">
+      <div class="card-title">创建分拣批次</div>
+      <div class="sorting-filter-bar">
+        <input type="date" id="sorting-date">
+        <button class="btn btn-ghost btn-sm" onclick="setSortingToday()">今天</button>
+        <button class="btn btn-ghost btn-sm" onclick="setSortingDate(-1)">昨天</button>
+        <select id="sorting-account" style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none;">
+          <option value="all">全部账套</option>
+          <option value="祺航箱包">祺航箱包</option>
+          <option value="祺航饰品">祺航饰品</option>
+        </select>
+        <input id="sorting-search" placeholder="搜索客户 / 单号" style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none;flex:1;min-width:120px;"
+               onkeydown="if(event.key==='Enter') loadSortingOrders()">
+        <select id="sorting-sort-filter" style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none;">
+          <option value="all">全部单据</option>
+          <option value="unmatched">未生成批次</option>
+          <option value="batched">已生成批次</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadSortingOrders()">查询</button>
+      </div>
+    </div>
+
+    <!-- 全选操作栏 -->
+    <div id="sorting-select-all-bar" style="display:none;align-items:center;gap:10px;padding:8px 12px;background:#f0f5ff;border:1px solid #d6e4ff;border-radius:6px;margin-bottom:4px;">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;">
+        <input type="checkbox" id="sorting-select-all-cb" onchange="toggleSelectAll(this.checked)" style="width:15px;height:15px;">
+        全选（共 <span id="sorting-total-count">0</span> 张）
+      </label>
+      <button class="btn btn-ghost btn-sm" onclick="autoBoxTypeAll()" style="margin-left:auto;">一键自动选箱</button>
+    </div>
+
+    <!-- 销货单列表 -->
+    <div class="card" style="padding:0;">
+      <div class="sorting-order-list" id="sorting-order-list">
+        <div class="empty" style="padding:24px;text-align:center;color:#aaa;">
+          点击「查询」加载销货单
+        </div>
+      </div>
+    </div>
+
+    <!-- 已选摘要 -->
+    <div class="sorting-sel-bar" id="sorting-sel-bar" style="display:none;">
+      <span class="sel-info" id="sorting-sel-info">已选 0 张，共 0 件</span>
+      <button class="btn btn-ghost btn-sm" onclick="clearSortingSelection()">清空选择</button>
+    </div>
+
+    <!-- 批次配置 -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px;">批次设置</div>
+      <div class="sorting-config-grid">
+        <div style="grid-column:1/-1">
+          <label>批次号（自动生成，可修改）</label>
+          <input id="sorting-batchno" placeholder="BATCH20260615001" style="border:1px solid #d9d9d9;border-radius:4px;padding:6px 10px;font-size:13px;width:100%;box-sizing:border-box;outline:none;">
+        </div>
+        <div>
+          <label>小箱最大体积（cm³）</label>
+          <input type="number" id="sorting-box1" value="500" min="1">
+        </div>
+        <div>
+          <label>中箱最大体积（cm³）</label>
+          <input type="number" id="sorting-box2" value="2000" min="1">
+        </div>
+        <div>
+          <label>大箱最大体积（cm³）</label>
+          <input type="number" id="sorting-box3" value="5000" min="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- 创建按钮 -->
+    <div style="display:flex;justify-content:center;">
+      <button class="btn btn-primary btn-sorting" id="sorting-create-btn"
+              onclick="createSortingBatch()"
+              style="padding:12px 40px;font-size:15px;border-radius:6px;">
+        生成分拣批次
+      </button>
+    </div>
+
+    <!-- 结果 -->
+    <div id="sorting-result" style="display:none;"></div>
+
+    <!-- 历史批次 -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div class="card-title" style="margin-bottom:0;">历史批次</div>
+        <button class="btn btn-ghost btn-sm" onclick="loadSortingBatches()">刷新</button>
+      </div>
+      <div id="sorting-batch-history">
+        <div class="empty" style="color:#aaa;font-size:13px;padding:8px 0;">暂无历史批次</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     分拣 — 扫码看板
+════════════════════════════════════════════════════ -->
+<div class="page" id="page-sorting-dashboard">
+  <div class="sorting-shell" style="max-width:900px;">
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div class="card-title" style="margin-bottom:0;">扫码事件（最近 200 条）</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="dashboard-batchno" placeholder="批次号筛选（可选）"
+                 style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:12px;outline:none;width:160px;">
+          <button class="btn btn-primary btn-sm" onclick="loadSortingDashboard()">刷新</button>
+        </div>
+      </div>
+      <div class="sorting-event-wrap">
+        <table class="sorting-event-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>批次</th><th>条码</th><th>格口</th>
+              <th>小车</th><th>手工</th><th>扫码时间</th>
+            </tr>
+          </thead>
+          <tbody id="sorting-events-tbody">
+            <tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">点击「刷新」加载</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="sorting-dashboard-tip" style="font-size:12px;color:#aaa;margin-top:8px;text-align:right;"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ════════════════════════════════════════════════════════════════
 // 状态
@@ -4133,12 +4313,15 @@ const PAGE_MAIN_GROUP = {
   'product-create': 'customs',
   'fill-page': 'customs',
   'settings': 'settings',
+  'sorting-batch': 'sorting',
+  'sorting-dashboard': 'sorting',
 };
 const MAIN_DEFAULT_PAGE = {
   sales: 'sales-list',
   accessory: 'accessory-list',
   customs: 'order-list',
   settings: 'settings',
+  sorting: 'sorting-batch',
 };
 
 function showMainPage(group) {
@@ -4202,6 +4385,12 @@ function showPage(name) {
     loadProductCreateMeta();
     loadProductCreateDrafts();
   }
+  if (name === 'sorting-batch') {
+    if (!document.getElementById('sorting-date').value) setSortingToday();
+    if (!window._sortingOrdersLoaded) loadSortingOrders();
+    loadSortingBatches();
+  }
+  if (name === 'sorting-dashboard') loadSortingDashboard();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -10985,6 +11174,344 @@ async function submitPdfPanel() {
     resultEl.textContent = '❌ 请求失败: ' + e.message;
   } finally {
     document.getElementById('pdfSubmitBtn').disabled = false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 分拣模块
+// ════════════════════════════════════════════════════════════════
+window._sortingOrdersLoaded = false;
+window._sortingOrdersRaw = [];       // [{number, customerName, totalQty, totalAmount, date}]
+window._sortingSelected = new Set(); // 已选单号
+window._sortingBoxTypes = {};        // {orderNo: 1/2/3/'auto'}
+window._batchedOrders   = new Set(); // 已在批次中的单号
+
+function _sortingFmt(d) {
+  return d ? String(d).slice(0, 10) : '';
+}
+
+function setSortingToday() {
+  document.getElementById('sorting-date').value = _fmtDate(new Date());
+}
+
+function setSortingDate(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  document.getElementById('sorting-date').value = _fmtDate(d);
+  loadSortingOrders();
+}
+
+async function loadSortingOrders() {
+  const date       = document.getElementById('sorting-date').value || _fmtDate(new Date());
+  const account    = document.getElementById('sorting-account').value || 'all';
+  const search     = (document.getElementById('sorting-search').value || '').trim();
+  const sortFilter = (document.getElementById('sorting-sort-filter') || {}).value || 'all';
+  const wrap       = document.getElementById('sorting-order-list');
+  wrap.innerHTML = '<div style="padding:16px;text-align:center;color:#aaa;font-size:13px;">加载中...</div>';
+
+  try {
+    const params = new URLSearchParams({date, account, source: 'cache', sort_filter: sortFilter});
+    if (search) params.set('search', search);
+    const r = await fetch('/sales-orders?' + params, {credentials:'same-origin'});
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || '加载失败');
+    window._sortingOrdersRaw = d.list || [];
+    window._sortingOrdersLoaded = true;
+    // 同步已在批次的单号（服务端已帮我们合并全量 batched）
+    window._batchedOrders = new Set(d.batched_numbers || []);
+    _renderSortingOrders();
+    _genSortingBatchno();
+  } catch(e) {
+    wrap.innerHTML = `<div style="padding:16px;color:#c0392b;font-size:13px;">加载失败：${e.message}</div>`;
+  }
+}
+
+function _renderSortingOrders() {
+  const wrap = document.getElementById('sorting-order-list');
+  const list = window._sortingOrdersRaw;
+
+  // 显示/隐藏全选栏
+  const selAllBar = document.getElementById('sorting-select-all-bar');
+  const totalCount = document.getElementById('sorting-total-count');
+  if (!list.length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:#aaa;font-size:13px;">当日无销货单</div>';
+    if (selAllBar) selAllBar.style.display = 'none';
+    return;
+  }
+  if (selAllBar) { selAllBar.style.display = 'flex'; }
+  if (totalCount) totalCount.textContent = list.length;
+
+  // 同步全选 checkbox 状态
+  const selAllCb = document.getElementById('sorting-select-all-cb');
+  if (selAllCb) {
+    const allSelected = list.every(o => window._sortingSelected.has(o.number));
+    selAllCb.checked = allSelected && list.length > 0;
+    selAllCb.indeterminate = !allSelected && list.some(o => window._sortingSelected.has(o.number));
+  }
+
+  wrap.innerHTML = list.map(o => {
+    const sel      = window._sortingSelected.has(o.number);
+    const isBatched = window._batchedOrders.has(o.number);
+    const boxVal   = window._sortingBoxTypes[o.number] || 'auto';
+    const batchedBadge = isBatched
+      ? `<span style="font-size:11px;background:#d9f7be;color:#389e0d;padding:1px 6px;border-radius:10px;margin-left:6px;">已生成</span>`
+      : '';
+    return `<div class="sorting-order-item${sel?' selected':''}" onclick="toggleSortingOrder('${o.number}')">
+      <input class="sorting-order-cb" type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();toggleSortingOrder('${o.number}')">
+      <div class="sorting-order-info">
+        <div class="sorting-order-no">${o.number}${batchedBadge}</div>
+        <div class="sorting-order-meta">${o.customerName||''} · ${o.account||''} · ${_sortingFmt(o.date)}</div>
+      </div>
+      <div class="sorting-order-right" style="align-items:flex-end;gap:4px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <select class="box-type-sel" data-order="${o.number}"
+                  onclick="event.stopPropagation()"
+                  onchange="setSortingBoxType('${o.number}', this.value)"
+                  style="font-size:12px;border:1px solid #d9d9d9;border-radius:4px;padding:2px 4px;outline:none;background:#fff;"
+                  title="箱型">
+            <option value="auto"${boxVal==='auto'?' selected':''}>自动</option>
+            <option value="1"${boxVal==='1'?' selected':''}>小箱</option>
+            <option value="2"${boxVal==='2'?' selected':''}>中箱</option>
+            <option value="3"${boxVal==='3'?' selected':''}>大箱</option>
+          </select>
+          <span id="box-hint-${o.number}" style="font-size:11px;color:#888;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+        </div>
+        <div class="sorting-order-qty">${o.totalQty||0} 件</div>
+        <div class="sorting-order-amount">¥${(+o.totalAmount||0).toFixed(2)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  _updateSortingSelBar();
+}
+
+function toggleSortingOrder(no) {
+  if (window._sortingSelected.has(no)) {
+    window._sortingSelected.delete(no);
+  } else {
+    window._sortingSelected.add(no);
+  }
+  _renderSortingOrders();
+}
+
+function clearSortingSelection() {
+  window._sortingSelected.clear();
+  _renderSortingOrders();
+}
+
+function toggleSelectAll(checked) {
+  if (checked) {
+    window._sortingOrdersRaw.forEach(o => window._sortingSelected.add(o.number));
+  } else {
+    window._sortingOrdersRaw.forEach(o => window._sortingSelected.delete(o.number));
+  }
+  _renderSortingOrders();
+}
+
+function setSortingBoxType(orderNo, val) {
+  if (val === 'auto') {
+    delete window._sortingBoxTypes[orderNo];
+  } else {
+    window._sortingBoxTypes[orderNo] = val;
+  }
+  // 清空 hint 文字（手动设置后不再显示计算提示）
+  const hint = document.getElementById('box-hint-' + orderNo);
+  if (hint) hint.textContent = '';
+}
+
+async function autoBoxTypeAll() {
+  const list = window._sortingOrdersRaw;
+  if (!list.length) { alert('请先查询销货单'); return; }
+  const box1    = +document.getElementById('sorting-box1').value || 500;
+  const box2    = +document.getElementById('sorting-box2').value || 2000;
+  const box3    = +document.getElementById('sorting-box3').value || 5000;
+  const account = (document.getElementById('sorting-account') || {}).value || 'all';
+  const nos     = list.map(o => o.number).join(',');
+  try {
+    const r = await fetch(
+      `/sorting/batch/hints?order_numbers=${encodeURIComponent(nos)}&box1=${box1}&box2=${box2}&box3=${box3}&account=${encodeURIComponent(account)}`,
+      {credentials: 'same-origin'}
+    );
+    const d = await r.json();
+    if (!d.ok) { alert('获取箱型建议失败：' + (d.msg || '')); return; }
+    const hints = d.hints || {};
+    Object.entries(hints).forEach(([no, h]) => {
+      window._sortingBoxTypes[no] = String(h.box_type);
+      // 更新页面上的 select 和 hint
+      const sel = document.querySelector(`.box-type-sel[data-order="${no}"]`);
+      if (sel) sel.value = String(h.box_type);
+      const hint = document.getElementById('box-hint-' + no);
+      if (hint) hint.textContent = h.note || '';
+    });
+  } catch(e) {
+    alert('请求失败：' + e.message);
+  }
+}
+
+function _updateSortingSelBar() {
+  const bar  = document.getElementById('sorting-sel-bar');
+  const info = document.getElementById('sorting-sel-info');
+  const sel  = [...window._sortingSelected];
+  if (!sel.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const totalQty = window._sortingOrdersRaw
+    .filter(o => sel.includes(o.number))
+    .reduce((s, o) => s + (+o.totalQty || 0), 0);
+  info.textContent = `已选 ${sel.length} 张单，共 ${totalQty} 件`;
+}
+
+function _genSortingBatchno() {
+  const today = _fmtDate(new Date()).replace(/-/g, '');
+  const seq = String(Math.floor(Math.random() * 900) + 100);
+  document.getElementById('sorting-batchno').value = `BATCH${today}${seq}`;
+}
+
+async function createSortingBatch() {
+  const sel = [...window._sortingSelected];
+  if (!sel.length) { alert('请先勾选销货单'); return; }
+  const batchno = (document.getElementById('sorting-batchno').value || '').trim();
+  if (!batchno) { alert('请填写批次号'); return; }
+  const box1 = +document.getElementById('sorting-box1').value || 500;
+  const box2 = +document.getElementById('sorting-box2').value || 2000;
+  const box3 = +document.getElementById('sorting-box3').value || 5000;
+
+  const btn = document.getElementById('sorting-create-btn');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  const resultEl = document.getElementById('sorting-result');
+  resultEl.style.display = 'none';
+
+  // 收集所选订单的箱型覆盖（仅 1/2/3，'auto' 或未设置则不传）
+  const orderBoxTypes = {};
+  sel.forEach(no => {
+    const v = window._sortingBoxTypes[no];
+    if (v && v !== 'auto') orderBoxTypes[no] = parseInt(v, 10);
+  });
+
+  try {
+    const r = await fetch('/sorting/batch/plan', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        batchno,
+        order_numbers: sel,
+        box_configs: {1: box1, 2: box2, 3: box3},
+        order_box_types: orderBoxTypes
+      })
+    });
+    const d = await r.json();
+    resultEl.style.display = 'block';
+    if (d.ok) {
+      const portRange = (d.port_min && d.port_max)
+        ? `格口 ${d.port_min}~${d.port_max}` : '';
+      resultEl.innerHTML = `<div class="sorting-result-card">
+        <b>批次创建成功</b><br>
+        批次号：${d.batchno}<br>
+        版本号：v${d.ver}<br>
+        收录订单：${d.orders_count} 张<br>
+        分拣规则：${d.rules_count} 条${d.box_count ? '，箱数：' + d.box_count : ''}${portRange ? '，' + portRange : ''}<br>
+        <span style="font-size:12px;color:#666;margin-top:6px;display:block;">本地 Agent 将在 30s 内自动同步规则</span>
+      </div>`;
+      // 标记这些单已生成批次
+      sel.forEach(no => window._batchedOrders.add(no));
+      // 生成新批次号避免重复
+      _genSortingBatchno();
+      window._sortingSelected.clear();
+      _renderSortingOrders();
+      loadSortingBatches();
+    } else {
+      resultEl.innerHTML = `<div class="sorting-result-card err"><b>创建失败</b><br>${d.msg || '未知错误'}</div>`;
+    }
+  } catch(e) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `<div class="sorting-result-card err"><b>请求失败</b><br>${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成分拣批次';
+  }
+}
+
+async function loadSortingBatches() {
+  const wrap = document.getElementById('sorting-batch-history');
+  try {
+    const r = await fetch('/sorting/batches', {credentials:'same-origin'});
+    const d = await r.json();
+    const batches = d.batches || [];
+    if (!batches.length) {
+      wrap.innerHTML = '<div class="empty" style="color:#aaa;font-size:13px;padding:8px 0;">暂无历史批次</div>';
+      return;
+    }
+    const rows = batches.map((b, i) => {
+      const portRange = (b.port_min && b.port_max) ? `${b.port_min}~${b.port_max}` : '-';
+      const portCount = b.port_count || '-';
+      const boxCount  = b.box_count  || '-';
+      const orderList = Array.isArray(b.order_list) ? b.order_list : [];
+      const expandId  = `batch-expand-${i}`;
+      const orderRows = orderList.length
+        ? orderList.map(no => `<span style="display:inline-block;margin:2px 4px;font-size:11px;background:#f5f5f5;border-radius:4px;padding:1px 6px;">${no}</span>`).join('')
+        : '<span style="color:#aaa;font-size:11px;">无订单记录</span>';
+      return `<tr style="border-bottom:1px solid #f5f5f5;">
+        <td style="padding:6px 8px;font-weight:600;color:#1a2c5b;">
+          <span style="cursor:pointer;" onclick="document.getElementById('${expandId}').style.display=document.getElementById('${expandId}').style.display==='none'?'table-row':'none'">▶ ${b.batchno}</span>
+        </td>
+        <td style="padding:6px 8px;color:#888;">v${b.ver}</td>
+        <td style="padding:6px 8px;text-align:right;">${b.orders_count}</td>
+        <td style="padding:6px 8px;text-align:right;">${b.rules_count}</td>
+        <td style="padding:6px 8px;text-align:right;">${boxCount}</td>
+        <td style="padding:6px 8px;text-align:center;">${portRange}</td>
+        <td style="padding:6px 8px;text-align:right;">${portCount}</td>
+        <td style="padding:6px 8px;color:#888;">${(b.created_at||'').slice(0,16)}</td>
+      </tr>
+      <tr id="${expandId}" style="display:none;background:#fafafa;">
+        <td colspan="8" style="padding:8px 16px;font-size:12px;">${orderRows}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="border-bottom:2px solid #f0f0f0;">
+        <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">批次号</th>
+        <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">版本</th>
+        <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">订单数</th>
+        <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">规则数</th>
+        <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">箱数</th>
+        <th style="padding:6px 8px;text-align:center;color:#555;font-weight:600;">格口范围</th>
+        <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">格口数</th>
+        <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">创建时间</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div style="color:#c0392b;font-size:12px;">加载失败：${e.message}</div>`;
+  }
+}
+
+async function loadSortingDashboard() {
+  const batchno = (document.getElementById('dashboard-batchno').value || '').trim();
+  const tbody   = document.getElementById('sorting-events-tbody');
+  const tip     = document.getElementById('sorting-dashboard-tip');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">加载中...</td></tr>';
+  try {
+    const params = new URLSearchParams({limit: 200});
+    if (batchno) params.set('batchno', batchno);
+    const r = await fetch('/sorting/events?' + params, {credentials:'same-origin'});
+    const d = await r.json();
+    const events = d.events || [];
+    if (!events.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">暂无扫码记录</td></tr>';
+      tip.textContent = '';
+      return;
+    }
+    tbody.innerHTML = events.map(e => `<tr>
+      <td>${e.id}</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e.batchno||''}</td>
+      <td style="font-family:monospace;">${e.barcode||''}</td>
+      <td style="font-weight:600;color:#1a2c5b;">${e.innerport||''}</td>
+      <td>${e.carno||''}</td>
+      <td>${e.is_manual ? '手工' : '自动'}</td>
+      <td style="white-space:nowrap;color:#888;">${(e.scanned_at||'').slice(0,16)}</td>
+    </tr>`).join('');
+    tip.textContent = `共 ${events.length} 条，最后更新 ${new Date().toLocaleTimeString()}`;
+  } catch(err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#c0392b;padding:12px;">加载失败：${err.message}</td></tr>`;
   }
 }
 </script>

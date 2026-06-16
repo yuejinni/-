@@ -4030,6 +4030,27 @@ def _sales_readonly_conn():
     return conn
 
 
+def _get_batched_order_numbers() -> set:
+    """从分拣云端 DB 获取所有已生成批次的销货单号集合。"""
+    sorting_db = os.path.join(_SALES_CACHE_DIR, 'sorting_cloud.sqlite3')
+    if not os.path.exists(sorting_db):
+        return set()
+    try:
+        conn = sqlite3.connect(f'file:{sorting_db}?mode=ro', uri=True, timeout=5)
+        rows = conn.execute("SELECT order_numbers FROM cloud_sorting_batches").fetchall()
+        conn.close()
+        result = set()
+        for r in rows:
+            try:
+                nums = json.loads(r[0] or '[]')
+                result.update(nums)
+            except Exception:
+                pass
+        return result
+    except Exception:
+        return set()
+
+
 CUSTOMS_PRODUCT_COLUMNS = [
     'account', 'product_code', 'product_name', 'category_name', 'spec', 'unit', 'barcode',
     'jdy_product_id', 'customs_name_cn', 'customs_name_en', 'hs_code', 'customs_unit',
@@ -13879,6 +13900,7 @@ def sales_orders_list():
         if date_mode == 'updated':
             source = 'cache'
         errors = []
+        sort_filter = request.args.get('sort_filter', 'all')  # all | unmatched | batched
         if source == 'cache':
             if date_mode == 'updated':
                 updated_from = (request.args.get('updated_from') or '').strip()
@@ -13909,6 +13931,18 @@ def sales_orders_list():
                     x for x in items
                     if search in (x.get('number', '') + x.get('customerName', '')).lower()
                 ]
+        # sort_filter 过滤（仅 cache/mock 模式下有效）
+        batched_set = set()
+        if sort_filter != 'all' and source in ('cache', 'mock'):
+            batched_set = _get_batched_order_numbers()
+            if sort_filter == 'unmatched':
+                items = [x for x in items if x.get('number') not in batched_set]
+            elif sort_filter == 'batched':
+                items = [x for x in items if x.get('number') in batched_set]
+        elif source in ('cache', 'mock'):
+            batched_set = _get_batched_order_numbers()
+        # 无论是否过滤，都返回当前列表中哪些已在批次
+        batched_numbers = [x['number'] for x in items if x.get('number') in batched_set]
         return jsonify({
             'success': True,
             'list': items,
@@ -13925,6 +13959,7 @@ def sales_orders_list():
             'called_jdy': source == 'live',
             'errors': errors,
             'cache_stats': _sales_cache_stats() if source == 'cache' else None,
+            'batched_numbers': batched_numbers,
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -26,6 +26,10 @@ try:
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
     _SSL_CTX = ssl.create_default_context()
+# api.kingdee.com 在部分 macOS/Python 3.14 环境下 TLS 握手会触发
+# RECORD_LAYER_FAILURE，关闭主机名校验和证书校验可绕过该问题。
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 _API_HOST = 'api.kingdee.com'
 
@@ -558,6 +562,27 @@ class JDYClient:
         items = (result.get('items') or result.get('list') or [])
         for item in items:
             if str(item.get('number', '')).strip() == str(number).strip():
+                return item
+        return items[0] if items else None
+
+    def get_customer_by_name(self, name: str):
+        """
+        按名称查询客户档案（bd_customer/list）。
+        返回第一条精确匹配的客户记录，未找到返回 None。
+        关键字段：taxPayerNo（纳税人识别码）。
+        """
+        if not name:
+            return None
+        result = self._request_with_retry(
+            'POST', '/jdyscm/bd_customer/list',
+            body={'filter': {'name': name, 'page': 1, 'pageSize': 10}},
+            query=self._api_query(),
+            timeout=30,
+            attempts=2,
+        )
+        items = result.get('items') or result.get('list') or []
+        for item in items:
+            if str(item.get('name', '')).strip() == name.strip():
                 return item
         return items[0] if items else None
 

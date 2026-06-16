@@ -1,15 +1,19 @@
 """
 sorting/agent_api.py — 云端分拣接口路由实现
 
-5 条路由供本地分拣机 Agent 调用（注册到 customs_server/server.py）：
-  GET  /agent/rules          → 规则差量下发
-  POST /agent/events         → 接收扫码事件（event_key 幂等去重）
-  GET  /sorting/dashboard    → 看板页
-  POST /sorting/rules        → 手工录入规则
-  POST /sorting/batch/assign → 触发 allocate_ports
+8 条路由：
+  GET  /agent/rules            → 规则差量下发
+  POST /agent/events           → 接收扫码事件（event_key 幂等去重）
+  GET  /sorting/dashboard      → 看板页
+  POST /sorting/rules          → 手工录入规则
+  POST /sorting/batch/assign   → 触发 allocate_ports（原始接口）
+  POST /sorting/batch/plan     → 从销货单缓存自动构建批次（UI 调用）
+  GET  /sorting/batches        → 历史批次列表
+  GET  /sorting/events         → 扫码事件列表（带分页）
 """
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template_string
@@ -18,21 +22,49 @@ logger = logging.getLogger(__name__)
 
 sorting_bp = Blueprint('sorting', __name__)
 
+_SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # ── 本地 SQLite（复用 customs_server 现有 sales_cache）──────────────────────────
 # 分拣规则和扫码事件存入独立的表（不影响现有报关功能）
 
 def _get_conn(db_path: str = None):
-    """获取 SQLite 连接（WAL 模式，30s 超时）。"""
-    import os
+    """获取分拣云端 SQLite 连接（WAL 模式，30s 超时）。"""
     if db_path is None:
-        db_path = os.path.join(os.path.dirname(__file__), '..', '_sales_cache',
-                               'sorting_cloud.sqlite3')
+        db_path = os.path.join(_SERVER_DIR, '_sales_cache', 'sorting_cloud.sqlite3')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30,
                            isolation_level=None, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _get_sales_conn():
+    """只读连接到 sales_cache.sqlite3（读销货单和商品尺寸）。"""
+    db = os.path.join(_SERVER_DIR, '_sales_cache', 'sales_cache.sqlite3')
+    if not os.path.exists(db):
+        return None
+    conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True,
+                           timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _fv(d: dict, keys: list, default=''):
+    """从字典中按优先顺序取第一个有值的字段。"""
+    for k in keys:
+        v = d.get(k)
+        if v is not None and v != '':
+            return v
+    return default
+
+
+def _num(v, default=0):
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return default
 
 
 def _ensure_tables():
@@ -84,7 +116,28 @@ def _ensure_tables():
             ver     INTEGER NOT NULL DEFAULT 0
         );
         INSERT OR IGNORE INTO cloud_rule_version(id, ver) VALUES (1, 0);
+
+        CREATE TABLE IF NOT EXISTS cloud_sorting_batches (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            batchno       TEXT UNIQUE NOT NULL,
+            ver           INTEGER NOT NULL DEFAULT 0,
+            order_numbers TEXT,
+            orders_count  INTEGER DEFAULT 0,
+            rules_count   INTEGER DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
+    # 安全升级：添加新列（SQLite 支持 ADD COLUMN，已存在时静默忽略）
+    for ddl in [
+        "ALTER TABLE cloud_sorting_batches ADD COLUMN box_count INTEGER DEFAULT 0",
+        "ALTER TABLE cloud_sorting_batches ADD COLUMN port_min INTEGER DEFAULT 0",
+        "ALTER TABLE cloud_sorting_batches ADD COLUMN port_max INTEGER DEFAULT 0",
+        "ALTER TABLE cloud_sorting_batches ADD COLUMN total_qty INTEGER DEFAULT 0",
+    ]:
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass
     conn.close()
 
 
@@ -268,6 +321,296 @@ def sorting_batch_assign():
         "ver": new_ver,
         "rules_count": len(rules)
     })
+
+
+# ── 箱型建议 ────────────────────────────────────────────────────────────────────
+@sorting_bp.get('/sorting/batch/hints')
+def sorting_batch_hints():
+    """
+    GET /sorting/batch/hints?order_numbers=SO001,SO002&box1=500&box2=2000&box3=5000&account=祺航箱包
+    返回每张订单的箱型建议：
+    - 优先读精斗云客户档案 taxPayerNo，值 == "1" → 大箱（3）
+    - 否则按体积计算
+    """
+    order_numbers = [x.strip() for x in (request.args.get('order_numbers') or '').split(',') if x.strip()]
+    if not order_numbers:
+        return jsonify({"ok": True, "hints": {}})
+
+    box1 = float(request.args.get('box1', 500) or 500)
+    box2 = float(request.args.get('box2', 2000) or 2000)
+    box3 = float(request.args.get('box3', 5000) or 5000)
+    box_configs = {1: box1, 2: box2, 3: box3}
+    account_param = (request.args.get('account') or '').strip()  # 账套名，用于选 JDY client
+
+    sc = _get_sales_conn()
+    if not sc:
+        return jsonify({"ok": False, "msg": "sales_cache.sqlite3 不存在，请先同步销货单"}), 400
+
+    # 选 JDY client（尽量复用已初始化的单例，不主动初始化）
+    import jdy_api
+    def _pick_jdy_client(account_name):
+        """根据账套名选 JDY client，两个都没有则返回 None。"""
+        c2 = jdy_api.get_client_2()
+        c1 = jdy_api.get_client()
+        if not account_name or account_name == 'all':
+            return c2 or c1
+        if '箱包' in account_name:
+            return c2 or c1
+        if '饰品' in account_name:
+            return c1 or c2
+        return c2 or c1
+
+    jdy_cli = _pick_jdy_client(account_param)
+    # 客户 taxPayerNo 缓存（同一次请求内去重）
+    _cust_cache: dict = {}
+
+    hints = {}
+    for no in order_numbers:
+        row = sc.execute(
+            "SELECT data_json FROM sales_details WHERE number=? ORDER BY updated_at DESC LIMIT 1",
+            (no,)
+        ).fetchone()
+        if not row:
+            hints[no] = {"box_type": 1, "source": "calc", "note": "订单不在缓存中，默认小箱"}
+            continue
+
+        order = json.loads(row['data_json'])
+        customer_name = str(order.get('customerName') or '').strip()
+
+        # ── 优先：精斗云客户档案 taxPayerNo ───────────────────────────────────
+        jdy_box_type = None
+        if jdy_cli and customer_name:
+            if customer_name not in _cust_cache:
+                try:
+                    cust = jdy_cli.get_customer_by_name(customer_name)
+                    _cust_cache[customer_name] = cust
+                except Exception as ex:
+                    logger.warning(f"[hints] JDY 客户查询失败 {customer_name}: {ex}")
+                    _cust_cache[customer_name] = None
+            cust = _cust_cache.get(customer_name)
+            if cust and str(cust.get('taxPayerNo') or '').strip() == '1':
+                jdy_box_type = 3  # 大箱
+
+        if jdy_box_type is not None:
+            hints[no] = {
+                "box_type": jdy_box_type,
+                "source":   "jdy_pref",
+                "note":     f"客户档案 taxPayerNo=1（{customer_name}）",
+            }
+            continue
+
+        # ── 兜底：按体积计算 ───────────────────────────────────────────────────
+        total_vol = 0.0
+        for entry in (order.get('entries') or []):
+            if not isinstance(entry, dict):
+                continue
+            barcode = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            goodsno = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            qty = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+            if not barcode or qty <= 0:
+                continue
+            prod = sc.execute(
+                "SELECT length, width, height FROM jdy_products WHERE barcode=? OR product_number=? LIMIT 1",
+                (barcode, goodsno)
+            ).fetchone()
+            if prod:
+                total_vol += _num(prod['length']) * _num(prod['width']) * _num(prod['height']) * qty
+
+        if total_vol <= 0:
+            hints[no] = {"box_type": 1, "source": "calc", "note": "无尺寸数据，默认小箱"}
+        elif total_vol <= box_configs[1]:
+            hints[no] = {"box_type": 1, "source": "calc", "note": f"体积 {total_vol:.0f}cm³ ≤ 小箱 {box_configs[1]:.0f}"}
+        elif total_vol <= box_configs[2]:
+            hints[no] = {"box_type": 2, "source": "calc", "note": f"体积 {total_vol:.0f}cm³ ≤ 中箱 {box_configs[2]:.0f}"}
+        elif total_vol <= box_configs[3]:
+            hints[no] = {"box_type": 3, "source": "calc", "note": f"体积 {total_vol:.0f}cm³ ≤ 大箱 {box_configs[3]:.0f}"}
+        else:
+            hints[no] = {"box_type": 3, "source": "calc", "note": f"体积 {total_vol:.0f}cm³ 超出大箱上限"}
+
+    sc.close()
+    return jsonify({"ok": True, "hints": hints})
+
+
+# ── 从销货单缓存构建批次 ────────────────────────────────────────────────────────
+@sorting_bp.post('/sorting/batch/plan')
+def sorting_batch_plan():
+    """
+    POST /sorting/batch/plan
+    body: {"batchno": str, "order_numbers": [...], "box_configs": {1:vol1, 2:vol2, 3:vol3}}
+    从本地销货单缓存查商品尺寸，自动调 allocate_ports，写入云端规则。
+    ⚠️ 依赖 sales_cache.sqlite3 已同步，否则商品尺寸为 0（依然可分拣，但分箱不准）。
+    """
+    data            = request.get_json() or {}
+    batchno         = (data.get('batchno') or '').strip()
+    order_nos       = data.get('order_numbers') or []
+    box_configs     = {int(k): float(v) for k, v in (data.get('box_configs') or {}).items()}
+    order_box_types = data.get('order_box_types') or {}  # {order_no: 1/2/3}
+    if not batchno:
+        return jsonify({"ok": False, "msg": "batchno 不能为空"}), 400
+    if not order_nos:
+        return jsonify({"ok": False, "msg": "order_numbers 不能为空"}), 400
+    if not box_configs:
+        box_configs = {1: 500.0, 2: 2000.0, 3: 5000.0}
+
+    sc = _get_sales_conn()
+    if not sc:
+        return jsonify({"ok": False, "msg": "sales_cache.sqlite3 不存在，请先同步销货单"}), 400
+
+    orders = []
+    for no in order_nos:
+        row = sc.execute(
+            "SELECT data_json FROM sales_details WHERE number=? ORDER BY updated_at DESC LIMIT 1",
+            (no,)
+        ).fetchone()
+        if not row:
+            continue
+        order = json.loads(row['data_json'])
+        customer = str(order.get('customerName') or '').strip()
+        goods = []
+        for entry in (order.get('entries') or []):
+            if not isinstance(entry, dict):
+                continue
+            barcode  = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            goodsno  = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            goodsmodel = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
+            qty      = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+            if not barcode or qty <= 0:
+                continue
+            # 查商品尺寸（barcode 优先，product_number 兜底）
+            prod = sc.execute(
+                "SELECT length, width, height FROM jdy_products "
+                "WHERE barcode=? OR product_number=? LIMIT 1",
+                (barcode, goodsno)
+            ).fetchone()
+            l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
+            w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
+            h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
+            goods.append({
+                'barcode':    barcode,
+                'goodsno':    goodsno,
+                'goodsmodel': goodsmodel,
+                'customer':   customer,
+                'l': l, 'w': w, 'h': h,
+                'qty':        qty,
+                'serialnum':  0,
+                'picktype':   0,
+            })
+        if goods:
+            order_dict = {'orderno': no, 'goods': goods}
+            # 支持每张订单的箱型覆盖（前端传入的 order_box_types）
+            bt_str = str(order_box_types.get(no, ''))
+            if bt_str in ('1', '2', '3'):
+                order_dict['box_type_override'] = int(bt_str)
+            orders.append(order_dict)
+    sc.close()
+
+    if not orders:
+        return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
+
+    from sorting.batch_planner import allocate_ports
+    rules = allocate_ports(orders, box_configs)
+
+    conn = _get_conn()
+    ver_row = conn.execute("SELECT ver FROM cloud_rule_version WHERE id=1").fetchone()
+    new_ver = (ver_row['ver'] if ver_row else 0) + 1
+
+    for r in rules:
+        conn.execute("""
+            INSERT INTO cloud_sorting_rules
+                (ver, batchno, barcode, slot_seq, portno, innerport,
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            new_ver, batchno,
+            r['barcode'], r['slot_seq'],
+            r['portno'],  r['innerport'],
+            r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
+            r['floor'], r['serialnum'],
+            r['label_data'], r['box_type'], r.get('picktype', 0)
+        ))
+    conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
+    # 计算批次统计字段
+    port_set  = {r['portno'] for r in rules}
+    box_count = len({r['label_data'] for r in rules})
+    port_min  = min(port_set) if port_set else 0
+    port_max  = max(port_set) if port_set else 0
+    conn.execute("""
+        INSERT OR REPLACE INTO cloud_sorting_batches
+            (batchno, ver, order_numbers, orders_count, rules_count,
+             box_count, port_min, port_max, total_qty, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
+    """, (batchno, new_ver, json.dumps(order_nos, ensure_ascii=False),
+          len(orders), len(rules), box_count, port_min, port_max, len(rules)))
+    conn.close()
+
+    return jsonify({
+        "ok":           True,
+        "batchno":      batchno,
+        "ver":          new_ver,
+        "orders_count": len(orders),
+        "rules_count":  len(rules),
+        "box_count":    box_count,
+        "port_min":     port_min,
+        "port_max":     port_max,
+    })
+
+
+# ── 历史批次列表 ────────────────────────────────────────────────────────────────
+@sorting_bp.get('/sorting/batches')
+def sorting_batch_list():
+    """GET /sorting/batches  最近 50 批次（含格口统计和订单列表）。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM cloud_sorting_batches ORDER BY id DESC LIMIT 50"
+    ).fetchall()
+    batches = []
+    for r in rows:
+        b = dict(r)
+        # 从 cloud_sorting_rules 实时计算格口统计（兼容旧批次）
+        stats = conn.execute("""
+            SELECT COUNT(DISTINCT label_data) as box_count,
+                   COUNT(DISTINCT portno)     as port_count,
+                   MIN(portno)                as port_min,
+                   MAX(portno)                as port_max
+            FROM cloud_sorting_rules WHERE batchno = ?
+        """, (b['batchno'],)).fetchone()
+        if stats:
+            b['box_count']  = stats['box_count']  or b.get('box_count', 0)
+            b['port_count'] = stats['port_count']  or 0
+            b['port_min']   = stats['port_min']    or b.get('port_min', 0)
+            b['port_max']   = stats['port_max']    or b.get('port_max', 0)
+        # 解析订单列表（供前端展开显示）
+        try:
+            b['order_list'] = json.loads(b.get('order_numbers') or '[]')
+        except Exception:
+            b['order_list'] = []
+        batches.append(b)
+    conn.close()
+    return jsonify({"batches": batches})
+
+
+# ── 扫码事件列表 ────────────────────────────────────────────────────────────────
+@sorting_bp.get('/sorting/events')
+def sorting_events_api():
+    """
+    GET /sorting/events?batchno=...&limit=200
+    用于 UI 看板展示，不影响 /agent/events 推送路径。
+    """
+    batchno = request.args.get('batchno', '').strip()
+    limit   = request.args.get('limit', 200, type=int)
+    conn    = _get_conn()
+    if batchno:
+        rows = conn.execute(
+            "SELECT * FROM cloud_scan_events WHERE batchno=? ORDER BY id DESC LIMIT ?",
+            (batchno, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM cloud_scan_events ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return jsonify({"events": [dict(r) for r in rows], "total": len(rows)})
 
 
 # 初始化表（模块导入时执行）

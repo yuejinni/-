@@ -74,7 +74,9 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
 
     for order in sorted_orders:
         curr_port = _next_port(curr_port)   # 新订单 → 新格口
-        box_num, box_type, curr_vol = 1, 1, 0
+        _override = order.get('box_type_override')
+        init_box_type = _override if _override in (1, 2, 3) else 1
+        box_num, box_type, curr_vol = 1, init_box_type, 0
         total_vol = sum(
             float(g.get('l') or 0) * float(g.get('w') or 0) * float(g.get('h') or 0) * g['qty']
             for g in order['goods']
