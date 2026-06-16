@@ -6,6 +6,8 @@ sorting/batch_planner.py — 分拣批次规划与分箱算法
 
 在云端（customs_server）运行，生成 sorting_rules 批次供本地 Agent 同步。
 """
+
+
 def floor_from_goodsmodel(goodsmodel: str) -> int:
     """楼层推算（goodsmodel 第二段首字母，对应原系统 Proc_Sendsorting IF/ELSE 逻辑）。"""
     _FLOOR_MAP = {}
@@ -25,7 +27,45 @@ def _next_port(p: int) -> int:
     return p + 1 if p == 51 else p
 
 
-def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[dict]:
+def _find_box_type(vol: float, box_configs: dict) -> int:
+    """
+    找能装下 vol 的最小箱型（1/2/3）。
+    若所有箱型都装不下，返回最大箱型（3）——仍会分配格口，体积溢出标注。
+    """
+    for bt in sorted(box_configs.keys()):
+        if box_configs[bt] >= vol:
+            return bt
+    return max(box_configs.keys()) if box_configs else 3
+
+
+def _emit_box(rules: list, order: dict, goods_list: list,
+              port: int, box_num: int, box_type: int) -> None:
+    """将 goods_list 中的商品展开为 rules 行（qty=N → slot_seq 1..N）。"""
+    box_no    = f"{order['orderno']}-{box_num}"
+    innerport = port if port <= 102 else 0
+    for g in goods_list:
+        floor = floor_from_goodsmodel(g.get('goodsmodel', ''))
+        for slot in range(1, g['qty'] + 1):
+            rules.append({
+                'barcode':    g['barcode'],
+                'slot_seq':   slot,
+                'portno':     port,
+                'innerport':  innerport,
+                'floor':      floor,
+                'orderno':    order['orderno'],
+                'goodsno':    g.get('goodsno', ''),
+                'goodsmodel': g.get('goodsmodel', ''),
+                'customer':   g.get('customer', ''),
+                'box_no':     box_no,
+                'box_type':   box_type,
+                'serialnum':  g.get('serialnum', 0),
+                'picktype':   g.get('picktype', 0),
+                # label_data：账号-CTN序号（对应 Wcs_goods.column4）
+                'label_data': box_no,
+            })
+
+
+def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
     """
     批次分箱分格口算法（替代 Proc_Importordergoodsinfo + Proc_Producttoport）。
 
@@ -38,32 +78,34 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
                     'goodsno': str,       # 货号
                     'goodsmodel': str,    # 规格（用于推算楼层）
                     'customer': str,      # 客户名
-                    'l': float,           # 长 cm（jdy_products.length）
+                    'l': float,           # 长 cm
                     'w': float,           # 宽 cm
                     'h': float,           # 高 cm
-                    'qty': int,           # 数量
-                    'serialnum': int,     # 喷码号（导入时 @synid）
-                    'picktype': int,      # 0=自动 1=手工（对应 column3）
+                    'qty': int,           # 数量（整体放入同一箱，不拆分）
+                    'serialnum': int,     # 喷码号
+                    'picktype': int,      # 0=自动 1=手工
                 }
-            ]
+            ],
+            'box_type_override': int,     # 可选，手工指定箱型 1/2/3
         }
     ]
     box_configs: {1: small_max_vol, 2: medium_max_vol, 3: large_max_vol}  ← cm³
-    offset: 体积容差（超出上限+offset 才换格口，默认200）
 
     返回: list[dict]，每个 SKU qty=N 展开为 N 行（slot_seq 1..N），含 label_data 字段。
 
-    关键规则（来自原系统 script.sql）：
+    装箱规则：
     - 订单按总数量降序（大单优先，格口号靠前）
     - 新订单开始新格口
-    - 体积超出当前箱型上限+offset → 换格口（box_num++）
-    - 当前箱装不下但 total_vol <= max_vol*1.5 → 箱型升级
+    - 按订单内商品顺序依次累积体积（不拆分同一 SKU 的数量）
+    - 当前已累积商品 + 本商品 > 大箱上限 → 封当前箱，本商品起新箱新格口
+    - 每箱的箱型 = 能装下该箱合计体积的最小箱型（装不下任何箱则用大箱）
     - 格口 51 跳过
     - 格口 <= 102 → innerport=portno；格口 > 102 → innerport=0（分拨溢出）
     - ⚠️ label_data = "orderno-box_num"（对应 Wcs_goods.column4，账号-CTN序号）
     """
     curr_port = 0
-    rules = []
+    rules     = []
+    max_large = max(box_configs.values()) if box_configs else 0
 
     # 大单优先
     sorted_orders = sorted(
@@ -74,14 +116,9 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
 
     for order in sorted_orders:
         curr_port = _next_port(curr_port)   # 新订单 → 新格口
-        _override = order.get('box_type_override')
-        init_box_type = _override if _override in (1, 2, 3) else 2  # 默认中箱，小箱仅手工指定
-        box_num, box_type, curr_vol = 1, init_box_type, 0
-        # jdy_products 尺寸单位为 mm，÷1000 换算为 cm³（与 box_configs 单位一致）
-        total_vol = sum(
-            float(g.get('l') or 0) * float(g.get('w') or 0) * float(g.get('h') or 0) * g['qty'] / 1000
-            for g in order['goods']
-        )
+        box_num   = 1
+        curr_vol  = 0.0
+        pending   = []                      # 当前箱已放入的商品
 
         for g in order['goods']:
             item_vol = (
@@ -89,41 +126,24 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
                 float(g.get('w') or 0) *
                 float(g.get('h') or 0) *
                 g['qty']
-            ) / 1000
-            max_vol = box_configs.get(box_type, 0)
+            )
 
-            if max_vol > 0 and curr_vol + item_vol > max_vol + offset:
-                curr_port = _next_port(curr_port)   # 体积超限 → 新箱 → 新格口
-                box_num += 1
-                curr_vol = item_vol
-                # 箱型升级条件
-                if max_vol < total_vol <= max_vol * 1.5:
-                    box_type = min(box_type + 1, 3)
+            # 当前箱已有内容，且加入本商品会超过大箱上限 → 先封箱，再开新箱
+            if pending and max_large > 0 and curr_vol + item_vol > max_large:
+                box_type = _find_box_type(curr_vol, box_configs)
+                _emit_box(rules, order, pending, curr_port, box_num, box_type)
+                curr_port = _next_port(curr_port)
+                box_num  += 1
+                curr_vol  = item_vol
+                pending   = [g]
             else:
                 curr_vol += item_vol
+                pending.append(g)
 
-            innerport = curr_port if curr_port <= 102 else 0
-            floor     = floor_from_goodsmodel(g.get('goodsmodel', ''))
-            box_no    = f"{order['orderno']}-{box_num}"
-
-            # ⚠️ 1:N 展开：qty=N → N 行（slot_seq 1..N）
-            for slot in range(1, g['qty'] + 1):
-                rules.append({
-                    'barcode':   g['barcode'],
-                    'slot_seq':  slot,
-                    'portno':    curr_port,
-                    'innerport': innerport,
-                    'floor':     floor,
-                    'orderno':   order['orderno'],
-                    'goodsno':   g.get('goodsno', ''),
-                    'goodsmodel': g.get('goodsmodel', ''),
-                    'customer':  g.get('customer', ''),
-                    'box_no':    box_no,
-                    'box_type':  box_type,
-                    'serialnum': g.get('serialnum', 0),
-                    'picktype':  g.get('picktype', 0),
-                    # ⚠️ label_data：账号-CTN序号（对应 Wcs_goods.column4）
-                    'label_data': box_no,
-                })
+        # 封最后一箱（或 box_type_override 指定的箱型）
+        if pending:
+            _override = order.get('box_type_override')
+            box_type  = _override if _override in (1, 2, 3) else _find_box_type(curr_vol, box_configs)
+            _emit_box(rules, order, pending, curr_port, box_num, box_type)
 
     return rules

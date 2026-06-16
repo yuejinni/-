@@ -174,6 +174,8 @@ def _ensure_tables():
         "ALTER TABLE cloud_sorting_batches ADD COLUMN agent_synced_at TEXT",      # Agent 首次拉取时间
         "ALTER TABLE cloud_sorting_batches ADD COLUMN revoke_requested_at TEXT",  # 云端请求撤回时间
         "ALTER TABLE cloud_sorting_batches ADD COLUMN revoke_confirmed_at TEXT",  # Agent 确认撤回时间
+        # 箱型配置（生成批次时记录，详情展示用）
+        "ALTER TABLE cloud_sorting_batches ADD COLUMN box_configs_json TEXT",
     ]:
         try:
             conn.execute(ddl)
@@ -606,10 +608,11 @@ def sorting_batch_plan():
     conn.execute("""
         INSERT OR REPLACE INTO cloud_sorting_batches
             (batchno, ver, order_numbers, orders_count, rules_count,
-             box_count, port_min, port_max, total_qty, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
+             box_count, port_min, port_max, total_qty, box_configs_json, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
     """, (batchno, new_ver, json.dumps(order_nos, ensure_ascii=False),
-          len(orders), len(rules), box_count, port_min, port_max, len(rules)))
+          len(orders), len(rules), box_count, port_min, port_max, len(rules),
+          json.dumps(box_configs)))
     conn.close()
 
     return jsonify({
@@ -681,8 +684,8 @@ def sorting_batch_rules(batchno):
                 l = float(row['length'] or 0)
                 w = float(row['width']  or 0)
                 h = float(row['height'] or 0)
-                # jdy_products.length/width/height 单位为 mm，÷1000 换算为 cm³
-                dim_map[bc] = {'l': l, 'w': w, 'h': h, 'unit_vol': round(l * w * h / 1000, 2)}
+                # jdy_products.length/width/height 单位为 cm，直接得 cm³
+                dim_map[bc] = {'l': l, 'w': w, 'h': h, 'unit_vol': round(l * w * h, 2)}
         sc.close()
 
         for bx in box_list:
@@ -697,6 +700,17 @@ def sorting_batch_rules(batchno):
                 bx_vol         += it['total_vol']
             bx['box_vol'] = round(bx_vol, 1)
 
+    # 解析存储的箱型配置（用于前端显示进度条）
+    box_configs = {}
+    if batch_row and batch_row['box_configs_json']:
+        try:
+            raw = json.loads(batch_row['box_configs_json'])
+            box_configs = {int(k): float(v) for k, v in raw.items()}
+        except Exception:
+            pass
+    if not box_configs:
+        box_configs = {1: 500.0, 2: 2000.0, 3: 5000.0}
+
     return jsonify({
         "ok":          True,
         "batchno":     batchno,
@@ -704,6 +718,7 @@ def sorting_batch_rules(batchno):
         "boxes":       box_list,
         "box_count":   len(box_list),
         "total_lines": len(rows),
+        "box_configs": box_configs,
     })
 
 

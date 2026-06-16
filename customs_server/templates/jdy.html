@@ -4061,6 +4061,29 @@ td.code { font-family: monospace; color: #1a2c5b; }
       </div>
     </div>
 
+    <!-- 批次设置（紧凑条） -->
+    <div style="background:#f8f9ff;border:1px solid #dce3ff;border-radius:6px;padding:7px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+      <span style="font-size:12px;color:#555;font-weight:600;white-space:nowrap;flex-shrink:0;">批次设置</span>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <label style="font-size:11px;color:#888;white-space:nowrap;">批次号</label>
+        <input id="sorting-batchno" placeholder="自动生成" style="border:1px solid #d9d9d9;border-radius:4px;padding:3px 8px;font-size:12px;width:148px;outline:none;">
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <label style="font-size:11px;color:#888;white-space:nowrap;">小箱(cm³)</label>
+        <input type="number" id="sorting-box1" value="40000" min="1" style="border:1px solid #d9d9d9;border-radius:4px;padding:3px 6px;font-size:12px;width:80px;outline:none;">
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <label style="font-size:11px;color:#888;white-space:nowrap;">中箱(cm³)</label>
+        <input type="number" id="sorting-box2" value="85000" min="1" style="border:1px solid #d9d9d9;border-radius:4px;padding:3px 6px;font-size:12px;width:80px;outline:none;">
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <label style="font-size:11px;color:#888;white-space:nowrap;">大箱(cm³)</label>
+        <input type="number" id="sorting-box3" value="198000" min="1" style="border:1px solid #d9d9d9;border-radius:4px;padding:3px 6px;font-size:12px;width:80px;outline:none;">
+      </div>
+      <button onclick="saveSortingConfig()" style="padding:3px 12px;border:1px solid #4096ff;border-radius:4px;background:#fff;color:#1677ff;font-size:12px;cursor:pointer;flex-shrink:0;">确认</button>
+      <span id="sorting-cfg-saved" style="display:none;color:#52c41a;font-size:12px;flex-shrink:0;">✓ 已保存</span>
+    </div>
+
     <!-- 全选操作栏 -->
     <div id="sorting-select-all-bar" style="display:none;align-items:center;gap:10px;padding:8px 12px;background:#f0f5ff;border:1px solid #d6e4ff;border-radius:6px;margin-bottom:4px;">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;">
@@ -4083,29 +4106,6 @@ td.code { font-family: monospace; color: #1a2c5b; }
     <div class="sorting-sel-bar" id="sorting-sel-bar" style="display:none;">
       <span class="sel-info" id="sorting-sel-info">已选 0 张，共 0 件</span>
       <button class="btn btn-ghost btn-sm" onclick="clearSortingSelection()">清空选择</button>
-    </div>
-
-    <!-- 批次配置 -->
-    <div class="card">
-      <div class="card-title" style="margin-bottom:10px;">批次设置</div>
-      <div class="sorting-config-grid">
-        <div style="grid-column:1/-1">
-          <label>批次号（自动生成，可修改）</label>
-          <input id="sorting-batchno" placeholder="BATCH20260615001" style="border:1px solid #d9d9d9;border-radius:4px;padding:6px 10px;font-size:13px;width:100%;box-sizing:border-box;outline:none;">
-        </div>
-        <div>
-          <label>小箱最大体积（cm³）</label>
-          <input type="number" id="sorting-box1" value="500" min="1">
-        </div>
-        <div>
-          <label>中箱最大体积（cm³）</label>
-          <input type="number" id="sorting-box2" value="2000" min="1">
-        </div>
-        <div>
-          <label>大箱最大体积（cm³）</label>
-          <input type="number" id="sorting-box3" value="5000" min="1">
-        </div>
-      </div>
     </div>
 
     <!-- 创建按钮 -->
@@ -4442,6 +4442,7 @@ function showPage(name) {
   }
   if (name === 'sorting-batch') {
     if (!document.getElementById('sorting-date').value) setSortingToday();
+    loadSortingConfig();
     if (!window._sortingOrdersLoaded) loadSortingOrders();
     loadSortingBatches();
     loadRushOrders();
@@ -11247,6 +11248,32 @@ function _sortingFmt(d) {
   return d ? String(d).slice(0, 10) : '';
 }
 
+// ── 批次设置：保存/读取（localStorage 持久化）────────────────────────────────
+function saveSortingConfig() {
+  const cfg = {
+    box1: +document.getElementById('sorting-box1').value || 40000,
+    box2: +document.getElementById('sorting-box2').value || 85000,
+    box3: +document.getElementById('sorting-box3').value || 198000,
+  };
+  if (cfg.box1 >= cfg.box2 || cfg.box2 >= cfg.box3) {
+    alert('箱型体积必须满足：小箱 < 中箱 < 大箱，请检查后重新确认。');
+    return;
+  }
+  localStorage.setItem('sorting_box_configs', JSON.stringify(cfg));
+  const tip = document.getElementById('sorting-cfg-saved');
+  if (tip) { tip.style.display = 'inline'; setTimeout(() => tip.style.display = 'none', 2000); }
+}
+
+function loadSortingConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sorting_box_configs') || 'null');
+    if (!saved) return;
+    if (saved.box1) document.getElementById('sorting-box1').value = saved.box1;
+    if (saved.box2) document.getElementById('sorting-box2').value = saved.box2;
+    if (saved.box3) document.getElementById('sorting-box3').value = saved.box3;
+  } catch(e) {}
+}
+
 function setSortingToday() {
   document.getElementById('sorting-date').value = _fmtDate(new Date());
   loadSortingOrders();
@@ -11396,9 +11423,9 @@ function setSortingBoxType(orderNo, val) {
 async function autoBoxTypeAll() {
   const list = window._sortingOrdersRaw;
   if (!list.length) { alert('请先查询销货单'); return; }
-  const box1    = +document.getElementById('sorting-box1').value || 500;
-  const box2    = +document.getElementById('sorting-box2').value || 2000;
-  const box3    = +document.getElementById('sorting-box3').value || 5000;
+  const box1    = +document.getElementById('sorting-box1').value || 40000;
+  const box2    = +document.getElementById('sorting-box2').value || 85000;
+  const box3    = +document.getElementById('sorting-box3').value || 198000;
   const account = (document.getElementById('sorting-account') || {}).value || 'all';
   const nos     = list.map(o => o.number).join(',');
   try {
@@ -11464,9 +11491,9 @@ async function createSortingBatch() {
   }
   const batchno = (document.getElementById('sorting-batchno').value || '').trim();
   if (!batchno) { alert('请填写批次号'); return; }
-  const box1 = +document.getElementById('sorting-box1').value || 500;
-  const box2 = +document.getElementById('sorting-box2').value || 2000;
-  const box3 = +document.getElementById('sorting-box3').value || 5000;
+  const box1 = +document.getElementById('sorting-box1').value || 40000;
+  const box2 = +document.getElementById('sorting-box2').value || 85000;
+  const box3 = +document.getElementById('sorting-box3').value || 198000;
 
   const btn = document.getElementById('sorting-create-btn');
   btn.disabled = true;
@@ -11753,7 +11780,8 @@ async function _brm_doDeleteAdmin() {
 }
 
 // ── 批次详情 Modal ────────────────────────────────────────────────────────────
-let _bdmBoxes = [];  // 全量 boxes，用于搜索过滤
+let _bdmBoxes    = [];  // 全量 boxes，用于搜索过滤
+let _bdmBoxCaps  = {1: 500, 2: 2000, 3: 5000};  // 当前批次箱型容积，由 API 返回覆盖
 
 async function openBatchDetail(batchno) {
   const modal = document.getElementById('batch-detail-modal');
@@ -11790,7 +11818,8 @@ async function openBatchDetail(batchno) {
       orderList.length ? `<span style="color:#888;font-size:11px;">${orderList.join(' · ')}</span>` : '',
     ].filter(Boolean).map(s=>`<div style="white-space:nowrap;">${s}</div>`).join('');
 
-    _bdmBoxes = d.boxes;
+    _bdmBoxes   = d.boxes;
+    _bdmBoxCaps = d.box_configs || {1: 500, 2: 2000, 3: 5000};
     _renderBatchDetail(_bdmBoxes);
   } catch(e) {
     document.getElementById('bdm-content').innerHTML = `<div style="color:#c0392b;padding:16px;">请求失败：${e.message}</div>`;
@@ -11803,7 +11832,7 @@ function _renderBatchDetail(boxes) {
     return;
   }
   const boxTypeMap = {1:'小箱', 2:'中箱', 3:'大箱'};
-  const BOX_CAP = {1: 500, 2: 2000, 3: 5000};  // 与 UI 默认保持一致
+  const BOX_CAP = _bdmBoxCaps;  // 从批次记录读取，非硬编码
   const html = boxes.map(bx => {
     const totalQty  = bx.items.reduce((s,it) => s + it.qty, 0);
     const boxVol    = bx.box_vol || 0;
@@ -11856,7 +11885,7 @@ function _renderBatchDetail(boxes) {
           <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">规格</th>
           <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">客户</th>
           <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">数量</th>
-          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">尺寸(mm)</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">尺寸(cm)</th>
           <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">单品体积(cm³)</th>
           <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">合计体积(cm³)</th>
         </tr></thead>
