@@ -204,6 +204,7 @@ def _admin_path_required():
         '/sync/coverage-status', '/sync/realtime-health',
         '/supplier-cache/status', '/supplier-cache/refresh-dry-run', '/supplier-cache/refresh',
         '/sales-cache/status', '/sales-cache-refresh', '/sales-cache-cleanup',
+        '/sales-order-request-refresh-dry-run', '/sales-order-request-refresh',
         '/clear-supplier-cache', '/admin/users',
         '/attachments/status', '/attachments/refresh-dry-run', '/attachments/refresh',
         '/attachments/history-backfill-dry-run', '/attachments/history-backfill',
@@ -4089,11 +4090,19 @@ def _sales_order_request_from_webhook_payload(payload, account, number):
 
 def _cache_upsert_sales_order_request(conn, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    account = order.get('account') or ''
+    number = order.get('number') or ''
+    internal_id = order.get('internalId') or ''
+    if internal_id and number and number != f'internal:{internal_id}':
+        conn.execute(
+            'DELETE FROM sales_order_requests WHERE account = ? AND number = ? AND internal_id = ?',
+            (account, f'internal:{internal_id}', internal_id),
+        )
     if db_backend.is_mssql_connection(conn):
         return db_backend.upsert_by_key(conn, 'sales_order_requests', {
-            'account': order.get('account') or '',
-            'number': order.get('number') or '',
-            'internal_id': order.get('internalId') or '',
+            'account': account,
+            'number': number,
+            'internal_id': internal_id,
             'date': order.get('date') or '',
             'customer_name': order.get('customerName') or '',
             'total_qty': _num(order.get('totalQty')),
@@ -4131,11 +4140,19 @@ def _cache_upsert_sales_order_request(conn, order):
 
 def _cache_upsert_sales_order_request_detail(conn, order):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    account = order.get('account') or ''
+    number = order.get('number') or ''
+    internal_id = order.get('internalId') or ''
+    if internal_id and number and number != f'internal:{internal_id}':
+        conn.execute(
+            'DELETE FROM sales_order_request_details WHERE account = ? AND number = ? AND internal_id = ?',
+            (account, f'internal:{internal_id}', internal_id),
+        )
     if db_backend.is_mssql_connection(conn):
         return db_backend.upsert_by_key(conn, 'sales_order_request_details', {
-            'account': order.get('account') or '',
-            'number': order.get('number') or '',
-            'internal_id': order.get('internalId') or '',
+            'account': account,
+            'number': number,
+            'internal_id': internal_id,
             'date': order.get('date') or '',
             'data_json': json.dumps(order, ensure_ascii=False),
             'updated_at': now,
@@ -4172,6 +4189,117 @@ def _cache_sales_order_request_from_webhook(account, number, payload):
         reason='sales_order_request_webhook_cached',
         message=f'sales_order webhook cached locally: {order.get("number")}',
     )
+
+
+def _sales_order_request_list_path():
+    cfg = _load_runtime_config()
+    return str(
+        os.environ.get('QIHANG_SALES_ORDER_REQUEST_LIST_PATH')
+        or cfg.get('sales_order_request_list_path')
+        or cfg.get('jdy_sales_order_request_list_path')
+        or ''
+    ).strip()
+
+
+def _sales_order_request_build_filters(query, mode='number'):
+    query = str(query or '').strip()
+    filters = {'page': 1, 'pageSize': 20}
+    if not query:
+        return filters
+    if mode == 'internal_id':
+        filters['id'] = query
+    elif mode == 'internal_id_as_number':
+        filters['number'] = query
+    else:
+        filters['number'] = query
+    return filters
+
+
+def _sales_order_request_candidate_matches(row, query, mode='number'):
+    query = str(query or '').strip()
+    if not query:
+        return True
+    values = {
+        str(_first_value(row, ['id', 'billId', 'fid'], '') or '').strip(),
+        str(_first_value(row, ['number', 'billNo', 'billNumber', 'orderNo', 'orderNumber'], '') or '').strip(),
+    }
+    if mode == 'internal_id':
+        return query in values
+    if mode == 'internal_id_as_number':
+        return query in values
+    return query in values
+
+
+def _sales_order_request_fetch_preview(account, query, mode='number', endpoint=''):
+    path = str(endpoint or _sales_order_request_list_path()).strip()
+    query = str(query or '').strip()
+    if not query:
+        return {
+            'success': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': 'missing sales order request number or internal_id',
+        }
+    if not path:
+        return {
+            'success': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'error': 'sales order request list endpoint is not configured',
+            'required_config': 'QIHANG_SALES_ORDER_REQUEST_LIST_PATH or ai_config.sales_order_request_list_path',
+        }
+    if not path.startswith('/jdyscm/') or not path.endswith('/list'):
+        return {
+            'success': False,
+            'called_jdy': False,
+            'would_call_jdy': False,
+            'endpoint': path,
+            'error': 'unsafe endpoint; expected /jdyscm/.../list',
+        }
+    cli, account_name = _sales_client_for_account(account)
+    if not cli:
+        return {'success': False, 'called_jdy': False, 'would_call_jdy': False, 'error': f'account not configured: {account or "-"}'}
+    filters = _sales_order_request_build_filters(query, mode)
+    result = cli.get_sales_order_requests(path, page=1, page_size=20, filters=filters)
+    rows = [r for r in (result.get('list') or []) if isinstance(r, dict)]
+    matches = [r for r in rows if _sales_order_request_candidate_matches(r, query, mode)]
+    preview = [_sales_order_request_projection(_normalize_sales_order_request(r, account_name, source='jdy_sales_order_request')) for r in matches[:10]]
+    return {
+        'success': True,
+        'called_jdy': True,
+        'would_call_jdy': True,
+        'endpoint': path,
+        'filter': result.get('filter') or filters,
+        'account': account_name,
+        'query': query,
+        'mode': mode,
+        'returned': len(rows),
+        'matched': len(matches),
+        'preview': preview,
+        'raw_total': result.get('total'),
+        '_matches': matches,
+    }
+
+
+def _refresh_sales_order_request_from_jdy(account, query, mode='number', endpoint=''):
+    preview = _sales_order_request_fetch_preview(account, query, mode=mode, endpoint=endpoint)
+    if not preview.get('success'):
+        return preview
+    matches = preview.pop('_matches', [])
+    normalized = [
+        _normalize_sales_order_request(row, preview.get('account') or account, source='jdy_sales_order_request')
+        for row in matches
+    ]
+    with _sales_cache_conn() as conn:
+        for order in normalized:
+            _cache_upsert_sales_order_request(conn, order)
+            _cache_upsert_sales_order_request_detail(conn, order)
+        conn.commit()
+    return {
+        **preview,
+        'written': len(normalized),
+        'cache_source': 'sales_order_requests',
+    }
 
 
 def _read_cached_sales_orders(date_str, account='all', search=''):
@@ -14346,6 +14474,61 @@ def sales_order_request_detail(order_no):
         tb = traceback.format_exc()
         print(f'[ERROR] sales_order_request_detail: {tb}')
         return jsonify({'success': False, 'local_only': True, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/sales-order-request-refresh-dry-run', methods=['POST'])
+def sales_order_request_refresh_dry_run():
+    """Controlled read-only JDY probe for sales order request detail backfill."""
+    try:
+        body = request.get_json(silent=True) or {}
+        if str(body.get('confirm') or '').strip() != 'READ_ONLY_JDY':
+            return jsonify({
+                'success': False,
+                'dry_run': True,
+                'called_jdy': False,
+                'would_call_jdy': True,
+                'error': 'missing confirm=READ_ONLY_JDY',
+            }), 400
+        result = _sales_order_request_fetch_preview(
+            account=str(body.get('account') or '').strip(),
+            query=str(body.get('number') or body.get('internal_id') or '').strip(),
+            mode=str(body.get('mode') or ('internal_id' if body.get('internal_id') else 'number')).strip(),
+            endpoint=str(body.get('endpoint') or '').strip(),
+        )
+        result.pop('_matches', None)
+        return jsonify({**result, 'dry_run': True, 'would_write': False})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] sales_order_request_refresh_dry_run: {tb}')
+        return jsonify({'success': False, 'dry_run': True, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/sales-order-request-refresh', methods=['POST'])
+def sales_order_request_refresh():
+    """Backfill one sales order request into the local independent cache."""
+    try:
+        body = request.get_json(silent=True) or {}
+        if str(body.get('confirm') or '').strip() != 'REFRESH_SALES_ORDER_REQUEST':
+            return jsonify({
+                'success': False,
+                'dry_run': False,
+                'called_jdy': False,
+                'would_call_jdy': True,
+                'would_write': True,
+                'error': 'missing confirm=REFRESH_SALES_ORDER_REQUEST',
+            }), 400
+        result = _refresh_sales_order_request_from_jdy(
+            account=str(body.get('account') or '').strip(),
+            query=str(body.get('number') or body.get('internal_id') or '').strip(),
+            mode=str(body.get('mode') or ('internal_id' if body.get('internal_id') else 'number')).strip(),
+            endpoint=str(body.get('endpoint') or '').strip(),
+        )
+        status = 200 if result.get('success') else 400
+        return jsonify({**result, 'dry_run': False, 'would_write': True}), status
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] sales_order_request_refresh: {tb}')
+        return jsonify({'success': False, 'dry_run': False, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
 
 
 @app.route('/local-products', methods=['GET'])
