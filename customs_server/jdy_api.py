@@ -371,6 +371,23 @@ class JDYClient:
         items = result.get('items') or result.get('list') or []
         return items[0] if items else result
 
+    def get_sales_order_requests(self, list_path, page=1, page_size=100, filters=None):
+        """Read sales order requests from a configured JDY list endpoint."""
+        path = str(list_path or '').strip()
+        if not path.startswith('/jdyscm/') or not path.endswith('/list'):
+            raise ValueError('sales order request list_path must look like /jdyscm/.../list')
+        f = {'page': page, 'pageSize': page_size}
+        if filters:
+            f.update({k: v for k, v in dict(filters).items() if v not in (None, '')})
+        result = self._request_with_retry('POST', path,
+                                          body={'filter': f},
+                                          query=self._api_query(),
+                                          timeout=120,
+                                          attempts=3)
+        items = result.get('items') or result.get('list') or []
+        total = result.get('records') or result.get('totalsize') or len(items)
+        return {'list': items, 'total': total, 'raw': result, 'endpoint': path, 'filter': f}
+
     def get_inventory_by_product(self, product_number, page=1, page_size=50):
         """
         查询商品即时库存（只读）。
