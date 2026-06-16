@@ -13591,6 +13591,8 @@ def _fetch_sales_quantity_map(cli, account, codes, order_date=''):
     cached = _read_cached_sales_product_quantities(account, codes)
     if not codes:
         return cached, []
+    # TODO: 暂停 JDY API 调用，改从自有云端拉取后删除此行
+    return cached, []
 
     errors = []
     workers = min(16, len(codes))
