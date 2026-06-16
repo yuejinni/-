@@ -3450,6 +3450,36 @@ def _sales_cache_conn():
         )
     ''')
     conn.execute('''
+        CREATE TABLE IF NOT EXISTS sales_order_requests (
+            account TEXT NOT NULL,
+            number TEXT NOT NULL,
+            internal_id TEXT,
+            date TEXT,
+            customer_name TEXT,
+            total_qty REAL DEFAULT 0,
+            total_amount REAL DEFAULT 0,
+            bill_status TEXT,
+            bill_status_name TEXT,
+            check_status TEXT,
+            source TEXT,
+            sync_status TEXT,
+            data_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (account, number)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS sales_order_request_details (
+            account TEXT NOT NULL,
+            number TEXT NOT NULL,
+            internal_id TEXT,
+            date TEXT,
+            data_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (account, number)
+        )
+    ''')
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS transfer_orders (
             account TEXT NOT NULL,
             number TEXT NOT NULL,
@@ -3665,6 +3695,10 @@ def _sales_cache_conn():
     ''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_orders_date ON sales_orders(date)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_orders_customer ON sales_orders(customer_name)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_date ON sales_order_requests(date)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_customer ON sales_order_requests(customer_name)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_internal ON sales_order_requests(account, internal_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_request_details_internal ON sales_order_request_details(account, internal_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_transfer_orders_date ON transfer_orders(date)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_transfer_orders_out_location ON transfer_orders(out_location)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_accessory_po_supplier ON accessory_purchase_orders(supplier_name)')
@@ -3991,6 +4025,155 @@ def _sales_order_list_projection(order):
     }
 
 
+def _normalize_sales_order_request_entry(entry):
+    return {
+        'code': _first_value(entry, ['productNumber', 'productCode', 'number', 'code'], ''),
+        'name': _first_value(entry, ['productName', 'name', 'goodsName'], ''),
+        'spec': _first_value(entry, ['specification', 'spec', 'model', 'skuName'], ''),
+        'barcode': _first_value(entry, ['barCode', 'barcode', 'productBarcode'], ''),
+        'qty': _num(_first_value(entry, ['qty', 'mainQty', 'quantity', 'baseQty'], 0)),
+        'unit': _first_value(entry, ['unitName', 'unit', 'baseUnitName'], ''),
+        'price': _num(_first_value(entry, ['price', 'taxPrice'], 0)),
+        'amount': _num(_first_value(entry, ['amount', 'taxAmount', 'totalAmount'], 0)),
+        'location': _first_value(entry, ['location', 'locationName', 'warehouseName'], ''),
+    }
+
+
+def _normalize_sales_order_request(row, account, source='jdy_sales_order'):
+    row = row or {}
+    entries = [
+        _normalize_sales_order_request_entry(e)
+        for e in (row.get('entries') or row.get('items') or row.get('details') or [])
+        if isinstance(e, dict)
+    ]
+    internal_id = str(_first_value(row, ['id', 'billId', 'fid'], '') or '').strip()
+    visible_number = str(_first_value(row, ['number', 'billNo', 'billNumber', 'orderNo', 'orderNumber'], '') or '').strip()
+    number = visible_number or (f'internal:{internal_id}' if internal_id else '')
+    return {
+        'number': number,
+        'internalId': internal_id,
+        'date': str(_first_value(row, ['date', 'billDate', 'createTime'], ''))[:10],
+        'customerName': _first_value(row, ['customerName', 'customer', 'customer_name'], ''),
+        'account': account,
+        'totalQty': _num(_first_value(row, ['totalQty', 'qty', 'quantity', 'totalQuantity'], 0)),
+        'totalAmount': _num(_first_value(row, ['totalAmount', 'amount', 'taxAmount'], 0)),
+        'billStatus': _first_value(row, ['billStatus', 'billstatus', 'status'], ''),
+        'billStatusName': _first_value(row, ['billStatusName', 'statusName'], ''),
+        'checkStatus': _first_value(row, ['checkStatus', 'check_status'], ''),
+        'source': source,
+        'syncStatus': 'placeholder' if not visible_number else 'synced',
+        'entries': entries,
+        '_product_codes': [e.get('code') for e in entries if e.get('code')],
+        '_raw': row,
+    }
+
+
+def _sales_order_request_from_webhook_payload(payload, account, number):
+    payload = payload or {}
+    data = payload.get('data') if isinstance(payload.get('data'), dict) else {}
+    internal_id = str(data.get('id') or number or '').strip()
+    row = dict(data)
+    if internal_id and not row.get('id'):
+        row['id'] = internal_id
+    row.setdefault('billStatus', data.get('billstatus'))
+    order = _normalize_sales_order_request(row, account, source='webhook')
+    order['number'] = order.get('number') or (f'internal:{internal_id}' if internal_id else '')
+    order['internalId'] = order.get('internalId') or internal_id
+    order['webhookAction'] = str(payload.get('operation') or payload.get('action') or payload.get('event') or '')
+    order['webhookBizType'] = str(payload.get('bizType') or '')
+    order['webhookMsgId'] = str(payload.get('msgId') or payload.get('msg_id') or '')
+    order['syncStatus'] = 'webhook_placeholder'
+    order['_webhook_payload'] = payload
+    return order
+
+
+def _cache_upsert_sales_order_request(conn, order):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return db_backend.upsert_by_key(conn, 'sales_order_requests', {
+            'account': order.get('account') or '',
+            'number': order.get('number') or '',
+            'internal_id': order.get('internalId') or '',
+            'date': order.get('date') or '',
+            'customer_name': order.get('customerName') or '',
+            'total_qty': _num(order.get('totalQty')),
+            'total_amount': _num(order.get('totalAmount')),
+            'bill_status': str(order.get('billStatus') or ''),
+            'bill_status_name': str(order.get('billStatusName') or ''),
+            'check_status': str(order.get('checkStatus') or ''),
+            'source': str(order.get('source') or ''),
+            'sync_status': str(order.get('syncStatus') or ''),
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
+    conn.execute('''
+        INSERT OR REPLACE INTO sales_order_requests
+        (account, number, internal_id, date, customer_name, total_qty, total_amount,
+         bill_status, bill_status_name, check_status, source, sync_status, data_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        order.get('account') or '',
+        order.get('number') or '',
+        order.get('internalId') or '',
+        order.get('date') or '',
+        order.get('customerName') or '',
+        _num(order.get('totalQty')),
+        _num(order.get('totalAmount')),
+        str(order.get('billStatus') or ''),
+        str(order.get('billStatusName') or ''),
+        str(order.get('checkStatus') or ''),
+        str(order.get('source') or ''),
+        str(order.get('syncStatus') or ''),
+        json.dumps(order, ensure_ascii=False),
+        now,
+    ))
+
+
+def _cache_upsert_sales_order_request_detail(conn, order):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if db_backend.is_mssql_connection(conn):
+        return db_backend.upsert_by_key(conn, 'sales_order_request_details', {
+            'account': order.get('account') or '',
+            'number': order.get('number') or '',
+            'internal_id': order.get('internalId') or '',
+            'date': order.get('date') or '',
+            'data_json': json.dumps(order, ensure_ascii=False),
+            'updated_at': now,
+        }, ['account', 'number'])
+    conn.execute('''
+        INSERT OR REPLACE INTO sales_order_request_details
+        (account, number, internal_id, date, data_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        order.get('account') or '',
+        order.get('number') or '',
+        order.get('internalId') or '',
+        order.get('date') or '',
+        json.dumps(order, ensure_ascii=False),
+        now,
+    ))
+
+
+def _cache_sales_order_request_from_webhook(account, number, payload):
+    account = str(account or '').strip()
+    order = _sales_order_request_from_webhook_payload(payload, account, number)
+    if not account or not order.get('number'):
+        return _webhook_process_result(
+            reason='sales_order_request_missing_key',
+            message='recorded only sales_order webhook: missing account or id',
+        )
+    with _sales_cache_conn() as conn:
+        _cache_upsert_sales_order_request(conn, order)
+        _cache_upsert_sales_order_request_detail(conn, order)
+        conn.commit()
+    return _webhook_process_result(
+        ok=True,
+        cached=True,
+        reason='sales_order_request_webhook_cached',
+        message=f'sales_order webhook cached locally: {order.get("number")}',
+    )
+
+
 def _read_cached_sales_orders(date_str, account='all', search=''):
     with _sales_cache_conn() as conn:
         clauses = ['date = ?']
@@ -4067,6 +4250,91 @@ def _read_cached_sales_detail(order_no, account=''):
                 ORDER BY updated_at DESC
                 LIMIT 1
             ''', (order_no,)).fetchone()
+    return json.loads(row['data_json']) if row else None
+
+
+def _sales_order_request_projection(order):
+    return {
+        'number': order.get('number') or '',
+        'internalId': order.get('internalId') or '',
+        'date': order.get('date') or '',
+        'customerName': order.get('customerName') or '',
+        'account': order.get('account') or '',
+        'totalQty': order.get('totalQty') or 0,
+        'totalAmount': order.get('totalAmount') or 0,
+        'billStatusName': order.get('billStatusName') or '',
+        'syncStatus': order.get('syncStatus') or '',
+        'source': order.get('source') or '',
+        'entriesCount': len(order.get('entries') or []),
+        'updatedAt': order.get('updatedAt') or order.get('updated_at') or '',
+    }
+
+
+def _read_cached_sales_order_requests(date_str='', account='all', search='', updated_from='', updated_to='', limit=500):
+    limit = max(1, min(int(limit or 500), 1000))
+    conn = _sales_readonly_conn()
+    if not conn:
+        return []
+    try:
+        if not db_backend.table_exists(conn, 'sales_order_requests'):
+            return []
+        clauses = ['1 = 1']
+        params = []
+        if date_str:
+            clauses.append('date = ?')
+            params.append(str(date_str)[:10])
+        if account and account != 'all':
+            clauses.append('account = ?')
+            params.append(account)
+        if updated_from:
+            clauses.append('updated_at >= ?')
+            params.append(str(updated_from)[:19])
+        if updated_to:
+            clauses.append('updated_at <= ?')
+            params.append(str(updated_to)[:19])
+        if search:
+            clauses.append('(LOWER(number) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(internal_id) LIKE ? OR LOWER(data_json) LIKE ?)')
+            kw = f'%{search.lower()}%'
+            params.extend([kw, kw, kw, kw])
+        rows = conn.execute(f'''
+            SELECT data_json, updated_at
+            FROM sales_order_requests
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, date DESC, number DESC
+            LIMIT ?
+        ''', [*params, limit]).fetchall()
+    finally:
+        conn.close()
+    items = []
+    for row in rows:
+        order = json.loads(row['data_json'])
+        order['updatedAt'] = row['updated_at'] or ''
+        items.append(_sales_order_request_projection(order))
+    return items
+
+
+def _read_cached_sales_order_request_detail(order_no, account=''):
+    conn = _sales_readonly_conn()
+    if not conn:
+        return None
+    try:
+        if not db_backend.table_exists(conn, 'sales_order_request_details'):
+            return None
+        if account and account != 'all':
+            row = conn.execute('''
+                SELECT data_json FROM sales_order_request_details
+                WHERE account = ? AND (number = ? OR internal_id = ?)
+                LIMIT 1
+            ''', (account, order_no, order_no)).fetchone()
+        else:
+            row = conn.execute('''
+                SELECT data_json FROM sales_order_request_details
+                WHERE number = ? OR internal_id = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ''', (order_no, order_no)).fetchone()
+    finally:
+        conn.close()
     return json.loads(row['data_json']) if row else None
 
 
@@ -6243,6 +6511,8 @@ def _catalog_cache_status_payload():
 SYNC_COVERAGE_TABLES = [
     'sales_orders',
     'sales_details',
+    'sales_order_requests',
+    'sales_order_request_details',
     'sales_product_quantities',
     'jdy_products',
     'jdy_suppliers',
@@ -10145,10 +10415,10 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
     payload_hash = _webhook_payload_hash(payload)
     payload_json = json.dumps(payload, ensure_ascii=False)
     sales_order_request = _is_sales_order_request_resource(resource)
-    safe_resource = _is_webhook_safe_auto_resource(resource) and not sales_order_request
+    safe_resource = _is_webhook_safe_auto_resource(resource) or sales_order_request
     initial_status = 'pending' if safe_resource else 'done'
     if sales_order_request:
-        initial_error = 'recorded only sales_order webhook; local sales_order cache not implemented'
+        initial_error = ''
     else:
         initial_error = '' if safe_resource else f'recorded only unsafe resource: {resource or "unknown"}'
     processed_at = '' if safe_resource else now
@@ -10170,7 +10440,7 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
             inserted += 1
         conn.commit()
     if sales_order_request:
-        message = f'recorded only {inserted} sales_order event(s)'
+        message = f'queued {inserted} sales_order event(s)'
     else:
         message = f'queued {inserted} event(s)' if safe_resource else f'recorded only {inserted} unsafe event(s)'
     _webhook_state.update({'last_event_at': now, 'pending': _webhook_pending_count(), 'message': message})
@@ -10190,8 +10460,6 @@ def _webhook_status_for_queue(queue='normal'):
 
 def _is_webhook_safe_auto_resource(resource):
     resource = str(resource or '').strip().lower()
-    if _is_sales_order_request_resource(resource):
-        return False
     return (
         resource in WEBHOOK_SAFE_AUTO_RESOURCES
         or 'sal_bill' in resource
@@ -10232,7 +10500,7 @@ def _claim_webhook_event(queue='normal'):
                     SELECT * FROM webhook_events
                     WHERE status = ?
                       AND (
-                        resource IN ('sales', 'sal_bill', 'sal_bill_outbound', 'delivery', 'transfer', 'purchase_order', 'accessory_purchase')
+                        resource IN ('sales', 'sales_order', 'sal_bill_order', 'saleorder', 'sal_bill', 'sal_bill_outbound', 'delivery', 'transfer', 'purchase_order', 'accessory_purchase')
                         OR (resource LIKE '%sal_bill%' AND resource NOT LIKE '%sal_bill_order%')
                         OR resource LIKE '%delivery%'
                         OR resource LIKE '%transfer%'
@@ -10398,15 +10666,14 @@ def _process_webhook_event(event):
         account = _jdy_account_from_payload(payload)
     is_sales_order_request = _is_sales_order_request_resource(resource)
     if is_sales_order_request:
+        payload = json.loads(event.get('payload_json') or '{}')
+        result = _cache_sales_order_request_from_webhook(account, number, payload)
         _log_event(
             'JDY_WEBHOOK',
-            f'recorded only sales_order webhook: resource={resource or "unknown"} account={account or "-"} number={number}',
+            f'sales_order webhook cached separately: resource={resource or "unknown"} '
+            f'account={account or "-"} number={number} reason={result.get("reason")}',
         )
-        return _webhook_process_result(
-            ok=True,
-            reason='recorded_only_sales_order_webhook',
-            message='recorded only sales_order webhook; local sales_order cache not implemented',
-        )
+        return result
     is_sales_resource = resource in ('sales',) or (
         ('sal_bill' in resource and not is_sales_order_request) or 'delivery' in resource
     )
@@ -14015,6 +14282,70 @@ def sales_orders_list():
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/sales-order-requests', methods=['GET'])
+def sales_order_requests_list():
+    """销货订单独立本地缓存，只读本地库，不调用 JDY。"""
+    try:
+        date_str = request.args.get('date') or ''
+        account = request.args.get('account') or 'all'
+        search = (request.args.get('search') or '').strip().lower()
+        updated_from = (request.args.get('updated_from') or '').strip()
+        updated_to = (request.args.get('updated_to') or '').strip()
+        limit = request.args.get('limit') or 500
+        items = _read_cached_sales_order_requests(
+            date_str=date_str,
+            account=account,
+            search=search,
+            updated_from=updated_from,
+            updated_to=updated_to,
+            limit=limit,
+        )
+        return jsonify({
+            'success': True,
+            'local_only': True,
+            'called_jdy': False,
+            'cache_source': 'sales_order_requests',
+            'items': items,
+            'count': len(items),
+            'summary': {
+                'qty': sum(float(x.get('totalQty') or 0) for x in items),
+                'amount': sum(float(x.get('totalAmount') or 0) for x in items),
+            },
+            'note': '销货订单独立本地缓存；不会读取 sales_orders，也不会实时调用 JDY。',
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] sales_order_requests_list: {tb}')
+        return jsonify({'success': False, 'local_only': True, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/sales-order-request/<order_no>', methods=['GET'])
+def sales_order_request_detail(order_no):
+    """销货订单详情独立本地缓存，只读本地库，不调用 JDY。"""
+    try:
+        account = request.args.get('account', 'all')
+        cached = _read_cached_sales_order_request_detail(order_no, account)
+        if not cached:
+            return jsonify({
+                'success': False,
+                'local_only': True,
+                'called_jdy': False,
+                'cache_source': 'sales_order_request_details',
+                'error': 'sales order request not found in local cache',
+            }), 404
+        return jsonify({
+            'success': True,
+            'local_only': True,
+            'called_jdy': False,
+            'cache_source': 'sales_order_request_details',
+            'data': cached,
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f'[ERROR] sales_order_request_detail: {tb}')
+        return jsonify({'success': False, 'local_only': True, 'called_jdy': False, 'error': str(e), 'traceback': tb}), 500
 
 
 @app.route('/local-products', methods=['GET'])
