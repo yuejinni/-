@@ -3860,6 +3860,57 @@ def _cache_upsert_sales_detail(conn, order):
     ))
 
 
+def _delete_cached_sales_order_for_webhook(conn, account, internal_id):
+    account = str(account or '').strip()
+    internal_id = str(internal_id or '').strip()
+    if not account or not internal_id:
+        return {'orders': 0, 'details': 0, 'numbers': []}
+
+    matched_numbers = []
+    rows = conn.execute(
+        'SELECT number, data_json FROM sales_orders WHERE account = ?',
+        (account,),
+    ).fetchall()
+    for row in rows:
+        try:
+            data = json.loads(row['data_json'] or '{}')
+        except Exception:
+            data = {}
+        raw = data.get('_raw') if isinstance(data, dict) else {}
+        candidates = (
+            data.get('id') if isinstance(data, dict) else '',
+            data.get('billId') if isinstance(data, dict) else '',
+            raw.get('id') if isinstance(raw, dict) else '',
+            raw.get('billId') if isinstance(raw, dict) else '',
+        )
+        if any(str(value or '').strip() == internal_id for value in candidates):
+            number = str(row['number'] or '').strip()
+            if number:
+                matched_numbers.append(number)
+
+    if not matched_numbers:
+        return {'orders': 0, 'details': 0, 'numbers': []}
+
+    orders_deleted = 0
+    details_deleted = 0
+    for number in sorted(set(matched_numbers)):
+        cur = conn.execute(
+            'DELETE FROM sales_orders WHERE account = ? AND number = ?',
+            (account, number),
+        )
+        orders_deleted += max(cur.rowcount, 0)
+        cur = conn.execute(
+            'DELETE FROM sales_details WHERE account = ? AND number = ?',
+            (account, number),
+        )
+        details_deleted += max(cur.rowcount, 0)
+    return {
+        'orders': orders_deleted,
+        'details': details_deleted,
+        'numbers': sorted(set(matched_numbers)),
+    }
+
+
 def _cache_upsert_sales_product_quantity(conn, account, code, stock, factory_qty, error=''):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if db_backend.is_mssql_connection(conn):
@@ -10361,13 +10412,22 @@ def _process_webhook_event(event):
         biz_type = str(event.get('biz_type') or '').lower()
         action = str(payload.get('operation') or payload.get('action') or event.get('action') or '').lower()
 
-        # delete events: don't try to fetch, daily compare covers
+        # Delete events carry the JDY internal id. Remove matching local cache rows immediately.
         if action == 'delete' or 'delete' in biz_type:
-            _log_event('JDY_WEBHOOK', f'sales delete event recorded: resource={resource} bill_no={number} account={account_name}')
+            with _sales_cache_conn() as conn:
+                deleted = _delete_cached_sales_order_for_webhook(conn, account_name, number)
+            _log_event(
+                'JDY_WEBHOOK',
+                f'sales delete event applied: resource={resource} bill_no={number} account={account_name} '
+                f'orders={deleted["orders"]} details={deleted["details"]} numbers={",".join(deleted["numbers"]) or "-"}',
+            )
             return _webhook_process_result(
                 ok=True,
-                reason='sales_delete_recorded',
-                message=f'sales delete event recorded: daily compare covers (bill_no={number})',
+                reason='sales_delete_applied',
+                message=(
+                    f'sales delete event applied: orders={deleted["orders"]}; '
+                    f'details={deleted["details"]}; bill_no={number}'
+                ),
             )
 
         # check if we have a visible sales order number (not just internal data.id)
