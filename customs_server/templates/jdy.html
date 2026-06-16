@@ -2276,6 +2276,13 @@ td.code { font-family: monospace; color: #1a2c5b; }
 .sorting-order-item:only-child  { border-radius:8px; }
 .sorting-order-item:hover { background:#fafafa; }
 .sorting-order-item.selected { background:#f0f4ff; }
+.sorting-order-item.rush { background:#fff7e6; }
+.rush-tag {
+  font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;cursor:pointer;
+  border:1px solid #ffb38a;color:#d4380d;background:#fff;flex-shrink:0;
+  line-height:1.6;transition:background .15s,color .15s;
+}
+.rush-tag.active { background:#d4380d;color:#fff;border-color:#d4380d; }
 .sorting-order-cb { width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:#1a2c5b; }
 .sorting-order-info { flex:1;min-width:0; }
 .sorting-order-no { font-size:13px;font-weight:600;color:#1a2c5b; }
@@ -4046,8 +4053,8 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <input id="sorting-search" placeholder="搜索客户 / 单号" style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none;flex:1;min-width:120px;"
                onkeydown="if(event.key==='Enter') loadSortingOrders()">
         <select id="sorting-sort-filter" style="border:1px solid #d9d9d9;border-radius:4px;padding:5px 8px;font-size:13px;outline:none;">
-          <option value="all">全部单据</option>
           <option value="unmatched">未生成批次</option>
+          <option value="all">全部单据</option>
           <option value="batched">已生成批次</option>
         </select>
         <button class="btn btn-primary" onclick="loadSortingOrders()">查询</button>
@@ -4123,6 +4130,54 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="empty" style="color:#aaa;font-size:13px;padding:8px 0;">暂无历史批次</div>
       </div>
     </div>
+
+    <!-- 加急单列表 -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div class="card-title" style="margin-bottom:0;color:#d4380d;">加急配货单</div>
+        <button class="btn btn-ghost btn-sm" onclick="loadRushOrders()">刷新</button>
+      </div>
+      <div id="sorting-rush-list">
+        <div class="empty" style="color:#aaa;font-size:13px;padding:8px 0;">暂无加急单，在上方订单行点击「急」标签即可加入</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 批次回退确认 Modal -->
+<div id="batch-revoke-modal" style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;width:460px;max-width:94vw;box-shadow:0 8px 40px rgba(0,0,0,.2);overflow:hidden;">
+    <div style="padding:16px 20px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-size:15px;font-weight:700;color:#1a2c5b;">批次回退确认</span>
+      <button onclick="document.getElementById('batch-revoke-modal').style.display='none'"
+              style="border:none;background:none;font-size:18px;cursor:pointer;color:#888;">✕</button>
+    </div>
+    <div id="brm-content" style="padding:20px;"></div>
+    <div id="brm-footer" style="padding:12px 20px;border-top:1px solid #f0f0f0;display:flex;gap:8px;justify-content:flex-end;"></div>
+  </div>
+</div>
+
+<!-- 批次详情 Modal -->
+<div id="batch-detail-modal" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.45);overflow-y:auto;">
+  <div style="background:#fff;border-radius:12px;max-width:860px;margin:40px auto;padding:0;box-shadow:0 8px 40px rgba(0,0,0,.18);">
+    <!-- 头部 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #f0f0f0;">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#1a2c5b;" id="bdm-title">批次详情</div>
+        <div style="font-size:12px;color:#888;margin-top:2px;" id="bdm-meta"></div>
+      </div>
+      <button onclick="closeBatchDetail()" style="font-size:20px;line-height:1;background:none;border:none;cursor:pointer;color:#aaa;padding:4px 8px;">✕</button>
+    </div>
+    <!-- 汇总栏 -->
+    <div id="bdm-summary" style="display:flex;gap:24px;padding:12px 20px;background:#f8f9fc;border-bottom:1px solid #f0f0f0;flex-wrap:wrap;font-size:13px;"></div>
+    <!-- 搜索 -->
+    <div style="padding:10px 20px;border-bottom:1px solid #f5f5f5;">
+      <input id="bdm-search" placeholder="搜索货号 / 条码 / 规格 / 客户"
+             style="width:100%;box-sizing:border-box;border:1px solid #d9d9d9;border-radius:4px;padding:6px 10px;font-size:13px;outline:none;"
+             oninput="filterBatchDetail()">
+    </div>
+    <!-- 内容 -->
+    <div id="bdm-content" style="padding:16px 20px;max-height:60vh;overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -4389,6 +4444,7 @@ function showPage(name) {
     if (!document.getElementById('sorting-date').value) setSortingToday();
     if (!window._sortingOrdersLoaded) loadSortingOrders();
     loadSortingBatches();
+    loadRushOrders();
   }
   if (name === 'sorting-dashboard') loadSortingDashboard();
 }
@@ -11185,6 +11241,7 @@ window._sortingOrdersRaw = [];       // [{number, customerName, totalQty, totalA
 window._sortingSelected = new Set(); // 已选单号
 window._sortingBoxTypes = {};        // {orderNo: 1/2/3/'auto'}
 window._batchedOrders   = new Set(); // 已在批次中的单号
+window._rushOrders      = new Set(); // 勾了"加急"的单号
 
 function _sortingFmt(d) {
   return d ? String(d).slice(0, 10) : '';
@@ -11192,6 +11249,7 @@ function _sortingFmt(d) {
 
 function setSortingToday() {
   document.getElementById('sorting-date').value = _fmtDate(new Date());
+  loadSortingOrders();
 }
 
 function setSortingDate(offset) {
@@ -11228,7 +11286,13 @@ async function loadSortingOrders() {
 
 function _renderSortingOrders() {
   const wrap = document.getElementById('sorting-order-list');
-  const list = window._sortingOrdersRaw;
+  const raw  = window._sortingOrdersRaw;
+
+  // 客户端补充过滤：未生成批次 → 同时排除已入加急的单
+  const sortFilter = (document.getElementById('sorting-sort-filter') || {}).value || 'all';
+  const list = (sortFilter === 'unmatched')
+    ? raw.filter(o => !window._rushOrders.has(o.number))
+    : raw;
 
   // 显示/隐藏全选栏
   const selAllBar = document.getElementById('sorting-select-all-bar');
@@ -11250,16 +11314,23 @@ function _renderSortingOrders() {
   }
 
   wrap.innerHTML = list.map(o => {
-    const sel      = window._sortingSelected.has(o.number);
+    const sel       = window._sortingSelected.has(o.number);
+    const isRush    = window._rushOrders.has(o.number);
     const isBatched = window._batchedOrders.has(o.number);
-    const boxVal   = window._sortingBoxTypes[o.number] || 'auto';
+    const boxVal    = window._sortingBoxTypes[o.number] || 'auto';
     const batchedBadge = isBatched
       ? `<span style="font-size:11px;background:#d9f7be;color:#389e0d;padding:1px 6px;border-radius:10px;margin-left:6px;">已生成</span>`
       : '';
-    return `<div class="sorting-order-item${sel?' selected':''}" onclick="toggleSortingOrder('${o.number}')">
+    const rushBadge = isRush
+      ? `<span style="font-size:11px;background:#fff1f0;color:#d4380d;padding:1px 6px;border-radius:10px;margin-left:4px;">已入加急</span>`
+      : '';
+    let cls = 'sorting-order-item';
+    if (sel)    cls += ' selected';
+    if (isRush) cls += ' rush';
+    return `<div class="${cls}" onclick="toggleSortingOrder('${o.number}')">
       <input class="sorting-order-cb" type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();toggleSortingOrder('${o.number}')">
       <div class="sorting-order-info">
-        <div class="sorting-order-no">${o.number}${batchedBadge}</div>
+        <div class="sorting-order-no">${o.number}${batchedBadge}${rushBadge}</div>
         <div class="sorting-order-meta">${o.customerName||''} · ${o.account||''} · ${_sortingFmt(o.date)}</div>
       </div>
       <div class="sorting-order-right" style="align-items:flex-end;gap:4px;">
@@ -11274,9 +11345,13 @@ function _renderSortingOrders() {
             <option value="2"${boxVal==='2'?' selected':''}>中箱</option>
             <option value="3"${boxVal==='3'?' selected':''}>大箱</option>
           </select>
-          <span id="box-hint-${o.number}" style="font-size:11px;color:#888;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
         </div>
-        <div class="sorting-order-qty">${o.totalQty||0} 件</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div class="sorting-order-qty">${o.totalQty||0} 件</div>
+          <button class="rush-tag${isRush?' active':''}"
+                  onclick="event.stopPropagation();toggleRushOrder('${o.number}')"
+                  title="${isRush?'点击移出加急列表':'点击加入加急列表'}">急</button>
+        </div>
         <div class="sorting-order-amount">¥${(+o.totalAmount||0).toFixed(2)}</div>
       </div>
     </div>`;
@@ -11366,8 +11441,27 @@ function _genSortingBatchno() {
 }
 
 async function createSortingBatch() {
-  const sel = [...window._sortingSelected];
-  if (!sel.length) { alert('请先勾选销货单'); return; }
+  const allSel  = [...window._sortingSelected];
+  if (!allSel.length) { alert('请先勾选销货单'); return; }
+
+  // 加急单不走普通批次
+  const rushNos  = allSel.filter(no => window._rushOrders.has(no));
+  const sel      = allSel.filter(no => !window._rushOrders.has(no));
+  if (!sel.length) {
+    alert(`已勾选的 ${rushNos.length} 张单全部为加急单，不走普通分拣批次。\n请在下方「加急配货单」区域管理。`);
+    return;
+  }
+  if (rushNos.length) {
+    // 有急单混在里面，静默跳过，结果里提示
+  }
+
+  // 重复批次警告
+  const alreadyBatched = sel.filter(no => window._batchedOrders.has(no));
+  if (alreadyBatched.length) {
+    const ok = confirm(`以下 ${alreadyBatched.length} 张单已生成过批次：\n${alreadyBatched.slice(0,5).join('\n')}${alreadyBatched.length>5?'\n...':''}
+\n确定要重复生成吗？`);
+    if (!ok) return;
+  }
   const batchno = (document.getElementById('sorting-batchno').value || '').trim();
   if (!batchno) { alert('请填写批次号'); return; }
   const box1 = +document.getElementById('sorting-box1').value || 500;
@@ -11404,6 +11498,9 @@ async function createSortingBatch() {
     if (d.ok) {
       const portRange = (d.port_min && d.port_max)
         ? `格口 ${d.port_min}~${d.port_max}` : '';
+      const rushSkipTip = rushNos.length
+        ? `<span style="font-size:12px;color:#d4380d;display:block;margin-top:4px;">已自动跳过 ${rushNos.length} 张加急单，请在下方「加急配货单」管理。</span>`
+        : '';
       resultEl.innerHTML = `<div class="sorting-result-card">
         <b>批次创建成功</b><br>
         批次号：${d.batchno}<br>
@@ -11411,6 +11508,7 @@ async function createSortingBatch() {
         收录订单：${d.orders_count} 张<br>
         分拣规则：${d.rules_count} 条${d.box_count ? '，箱数：' + d.box_count : ''}${portRange ? '，' + portRange : ''}<br>
         <span style="font-size:12px;color:#666;margin-top:6px;display:block;">本地 Agent 将在 30s 内自动同步规则</span>
+        ${rushSkipTip}
       </div>`;
       // 标记这些单已生成批次
       sel.forEach(no => window._batchedOrders.add(no));
@@ -11445,14 +11543,11 @@ async function loadSortingBatches() {
       const portRange = (b.port_min && b.port_max) ? `${b.port_min}~${b.port_max}` : '-';
       const portCount = b.port_count || '-';
       const boxCount  = b.box_count  || '-';
-      const orderList = Array.isArray(b.order_list) ? b.order_list : [];
-      const expandId  = `batch-expand-${i}`;
-      const orderRows = orderList.length
-        ? orderList.map(no => `<span style="display:inline-block;margin:2px 4px;font-size:11px;background:#f5f5f5;border-radius:4px;padding:1px 6px;">${no}</span>`).join('')
-        : '<span style="color:#aaa;font-size:11px;">无订单记录</span>';
+      const bn = b.batchno.replace(/'/g, '');
       return `<tr style="border-bottom:1px solid #f5f5f5;">
         <td style="padding:6px 8px;font-weight:600;color:#1a2c5b;">
-          <span style="cursor:pointer;" onclick="document.getElementById('${expandId}').style.display=document.getElementById('${expandId}').style.display==='none'?'table-row':'none'">▶ ${b.batchno}</span>
+          <span style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;"
+                onclick="openBatchDetail('${bn}')">📦 ${b.batchno}</span>
         </td>
         <td style="padding:6px 8px;color:#888;">v${b.ver}</td>
         <td style="padding:6px 8px;text-align:right;">${b.orders_count}</td>
@@ -11461,14 +11556,17 @@ async function loadSortingBatches() {
         <td style="padding:6px 8px;text-align:center;">${portRange}</td>
         <td style="padding:6px 8px;text-align:right;">${portCount}</td>
         <td style="padding:6px 8px;color:#888;">${(b.created_at||'').slice(0,16)}</td>
-      </tr>
-      <tr id="${expandId}" style="display:none;background:#fafafa;">
-        <td colspan="8" style="padding:8px 16px;font-size:12px;">${orderRows}</td>
+        <td style="padding:6px 8px;text-align:center;">
+          <button onclick="deleteSortingBatch('${bn}')"
+                  style="font-size:11px;padding:2px 8px;border:1px solid #ffb38a;border-radius:4px;cursor:pointer;background:#fff;color:#d4380d;white-space:nowrap;">
+            回退
+          </button>
+        </td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr style="border-bottom:2px solid #f0f0f0;">
-        <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">批次号</th>
+        <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">批次号（点击查看详情）</th>
         <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">版本</th>
         <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">订单数</th>
         <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">规则数</th>
@@ -11476,8 +11574,440 @@ async function loadSortingBatches() {
         <th style="padding:6px 8px;text-align:center;color:#555;font-weight:600;">格口范围</th>
         <th style="padding:6px 8px;text-align:right;color:#555;font-weight:600;">格口数</th>
         <th style="padding:6px 8px;text-align:left;color:#555;font-weight:600;">创建时间</th>
+        <th style="padding:6px 8px;text-align:center;color:#555;font-weight:600;">操作</th>
       </tr></thead>
       <tbody>${rows}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div style="color:#c0392b;font-size:12px;">加载失败：${e.message}</div>`;
+  }
+}
+
+// ── 批次回退多步流程 ──────────────────────────────────────────────────────────
+let _revokeModal_batchno = '';
+let _revokeModal_pollTimer = null;
+
+async function deleteSortingBatch(batchno) {
+  _revokeModal_batchno = batchno;
+  // 先查批次状态，再决定展示哪个流程
+  let status;
+  try {
+    const r = await fetch(`/sorting/batch/${encodeURIComponent(batchno)}/status`, {credentials:'same-origin'});
+    status = await r.json();
+    if (!status.ok) { alert(`查询批次状态失败：${status.msg}`); return; }
+  } catch(e) { alert(`查询批次状态失败：${e.message}`); return; }
+
+  const modal = document.getElementById('batch-revoke-modal');
+  modal.style.display = 'flex';
+  _brm_render(status);
+}
+
+function _brm_render(status) {
+  const batchno = _revokeModal_batchno;
+  const content = document.getElementById('brm-content');
+  const footer  = document.getElementById('brm-footer');
+
+  if (status.picking_count > 0) {
+    // ── 档3：已配货，需要管理员密码 ──────────────────────────────────────────
+    content.innerHTML = `
+      <div style="background:#fff2f0;border:1px solid #ffccc7;border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+        <div style="font-weight:700;color:#cf1322;margin-bottom:4px;">⚠️ 已有配货记录</div>
+        <div style="font-size:13px;color:#5c2a2a;">批次 <b>${batchno}</b> 已有 <b>${status.picking_count}</b> 件商品完成了配货扫码，强制回退需要管理员密码授权。</div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">管理员账号</label>
+        <input id="brm-user" type="text" value="admin" style="width:100%;border:1px solid #d9d9d9;border-radius:6px;padding:7px 10px;font-size:13px;">
+      </div>
+      <div>
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">管理员密码</label>
+        <input id="brm-pass" type="password" placeholder="请输入管理员密码" style="width:100%;border:1px solid #d9d9d9;border-radius:6px;padding:7px 10px;font-size:13px;" onkeydown="if(event.key==='Enter')document.getElementById('brm-confirm-admin').click()">
+      </div>`;
+    footer.innerHTML = `
+      <button onclick="document.getElementById('batch-revoke-modal').style.display='none'"
+              style="padding:7px 18px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;">取消</button>
+      <button id="brm-confirm-admin" onclick="_brm_doDeleteAdmin()"
+              style="padding:7px 18px;border:none;border-radius:6px;background:#cf1322;color:#fff;cursor:pointer;font-weight:600;">强制回退</button>`;
+
+  } else if (status.agent_synced && !status.revoke_confirmed) {
+    // ── 档2：已下发 PC，未撤回 ───────────────────────────────────────────────
+    content.innerHTML = `
+      <div style="background:#fffbe6;border:1px solid #ffe58f;border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+        <div style="font-weight:700;color:#874d00;margin-bottom:4px;">已下发到仓库 PC 分拣机</div>
+        <div style="font-size:13px;color:#5c3d00;">批次规则已同步到仓库PC（${status.agent_synced_at||''}），请先申请撤回，等待仓库PC确认清除后方可回退。也可使用管理员密码强制回退。</div>
+      </div>
+      <div id="brm-revoke-status" style="font-size:13px;color:#555;margin-bottom:12px;">
+        ${status.revoke_requested
+          ? '<span style="color:#1677ff;">已发送撤回指令，等待仓库PC确认...</span>'
+          : '尚未申请撤回'}
+      </div>
+      <div style="border-top:1px solid #f0f0f0;padding-top:12px;">
+        <div style="font-size:12px;color:#888;margin-bottom:6px;">或使用管理员密码强制回退：</div>
+        <div style="display:flex;gap:6px;">
+          <input id="brm-user" type="text" value="admin" style="flex:1;border:1px solid #d9d9d9;border-radius:6px;padding:6px 10px;font-size:13px;" placeholder="管理员账号">
+          <input id="brm-pass" type="password" style="flex:2;border:1px solid #d9d9d9;border-radius:6px;padding:6px 10px;font-size:13px;" placeholder="管理员密码" onkeydown="if(event.key==='Enter')document.getElementById('brm-confirm-admin').click()">
+        </div>
+      </div>`;
+    footer.innerHTML = `
+      <button onclick="document.getElementById('batch-revoke-modal').style.display='none'"
+              style="padding:7px 18px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;">取消</button>
+      <button id="brm-revoke-btn" onclick="_brm_requestRevoke()"
+              style="padding:7px 18px;border:1px solid #1677ff;border-radius:6px;background:#fff;color:#1677ff;cursor:pointer;"
+              ${status.revoke_requested ? 'disabled' : ''}>
+        ${status.revoke_requested ? '已申请撤回' : '申请撤回'}
+      </button>
+      <button id="brm-confirm-admin" onclick="_brm_doDeleteAdmin()"
+              style="padding:7px 18px;border:none;border-radius:6px;background:#d4380d;color:#fff;cursor:pointer;font-weight:600;">管理员强制回退</button>`;
+
+    // 如果已申请撤回，启动轮询
+    if (status.revoke_requested) _brm_startPoll();
+
+  } else {
+    // ── 档1：未下发或已确认撤回，普通确认 ────────────────────────────────────
+    const confirmed = status.revoke_confirmed;
+    content.innerHTML = `
+      <div style="${confirmed ? 'background:#f6ffed;border:1px solid #b7eb8f;' : 'background:#f5f5f5;border:1px solid #e8e8e8;'}border-radius:8px;padding:12px 14px;font-size:13px;color:#333;">
+        ${confirmed
+          ? '✅ 仓库PC已确认撤回规则，现在可以安全回退。'
+          : '此批次尚未下发到仓库PC分拣机，可以直接回退。'}
+        <br><br>回退后，相关订单将恢复为<b>"未生成批次"</b>状态。
+      </div>`;
+    footer.innerHTML = `
+      <button onclick="document.getElementById('batch-revoke-modal').style.display='none'"
+              style="padding:7px 18px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;">取消</button>
+      <button onclick="_brm_doDelete()"
+              style="padding:7px 18px;border:none;border-radius:6px;background:#1a2c5b;color:#fff;cursor:pointer;font-weight:600;">确认回退</button>`;
+  }
+}
+
+async function _brm_requestRevoke() {
+  const batchno = _revokeModal_batchno;
+  const btn = document.getElementById('brm-revoke-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '申请中...'; }
+  try {
+    await fetch(`/sorting/batch/${encodeURIComponent(batchno)}/revoke-request`,
+                {method:'POST', credentials:'same-origin'});
+    document.getElementById('brm-revoke-status').innerHTML =
+      '<span style="color:#1677ff;">已发送撤回指令，等待仓库PC确认...</span>';
+    if (btn) btn.textContent = '已申请撤回';
+    _brm_startPoll();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '申请撤回'; }
+    alert(`申请失败：${e.message}`);
+  }
+}
+
+function _brm_startPoll() {
+  if (_revokeModal_pollTimer) clearInterval(_revokeModal_pollTimer);
+  _revokeModal_pollTimer = setInterval(async () => {
+    const batchno = _revokeModal_batchno;
+    if (!batchno) { clearInterval(_revokeModal_pollTimer); return; }
+    try {
+      const r = await fetch(`/sorting/batch/${encodeURIComponent(batchno)}/status`, {credentials:'same-origin'});
+      const s = await r.json();
+      if (s.revoke_confirmed) {
+        clearInterval(_revokeModal_pollTimer);
+        _brm_render(s);  // 重新渲染为档1（可直接回退）
+      }
+    } catch(_) {}
+  }, 4000);
+}
+
+async function _brm_doDelete(adminUser, adminPass) {
+  const batchno = _revokeModal_batchno;
+  try {
+    const body = {};
+    if (adminUser) { body.admin_username = adminUser; body.admin_password = adminPass; }
+    const r = await fetch(`/sorting/batch/${encodeURIComponent(batchno)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (_revokeModal_pollTimer) { clearInterval(_revokeModal_pollTimer); _revokeModal_pollTimer = null; }
+      document.getElementById('batch-revoke-modal').style.display = 'none';
+      document.getElementById('batch-detail-modal').style.display = 'none';
+      const filterEl = document.getElementById('sorting-sort-filter');
+      if (filterEl) filterEl.value = 'all';
+      window._batchedOrders = new Set();
+      await loadSortingBatches();
+      await loadSortingOrders();
+      const tip = document.createElement('div');
+      tip.textContent = `批次 ${batchno} 已回退，相关订单已恢复为未生成状态`;
+      tip.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#389e0d;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.15)';
+      document.body.appendChild(tip);
+      setTimeout(() => tip.remove(), 3000);
+    } else {
+      alert(`回退失败：${d.msg || '未知错误'}`);
+    }
+  } catch(e) {
+    alert(`回退失败：${e.message}`);
+  }
+}
+
+async function _brm_doDeleteAdmin() {
+  const user = (document.getElementById('brm-user') || {}).value || '';
+  const pass = (document.getElementById('brm-pass') || {}).value || '';
+  if (!pass) { alert('请输入管理员密码'); return; }
+  await _brm_doDelete(user, pass);
+}
+
+// ── 批次详情 Modal ────────────────────────────────────────────────────────────
+let _bdmBoxes = [];  // 全量 boxes，用于搜索过滤
+
+async function openBatchDetail(batchno) {
+  const modal = document.getElementById('batch-detail-modal');
+  document.getElementById('bdm-title').textContent = batchno;
+  document.getElementById('bdm-meta').textContent = '加载中...';
+  document.getElementById('bdm-summary').innerHTML = '';
+  document.getElementById('bdm-content').innerHTML = '<div style="padding:24px;text-align:center;color:#aaa;">加载中...</div>';
+  document.getElementById('bdm-search').value = '';
+  modal.style.display = 'block';
+
+  try {
+    const r = await fetch(`/sorting/batch/${encodeURIComponent(batchno)}/rules`, {credentials:'same-origin'});
+    const d = await r.json();
+    if (!d.ok) { document.getElementById('bdm-content').innerHTML = `<div style="color:#c0392b;padding:16px;">加载失败：${d.msg||''}</div>`; return; }
+
+    const b = d.batch || {};
+    const orderList = (() => { try { return JSON.parse(b.order_numbers||'[]'); } catch(e){ return []; } })();
+    document.getElementById('bdm-meta').textContent = `创建时间：${(b.created_at||'').slice(0,16)}  ·  版本 v${b.ver||'-'}`;
+
+    // 汇总栏
+    const pickMap = {0:'上机', 1:'手工'};
+    const boxTypeMap = {1:'小箱', 2:'中箱', 3:'大箱'};
+    const handCount = d.boxes.reduce((s, bx) => s + bx.items.filter(it=>it.picktype===1).length, 0);
+    const machCount = d.boxes.reduce((s, bx) => s + bx.items.filter(it=>it.picktype===0).length, 0);
+    const totalVol  = d.boxes.reduce((s, bx) => s + (bx.box_vol||0), 0);
+    const noVolCount = d.boxes.filter(bx => !bx.box_vol).length;
+    document.getElementById('bdm-summary').innerHTML = [
+      `<span><b>${orderList.length}</b> 张订单</span>`,
+      `<span><b>${d.box_count}</b> 箱</span>`,
+      `<span><b>${d.total_lines}</b> 条规则</span>`,
+      `<span>上机 <b>${machCount}</b> 款 / 手工 <b>${handCount}</b> 款</span>`,
+      totalVol > 0 ? `<span>总体积 <b>${totalVol.toLocaleString()}</b> cm³</span>` : '',
+      noVolCount > 0 ? `<span style="color:#fa8c16;">⚠ ${noVolCount} 箱无尺寸数据（体积为0）</span>` : '',
+      orderList.length ? `<span style="color:#888;font-size:11px;">${orderList.join(' · ')}</span>` : '',
+    ].filter(Boolean).map(s=>`<div style="white-space:nowrap;">${s}</div>`).join('');
+
+    _bdmBoxes = d.boxes;
+    _renderBatchDetail(_bdmBoxes);
+  } catch(e) {
+    document.getElementById('bdm-content').innerHTML = `<div style="color:#c0392b;padding:16px;">请求失败：${e.message}</div>`;
+  }
+}
+
+function _renderBatchDetail(boxes) {
+  if (!boxes.length) {
+    document.getElementById('bdm-content').innerHTML = '<div style="color:#aaa;padding:16px;">无数据</div>';
+    return;
+  }
+  const boxTypeMap = {1:'小箱', 2:'中箱', 3:'大箱'};
+  const BOX_CAP = {1: 500, 2: 2000, 3: 5000};  // 与 UI 默认保持一致
+  const html = boxes.map(bx => {
+    const totalQty  = bx.items.reduce((s,it) => s + it.qty, 0);
+    const boxVol    = bx.box_vol || 0;
+    const boxCap    = BOX_CAP[bx.box_type] || 0;
+    const fillPct   = boxCap > 0 ? Math.min(100, Math.round(boxVol / boxCap * 100)) : 0;
+    const fillColor = fillPct >= 90 ? '#d4380d' : fillPct >= 70 ? '#fa8c16' : '#52c41a';
+
+    // 体积进度条
+    const volBar = boxCap > 0 ? `
+      <div style="margin-left:auto;text-align:right;">
+        <div style="font-size:11px;color:#666;">${boxVol.toLocaleString()} / ${boxCap.toLocaleString()} cm³ (${fillPct}%)</div>
+        <div style="width:100px;height:5px;background:#f0f0f0;border-radius:3px;margin-top:3px;display:inline-block;">
+          <div style="width:${fillPct}%;height:100%;background:${fillColor};border-radius:3px;"></div>
+        </div>
+      </div>` : `<span style="margin-left:auto;font-size:11px;color:#aaa;">无尺寸数据</span>`;
+
+    const itemRows = bx.items.map(it => {
+      const pickLabel = it.picktype === 1
+        ? `<span style="font-size:10px;background:#fff1f0;color:#d4380d;padding:1px 5px;border-radius:8px;margin-left:4px;">手工</span>`
+        : `<span style="font-size:10px;background:#e6f4ff;color:#1677ff;padding:1px 5px;border-radius:8px;margin-left:4px;">上机</span>`;
+      const dimStr = (it.l && it.w && it.h)
+        ? `${it.l}×${it.w}×${it.h}`
+        : '<span style="color:#ccc;">无尺寸</span>';
+      const unitVol  = it.unit_vol  || 0;
+      const totalVol = it.total_vol || 0;
+      return `<tr style="border-bottom:1px solid #f5f5f5;">
+        <td style="padding:5px 8px;font-family:monospace;font-size:11px;color:#888;">${it.barcode||''}</td>
+        <td style="padding:5px 8px;font-size:12px;font-weight:600;">${it.goodsno||''}${pickLabel}</td>
+        <td style="padding:5px 8px;font-size:12px;color:#888;">${it.goodsmodel||''}</td>
+        <td style="padding:5px 8px;font-size:11px;color:#555;">${it.customer||''}</td>
+        <td style="padding:5px 8px;text-align:right;font-size:12px;font-weight:700;color:#1a2c5b;">${it.qty}</td>
+        <td style="padding:5px 8px;text-align:right;font-size:11px;color:#555;">${dimStr}</td>
+        <td style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">${unitVol ? unitVol.toLocaleString() : '-'}</td>
+        <td style="padding:5px 8px;text-align:right;font-size:11px;color:#555;font-weight:600;">${totalVol ? totalVol.toLocaleString() : '-'}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div style="margin-bottom:14px;border:1px solid #e8e8e8;border-radius:8px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:#f0f4ff;border-bottom:1px solid #d6e4ff;flex-wrap:wrap;">
+        <span style="font-weight:700;color:#1a2c5b;font-size:14px;">格口 ${bx.portno}</span>
+        <span style="font-size:12px;color:#555;background:#fff;border:1px solid #d9d9d9;border-radius:4px;padding:1px 8px;">${bx.label_data}</span>
+        <span style="font-size:12px;color:#888;">${boxTypeMap[bx.box_type]||'?'}</span>
+        <span style="font-size:12px;color:#666;">${bx.items.length} 款 / ${totalQty} 件</span>
+        ${volBar}
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="background:#fafafa;">
+          <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">条码</th>
+          <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">货号</th>
+          <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">规格</th>
+          <th style="padding:5px 8px;text-align:left;font-size:11px;color:#888;">客户</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">数量</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">尺寸(mm)</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">单品体积(cm³)</th>
+          <th style="padding:5px 8px;text-align:right;font-size:11px;color:#888;">合计体积(cm³)</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+  document.getElementById('bdm-content').innerHTML = html;
+}
+
+function filterBatchDetail() {
+  const kw = (document.getElementById('bdm-search').value || '').trim().toLowerCase();
+  if (!kw) { _renderBatchDetail(_bdmBoxes); return; }
+  const filtered = _bdmBoxes.map(bx => ({
+    ...bx,
+    items: bx.items.filter(it =>
+      (it.barcode||'').toLowerCase().includes(kw) ||
+      (it.goodsno||'').toLowerCase().includes(kw) ||
+      (it.goodsmodel||'').toLowerCase().includes(kw) ||
+      (it.customer||'').toLowerCase().includes(kw)
+    )
+  })).filter(bx => bx.items.length > 0);
+  _renderBatchDetail(filtered);
+}
+
+function closeBatchDetail() {
+  document.getElementById('batch-detail-modal').style.display = 'none';
+}
+// 点 modal 背景关闭
+document.getElementById('batch-detail-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeBatchDetail();
+});
+
+// 点击"急"tag：调 API 即时加入/移出加急列表
+async function toggleRushOrder(no) {
+  const orderData = window._sortingOrdersRaw.find(o => o.number === no) || {};
+  const totalQty = orderData.totalQty || 0;
+  const customerName = orderData.customerName || '';
+  const isRush = window._rushOrders.has(no);
+  try {
+    let r;
+    if (isRush) {
+      r = await fetch(`/sorting/rush/order/${encodeURIComponent(no)}`, {
+        method: 'DELETE', credentials: 'same-origin'
+      });
+    } else {
+      r = await fetch('/sorting/rush/order', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({orderno: no, customer_name: customerName, total_qty: totalQty})
+      });
+    }
+    const d = await r.json();
+    if (!d.ok) { alert('操作失败：' + (d.msg || '')); return; }
+    if (isRush) window._rushOrders.delete(no);
+    else        window._rushOrders.add(no);
+    // 只更新这一行的 tag 和背景，不整体 re-render
+    document.querySelectorAll('.sorting-order-item').forEach(el => {
+      const tag = el.querySelector('.rush-tag');
+      if (!tag) return;
+      if (!el.querySelector('.rush-tag[onclick*="' + no + '"]')) return;
+      const nowRush = window._rushOrders.has(no);
+      tag.classList.toggle('active', nowRush);
+      tag.title = nowRush ? '点击移出加急列表' : '点击加入加急列表';
+      el.classList.toggle('rush', nowRush);
+    });
+    loadRushOrders();
+  } catch(e) {
+    alert('网络错误：' + e.message);
+  }
+}
+
+// 标记加急单完成
+async function doneRushOrder(orderno) {
+  try {
+    const r = await fetch(`/sorting/rush/order/${encodeURIComponent(orderno)}/done`, {
+      method: 'POST', credentials: 'same-origin'
+    });
+    const d = await r.json();
+    if (d.ok) { loadRushOrders(); _renderSortingOrders(); }
+  } catch(e) { alert('操作失败：' + e.message); }
+}
+
+// 从加急列表删除
+async function deleteRushOrder(orderno) {
+  try {
+    const r = await fetch(`/sorting/rush/order/${encodeURIComponent(orderno)}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    const d = await r.json();
+    if (d.ok) {
+      window._rushOrders.delete(orderno);
+      loadRushOrders();
+      _renderSortingOrders();
+    }
+  } catch(e) { alert('操作失败：' + e.message); }
+}
+
+// 加载加急单列表
+async function loadRushOrders() {
+  const wrap = document.getElementById('sorting-rush-list');
+  if (!wrap) return;
+  try {
+    const r = await fetch('/sorting/rush/orders', {credentials:'same-origin'});
+    const d = await r.json();
+    const pending = d.pending || [];
+    const done    = d.done    || [];
+
+    // 同步 _rushOrders（仅 pending 的单标为急），并刷新订单列表 badge
+    window._rushOrders = new Set(pending.map(o => o.orderno));
+    if (window._sortingOrdersLoaded) _renderSortingOrders();
+
+    if (!pending.length && !done.length) {
+      wrap.innerHTML = '<div class="empty" style="color:#aaa;font-size:13px;padding:8px 0;">暂无加急单，在上方订单行点击「急」标签即可加入</div>';
+      return;
+    }
+
+    const renderRow = (o, isDone) => {
+      const actionBtns = isDone
+        ? `<button onclick="deleteRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">删除</button>`
+        : `<button onclick="doneRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #52c41a;border-radius:4px;cursor:pointer;background:#fff;color:#389e0d;margin-right:4px;">完成</button>
+           <button onclick="deleteRushOrder('${o.orderno}')" style="font-size:11px;padding:2px 8px;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer;background:#fff;color:#666;">移除</button>`;
+      const statusDot = isDone
+        ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#52c41a;margin-right:4px;flex-shrink:0;"></span>`
+        : `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d4380d;margin-right:4px;flex-shrink:0;"></span>`;
+      const timeStr = isDone ? (o.done_at||'').slice(0,16) : (o.added_at||'').slice(0,16);
+      return `<tr style="border-bottom:1px solid #f5f5f5;${isDone?'opacity:.6':''}">
+        <td style="padding:6px 8px;display:flex;align-items:center;">${statusDot}<span style="font-weight:600;color:${isDone?'#666':'#d4380d'}">${o.orderno}</span></td>
+        <td style="padding:6px 8px;color:#666;font-size:12px;">${o.customer_name||''}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;">${o.total_qty||0} 件</td>
+        <td style="padding:6px 8px;color:#aaa;font-size:11px;">${timeStr}</td>
+        <td style="padding:6px 8px;">${actionBtns}</td>
+      </tr>`;
+    };
+
+    const pendingRows = pending.map(o => renderRow(o, false)).join('');
+    const doneRows    = done.map(o => renderRow(o, true)).join('');
+    const separator   = (pending.length && done.length)
+      ? `<tr><td colspan="5" style="padding:4px 8px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0;">── 已完成 ──</td></tr>`
+      : '';
+
+    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="border-bottom:2px solid #f0f0f0;">
+        <th style="padding:6px 8px;text-align:left;color:#555;">单号</th>
+        <th style="padding:6px 8px;text-align:left;color:#555;">客户</th>
+        <th style="padding:6px 8px;text-align:right;color:#555;">数量</th>
+        <th style="padding:6px 8px;text-align:left;color:#555;">时间</th>
+        <th style="padding:6px 8px;color:#555;">操作</th>
+      </tr></thead>
+      <tbody>${pendingRows}${separator}${doneRows}</tbody>
     </table>`;
   } catch(e) {
     wrap.innerHTML = `<div style="color:#c0392b;font-size:12px;">加载失败：${e.message}</div>`;

@@ -75,10 +75,11 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
     for order in sorted_orders:
         curr_port = _next_port(curr_port)   # 新订单 → 新格口
         _override = order.get('box_type_override')
-        init_box_type = _override if _override in (1, 2, 3) else 1
+        init_box_type = _override if _override in (1, 2, 3) else 2  # 默认中箱，小箱仅手工指定
         box_num, box_type, curr_vol = 1, init_box_type, 0
+        # jdy_products 尺寸单位为 mm，÷1000 换算为 cm³（与 box_configs 单位一致）
         total_vol = sum(
-            float(g.get('l') or 0) * float(g.get('w') or 0) * float(g.get('h') or 0) * g['qty']
+            float(g.get('l') or 0) * float(g.get('w') or 0) * float(g.get('h') or 0) * g['qty'] / 1000
             for g in order['goods']
         )
 
@@ -88,7 +89,7 @@ def allocate_ports(orders: list, box_configs: dict, offset: int = 200) -> list[d
                 float(g.get('w') or 0) *
                 float(g.get('h') or 0) *
                 g['qty']
-            )
+            ) / 1000
             max_vol = box_configs.get(box_type, 0)
 
             if max_vol > 0 and curr_vol + item_vol > max_vol + offset:

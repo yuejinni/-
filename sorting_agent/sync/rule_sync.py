@@ -101,9 +101,62 @@ def sync_rules_from_cloud(db_conn, cloud_url: str, current_ver: int):
         raise
 
 
+def check_revoke_requests(db_conn, cloud_url: str):
+    """
+    轮询云端待撤回列表（GET /agent/revoke-requests），
+    对每个待撤回批次执行本地清除并回调确认。
+
+    清除内容：
+      - sorting_rules  中该 batchno 的所有规则
+      - pick_progress  中该 batchno 的进度记录
+      - sort_ports.init_num 重新计算（去掉已撤回批次的贡献）
+    """
+    try:
+        resp = requests.get(f"{cloud_url}/agent/revoke-requests", timeout=5)
+        resp.raise_for_status()
+        requests_list = resp.json().get("requests", [])
+    except Exception as e:
+        logger.debug(f"[revoke_check] 查询失败（忽略）: {e}")
+        return
+
+    for req in requests_list:
+        batchno = req.get("batchno", "")
+        if not batchno:
+            continue
+        try:
+            # 1. 删除本地分拣规则
+            execute(db_conn, "DELETE FROM sorting_rules  WHERE batchno=?", (batchno,))
+            # 2. 删除配货进度
+            execute(db_conn, "DELETE FROM pick_progress WHERE batchno=?", (batchno,))
+            # 3. 重新计算格口计数（去掉撤回批次的贡献）
+            db_conn.cursor().execute("""
+                UPDATE sort_ports
+                SET init_num = ISNULL(
+                    (SELECT COUNT(*) FROM sorting_rules
+                     WHERE innerport = sort_ports.portno AND innerport <> 0), 0)
+            """)
+            db_conn.commit()
+
+            # 4. 回调云端确认
+            try:
+                requests.post(
+                    f"{cloud_url}/agent/revoke-confirm",
+                    json={"batchno": batchno},
+                    timeout=5
+                )
+            except Exception as e:
+                logger.warning(f"[revoke_check] 回调确认失败 {batchno}: {e}")
+
+            logger.info(f"[revoke_check] 已撤回批次规则：{batchno}")
+        except Exception as e:
+            db_conn.rollback()
+            logger.warning(f"[revoke_check] 撤回 {batchno} 失败: {e}")
+
+
 def rule_sync_loop():
     """
     每 30s 从云端拉取规则差量（替代原 C# 手工导入按钮）。
+    同时检查撤回请求（云端回退操作触发）。
     各自创建独立 db_conn，线程内复用。
     """
     while True:
@@ -115,6 +168,7 @@ def rule_sync_loop():
                 "SELECT value FROM sys_config WHERE [key]='rule_version'") or 0)
             if cloud_url:
                 sync_rules_from_cloud(db, cloud_url, current_ver)
+                check_revoke_requests(db, cloud_url)   # ← 新增：撤回检查
         except Exception as e:
             logger.warning(f"[rule_sync_loop] 同步失败（30s后重试）: {e}")
         time.sleep(30)
