@@ -6358,7 +6358,7 @@ def _sync_coverage_webhook_mode(conn):
 def _sync_coverage_resource_definitions():
     return [
         {
-            'resource': 'sales / sales_order / sal_bill / delivery',
+            'resource': 'sales / sal_bill_outbound / delivery',
             'business_name': '销售单',
             'status': 'realtime',
             'webhook_behavior': '实时同步',
@@ -6570,7 +6570,7 @@ REALTIME_HEALTH_SAFE_GROUPS = [
     {
         'key': 'sales',
         'name': '销售单',
-        'resource_keys': ['sales', 'sales_order', 'sal_bill', 'sal_bill_outbound', 'delivery'],
+        'resource_keys': ['sales', 'sal_bill', 'sal_bill_outbound', 'delivery'],
         'cache_tables': ['sales_orders', 'sales_details', 'sales_product_quantities'],
         'landing_table': 'sales_orders',
         'note_ok': 'Webhook done 后销售缓存已有本地更新时间。',
@@ -10099,6 +10099,11 @@ def _webhook_event_id_from_payload(payload):
     return ''
 
 
+def _is_sales_order_request_resource(resource):
+    resource = str(resource or '').strip().lower()
+    return resource in ('sales_order', 'sal_bill_order', 'saleorder')
+
+
 def _webhook_payload_hash(payload):
     raw = json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()
@@ -10139,9 +10144,13 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
     event_id = _webhook_event_id_from_payload(payload)
     payload_hash = _webhook_payload_hash(payload)
     payload_json = json.dumps(payload, ensure_ascii=False)
-    safe_resource = _is_webhook_safe_auto_resource(resource)
+    sales_order_request = _is_sales_order_request_resource(resource)
+    safe_resource = _is_webhook_safe_auto_resource(resource) and not sales_order_request
     initial_status = 'pending' if safe_resource else 'done'
-    initial_error = '' if safe_resource else f'recorded only unsafe resource: {resource or "unknown"}'
+    if sales_order_request:
+        initial_error = 'recorded only sales_order webhook; local sales_order cache not implemented'
+    else:
+        initial_error = '' if safe_resource else f'recorded only unsafe resource: {resource or "unknown"}'
     processed_at = '' if safe_resource else now
     inserted = 0
     with _sales_cache_conn() as conn:
@@ -10160,7 +10169,10 @@ def _enqueue_jdy_webhook_events(biz_type, payload):
             ))
             inserted += 1
         conn.commit()
-    message = f'queued {inserted} event(s)' if safe_resource else f'recorded only {inserted} unsafe event(s)'
+    if sales_order_request:
+        message = f'recorded only {inserted} sales_order event(s)'
+    else:
+        message = f'queued {inserted} event(s)' if safe_resource else f'recorded only {inserted} unsafe event(s)'
     _webhook_state.update({'last_event_at': now, 'pending': _webhook_pending_count(), 'message': message})
     if safe_resource:
         _start_webhook_worker()
@@ -10178,6 +10190,8 @@ def _webhook_status_for_queue(queue='normal'):
 
 def _is_webhook_safe_auto_resource(resource):
     resource = str(resource or '').strip().lower()
+    if _is_sales_order_request_resource(resource):
+        return False
     return (
         resource in WEBHOOK_SAFE_AUTO_RESOURCES
         or 'sal_bill' in resource
@@ -10218,8 +10232,8 @@ def _claim_webhook_event(queue='normal'):
                     SELECT * FROM webhook_events
                     WHERE status = ?
                       AND (
-                        resource IN ('sales', 'sales_order', 'sal_bill', 'sal_bill_outbound', 'delivery', 'transfer', 'purchase_order', 'accessory_purchase')
-                        OR resource LIKE '%sal_bill%'
+                        resource IN ('sales', 'sal_bill', 'sal_bill_outbound', 'delivery', 'transfer', 'purchase_order', 'accessory_purchase')
+                        OR (resource LIKE '%sal_bill%' AND resource NOT LIKE '%sal_bill_order%')
                         OR resource LIKE '%delivery%'
                         OR resource LIKE '%transfer%'
                         OR resource LIKE '%pur_bill_order%'
@@ -10382,7 +10396,20 @@ def _process_webhook_event(event):
     if not account:
         payload = json.loads(event.get('payload_json') or '{}')
         account = _jdy_account_from_payload(payload)
-    is_sales_resource = resource in ('sales', 'sales_order') or 'sal_bill' in resource or 'delivery' in resource
+    is_sales_order_request = _is_sales_order_request_resource(resource)
+    if is_sales_order_request:
+        _log_event(
+            'JDY_WEBHOOK',
+            f'recorded only sales_order webhook: resource={resource or "unknown"} account={account or "-"} number={number}',
+        )
+        return _webhook_process_result(
+            ok=True,
+            reason='recorded_only_sales_order_webhook',
+            message='recorded only sales_order webhook; local sales_order cache not implemented',
+        )
+    is_sales_resource = resource in ('sales',) or (
+        ('sal_bill' in resource and not is_sales_order_request) or 'delivery' in resource
+    )
     is_transfer_resource = resource == 'transfer' or 'transfer' in resource
     is_purchase_resource = (
         resource in ('accessory_purchase', 'purchase_order')
