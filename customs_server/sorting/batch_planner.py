@@ -60,6 +60,7 @@ def _emit_box(rules: list, order: dict, goods_list: list,
                 'box_type':   box_type,
                 'serialnum':  g.get('serialnum', 0),
                 'picktype':   g.get('picktype', 0),
+                'entry_id':   g.get('entry_id', 0),
                 # label_data：账号-CTN序号（对应 Wcs_goods.column4）
                 'label_data': box_no,
             })
@@ -97,15 +98,17 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
     - 订单按总数量降序（大单优先，格口号靠前）
     - 新订单开始新格口
     - 按订单内商品顺序依次累积体积（不拆分同一 SKU 的数量）
-    - 当前已累积商品 + 本商品 > 大箱上限 → 封当前箱，本商品起新箱新格口
+    - 当前已累积商品 + 本商品 > 当前箱型上限 → 封当前箱，本商品起新箱新格口
+      （当前箱型 = 能装下已累积体积的最小箱型，即"装满一箱再开另一箱"）
     - 每箱的箱型 = 能装下该箱合计体积的最小箱型（装不下任何箱则用大箱）
     - 格口 51 跳过
     - 格口 <= 102 → innerport=portno；格口 > 102 → innerport=0（分拨溢出）
     - ⚠️ label_data = "orderno-box_num"（对应 Wcs_goods.column4，账号-CTN序号）
     """
-    curr_port = 0
-    rules     = []
-    max_large = max(box_configs.values()) if box_configs else 0
+    curr_port  = 0
+    rules      = []
+    max_large  = max(box_configs.values()) if box_configs else 0
+    medium_cap = box_configs.get(2, max_large)
 
     # 大单优先
     sorted_orders = sorted(
@@ -115,11 +118,12 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
     )
 
     for order in sorted_orders:
-        curr_port = _next_port(curr_port)   # 新订单 → 新格口
-        box_num   = 1
-        curr_vol  = 0.0
-        pending   = []                      # 当前箱已放入的商品
+        _override = order.get('box_type_override')
+        # 封箱门槛：有指定箱型用对应容量，否则默认中箱容量
+        split_cap = box_configs.get(_override, max_large) if _override in (1, 2, 3) else medium_cap
 
+        # ── 阶段 1：按封箱门槛把商品分组成若干箱 ──────────────────────────────
+        order_boxes = []   # [{'goods': [...], 'vol': float}, ...]
         for g in order['goods']:
             item_vol = (
                 float(g.get('l') or 0) *
@@ -127,23 +131,30 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
                 float(g.get('h') or 0) *
                 g['qty']
             )
-
-            # 当前箱已有内容，且加入本商品会超过大箱上限 → 先封箱，再开新箱
-            if pending and max_large > 0 and curr_vol + item_vol > max_large:
-                box_type = _find_box_type(curr_vol, box_configs)
-                _emit_box(rules, order, pending, curr_port, box_num, box_type)
-                curr_port = _next_port(curr_port)
-                box_num  += 1
-                curr_vol  = item_vol
-                pending   = [g]
+            if order_boxes and split_cap > 0 and order_boxes[-1]['vol'] + item_vol > split_cap:
+                order_boxes.append({'goods': [g], 'vol': item_vol})
             else:
-                curr_vol += item_vol
-                pending.append(g)
+                if not order_boxes:
+                    order_boxes.append({'goods': [g], 'vol': item_vol})
+                else:
+                    order_boxes[-1]['goods'].append(g)
+                    order_boxes[-1]['vol'] += item_vol
 
-        # 封最后一箱（或 box_type_override 指定的箱型）
-        if pending:
-            _override = order.get('box_type_override')
-            box_type  = _override if _override in (1, 2, 3) else _find_box_type(curr_vol, box_configs)
-            _emit_box(rules, order, pending, curr_port, box_num, box_type)
+        if not order_boxes:
+            continue
+
+        # ── 阶段 2：最后一箱体积 < 中箱 50% → 合并回前一箱 ──────────────────
+        if len(order_boxes) >= 2 and order_boxes[-1]['vol'] < medium_cap * 0.5:
+            last = order_boxes.pop()
+            order_boxes[-1]['goods'].extend(last['goods'])
+            order_boxes[-1]['vol'] += last['vol']
+
+        # ── 阶段 3：逐箱 emit ────────────────────────────────────────────────
+        curr_port = _next_port(curr_port)   # 新订单 → 新格口
+        for box_num, box in enumerate(order_boxes, 1):
+            box_type = _override if _override in (1, 2, 3) else _find_box_type(box['vol'], box_configs)
+            _emit_box(rules, order, box['goods'], curr_port, box_num, box_type)
+            if box_num < len(order_boxes):
+                curr_port = _next_port(curr_port)
 
     return rules

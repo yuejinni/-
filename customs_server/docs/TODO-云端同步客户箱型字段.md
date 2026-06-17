@@ -88,6 +88,12 @@ if row and str(row['tax_payer_no'] or '').strip() == '1':
 
 # 任务二：商品档案 brand 字段（分拣上机/手工区分用）
 
+> **状态（2026-06-16 更新）：云端读取侧已完成，JDY 同步写入侧待完成。**
+>
+> `sorting/agent_api.py` 的 `sorting_batch_plan()` 已实现 brand 读取 + picktype 映射
+>（含 `try/except` 容错：`brand` 列不存在时降级为 picktype=0）。
+> 剩余工作：让 `server.py` 的商品同步把 brand 字段落库到 `jdy_products`。
+
 **背景**：分拣批次生成时，需要根据每件商品的 `brand` 字段区分"上机"和"手工"两种
 分拣方式。目前 JDY 商品同步接口**未拉取该字段**，`jdy_products` 表里也没有该列，
 需要补充。
@@ -153,5 +159,24 @@ picktype = 1 if brand == '手工' else 0
    `picktype` 字段是否按 brand 正确填入（手工=1，上机=0）。
 
 ---
+
+---
+
+## 附加说明（2026-06-16 补充）
+
+### 已完成的相关工作
+
+- **装箱算法重写**（`sorting/batch_planner.py`）：
+  - 移除 `offset=200` 容差，改为硬限制（不超过大箱上限）
+  - 不拆分同一 SKU 数量，按订单顺序累积体积
+  - 箱型自动选最小合适箱（`_find_box_type`）
+  - 默认箱型值更新为 40000 / 85000 / 198000 cm³
+- **批次设置 UI**：从大表单改为筛选栏下方紧凑单行条，支持 localStorage 持久化
+- **批次详情显示**：`box_configs` 随批次保存并在详情页正确显示，不再硬编码
+
+### JDY 库存数量同步（暂停）
+
+`server.py` 的 `_fetch_sales_quantity_map()` 已临时关闭 JDY API 调用（加早返回）。
+后续改从**自有云端**拉取库存数量，届时同时处理此处的恢复逻辑。
 
 *创建于 2026-06-16，对接人：请联系岳进*

@@ -51,6 +51,16 @@ def _get_sales_conn():
     return conn
 
 
+def _get_sales_conn_rw():
+    """可写连接到 sales_cache.sqlite3（用于回写商品尺寸等）。"""
+    db = os.path.join(_SERVER_DIR, '_sales_cache', 'sales_cache.sqlite3')
+    if not os.path.exists(db):
+        return None
+    conn = sqlite3.connect(db, timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _fv(d: dict, keys: list, default=''):
     """从字典中按优先顺序取第一个有值的字段。"""
     for k in keys:
@@ -87,6 +97,7 @@ def _ensure_tables():
             label_data  TEXT,
             box_type    INTEGER DEFAULT 1,
             picktype    INTEGER DEFAULT 0,
+            entry_id    INTEGER DEFAULT 0,
             created_at  TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS IX_csr_barcode ON cloud_sorting_rules(barcode);
@@ -176,6 +187,8 @@ def _ensure_tables():
         "ALTER TABLE cloud_sorting_batches ADD COLUMN revoke_confirmed_at TEXT",  # Agent 确认撤回时间
         # 箱型配置（生成批次时记录，详情展示用）
         "ALTER TABLE cloud_sorting_batches ADD COLUMN box_configs_json TEXT",
+        # 单据行序号
+        "ALTER TABLE cloud_sorting_rules ADD COLUMN entry_id INTEGER DEFAULT 0",
     ]:
         try:
             conn.execute(ddl)
@@ -312,15 +325,15 @@ def sorting_post_rules():
         conn.execute("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r.get('barcode'), r.get('slot_seq', 1),
             r.get('portno', 0), r.get('innerport', 0),
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r.get('floor', 0), r.get('serialnum', 0),
-            r.get('label_data'), r.get('box_type', 1), r.get('picktype', 0)
+            r.get('label_data'), r.get('box_type', 1), r.get('picktype', 0), r.get('entry_id', 0)
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     conn.close()
@@ -357,15 +370,15 @@ def sorting_batch_assign():
         conn.execute("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
             r['portno'], r['innerport'],
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
-            r['label_data'], r['box_type'], r.get('picktype', 0)
+            r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0)
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     conn.close()
@@ -460,6 +473,57 @@ def sorting_batch_hints():
     return jsonify({"ok": True, "hints": hints})
 
 
+# ── 检查缺失尺寸商品 ─────────────────────────────────────────────────────────────
+@sorting_bp.post('/sorting/batch/check-dims')
+def sorting_batch_check_dims():
+    """
+    POST /sorting/batch/check-dims
+    body: {"order_numbers": [...]}
+    返回所选订单中缺少尺寸（l/w/h 任意为 0）的商品列表，用于前端弹窗补录。
+    同一条码只返回一次（跨订单去重）。
+    """
+    data      = request.get_json() or {}
+    order_nos = data.get('order_numbers') or []
+
+    sc = _get_sales_conn()
+    if not sc:
+        return jsonify({"ok": False, "msg": "sales_cache 不存在"}), 400
+
+    missing      = []
+    seen_barcodes = set()
+
+    for no in order_nos:
+        row = sc.execute(
+            "SELECT data_json FROM sales_details WHERE number=? ORDER BY updated_at DESC LIMIT 1",
+            (no,)
+        ).fetchone()
+        if not row:
+            continue
+        order = json.loads(row['data_json'])
+        for entry in (order.get('entries') or []):
+            if not isinstance(entry, dict):
+                continue
+            barcode  = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            goodsno  = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            goodsmodel = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
+            qty      = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+            if not barcode or qty <= 0 or barcode in seen_barcodes:
+                continue
+            prod = sc.execute(
+                "SELECT length, width, height FROM jdy_products WHERE barcode=? OR product_number=? LIMIT 1",
+                (barcode, goodsno)
+            ).fetchone()
+            l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
+            w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
+            h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
+            if not (l > 0 and w > 0 and h > 0):
+                seen_barcodes.add(barcode)
+                missing.append({'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel})
+
+    sc.close()
+    return jsonify({"ok": True, "missing": missing})
+
+
 # ── 从销货单缓存构建批次 ────────────────────────────────────────────────────────
 @sorting_bp.post('/sorting/batch/plan')
 def sorting_batch_plan():
@@ -473,7 +537,8 @@ def sorting_batch_plan():
     batchno         = (data.get('batchno') or '').strip()
     order_nos       = data.get('order_numbers') or []
     box_configs     = {int(k): float(v) for k, v in (data.get('box_configs') or {}).items()}
-    order_box_types = data.get('order_box_types') or {}  # {order_no: 1/2/3}
+    order_box_types = data.get('order_box_types') or {}   # {order_no: 1/2/3}
+    dim_overrides   = data.get('dim_overrides') or {}     # {barcode: {l, w, h}}
     if not batchno:
         return jsonify({"ok": False, "msg": "batchno 不能为空"}), 400
     if not order_nos:
@@ -496,7 +561,8 @@ def sorting_batch_plan():
         order = json.loads(row['data_json'])
         customer = str(order.get('customerName') or '').strip()
         goods = []
-        for entry in (order.get('entries') or []):
+        raw_entries = order.get('_raw', {}).get('entries', [])
+        for i, entry in enumerate(order.get('entries') or []):
             if not isinstance(entry, dict):
                 continue
             barcode  = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
@@ -505,6 +571,7 @@ def sorting_batch_plan():
             qty      = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
             if not barcode or qty <= 0:
                 continue
+            entry_id = raw_entries[i].get('entryId', i + 1) if i < len(raw_entries) else (i + 1)
             # 查商品尺寸 + brand（barcode 优先，product_number 兜底）
             # brand 列可能不存在（旧版 sales_cache），用 try/except 容错
             try:
@@ -522,9 +589,16 @@ def sorting_batch_plan():
                 ).fetchone()
                 brand = ''
             picktype = 1 if brand == '手工' else 0
-            l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
-            w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
-            h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
+            # 优先用前端传入的尺寸覆盖（补录弹窗）
+            if barcode in dim_overrides:
+                ov = dim_overrides[barcode]
+                l = float(ov.get('l') or 0)
+                w = float(ov.get('w') or 0)
+                h = float(ov.get('h') or 0)
+            else:
+                l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
+                w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
+                h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
             goods.append({
                 'barcode':    barcode,
                 'goodsno':    goodsno,
@@ -534,6 +608,7 @@ def sorting_batch_plan():
                 'qty':        qty,
                 'serialnum':  0,
                 'picktype':   picktype,
+                'entry_id':   entry_id,
             })
         if goods:
             order_dict = {'orderno': no, 'goods': goods}
@@ -543,6 +618,18 @@ def sorting_batch_plan():
                 order_dict['box_type_override'] = int(bt_str)
             orders.append(order_dict)
     sc.close()
+
+    # 将补录的尺寸回写到 jdy_products（下次生成无需再补）
+    if dim_overrides:
+        sc_rw = _get_sales_conn_rw()
+        if sc_rw:
+            for bc, ov in dim_overrides.items():
+                sc_rw.execute(
+                    "UPDATE jdy_products SET length=?, width=?, height=? WHERE barcode=?",
+                    (float(ov.get('l') or 0), float(ov.get('w') or 0), float(ov.get('h') or 0), bc)
+                )
+            sc_rw.commit()
+            sc_rw.close()
 
     if not orders:
         return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
@@ -589,15 +676,15 @@ def sorting_batch_plan():
         conn.execute("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
             r['portno'],  r['innerport'],
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
-            r['label_data'], r['box_type'], r.get('picktype', 0)
+            r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0)
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     # 计算批次统计字段
@@ -637,11 +724,11 @@ def sorting_batch_rules(batchno):
     conn = _get_conn()
     rows = conn.execute("""
         SELECT label_data, portno, barcode, goodsno, goodsmodel, customer,
-               COUNT(*) as qty, box_type, picktype
+               COUNT(*) as qty, box_type, picktype, MIN(entry_id) as entry_id
         FROM cloud_sorting_rules
         WHERE batchno=?
         GROUP BY label_data, barcode
-        ORDER BY portno, label_data, goodsno
+        ORDER BY portno, label_data, entry_id
     """, (batchno,)).fetchall()
     batch_row = conn.execute(
         "SELECT * FROM cloud_sorting_batches WHERE batchno=?", (batchno,)
@@ -665,6 +752,7 @@ def sorting_batch_rules(batchno):
             'customer':   r['customer'],
             'qty':        r['qty'],
             'picktype':   r['picktype'],
+            'entry_id':   r['entry_id'],
         })
 
     # 按格口排序
