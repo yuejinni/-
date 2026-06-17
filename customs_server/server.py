@@ -4439,6 +4439,8 @@ def _sales_order_request_projection(order):
         'totalQty': order.get('totalQty') or 0,
         'totalAmount': order.get('totalAmount') or 0,
         'billStatusName': order.get('billStatusName') or '',
+        'checkStatus': order.get('checkStatus'),
+        'deliveryType': order.get('deliveryType') or order.get('delivery_type') or '',
         'syncStatus': order.get('syncStatus') or '',
         'source': order.get('source') or '',
         'entriesCount': len(order.get('entries') or []),

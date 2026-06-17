@@ -111,11 +111,17 @@ def ensure_order_request_tables(conn):
             check_status TEXT,
             source TEXT,
             sync_status TEXT,
+            delivery_type TEXT DEFAULT '',
             data_json TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (account, number)
         )
     """)
+    # 兼容旧表（无 delivery_type 列）
+    try:
+        conn.execute("ALTER TABLE sales_order_requests ADD COLUMN delivery_type TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sales_order_request_details (
             account TEXT NOT NULL,
@@ -128,6 +134,15 @@ def ensure_order_request_tables(conn):
         )
     """)
     conn.commit()
+
+
+def _extract_delivery_type(data: dict) -> str:
+    """从 _raw.udfValue[index=1] 提取配送类型。"""
+    raw = data.get("_raw") or {}
+    for item in (raw.get("udfValue") or []):
+        if str(item.get("index", "")) == "1":
+            return str(item.get("value") or "").strip()
+    return ""
 
 
 def upsert_order_request(conn, data: dict, now: str):
@@ -143,15 +158,16 @@ def upsert_order_request(conn, data: dict, now: str):
     check_status     = data.get("checkStatusName") or data.get("check_status") or ""
     source       = data.get("source") or ""
     sync_status  = data.get("syncStatus") or data.get("sync_status") or ""
+    delivery_type = _extract_delivery_type(data)
     data_json    = json.dumps(data, ensure_ascii=False)
 
     conn.execute(
         """INSERT OR REPLACE INTO sales_order_requests
            (account, number, internal_id, date, customer_name, total_qty, total_amount,
-            bill_status, bill_status_name, check_status, source, sync_status, data_json, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            bill_status, bill_status_name, check_status, source, sync_status, delivery_type, data_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (account, number, internal_id, date, customer_name, total_qty, total_amount,
-         bill_status, bill_status_name, check_status, source, sync_status, data_json, now),
+         bill_status, bill_status_name, check_status, source, sync_status, delivery_type, data_json, now),
     )
 
 
