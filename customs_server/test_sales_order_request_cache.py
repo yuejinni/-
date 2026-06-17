@@ -75,6 +75,14 @@ def make_conn():
 def test_sales_order_webhook_writes_separate_request_cache(monkeypatch):
     conn = make_conn()
     monkeypatch.setattr(server, "_sales_cache_conn", lambda: conn)
+    monkeypatch.setattr(
+        server,
+        "_refresh_sales_order_request_from_jdy",
+        lambda account, query, mode="number", endpoint="": {
+            "success": False,
+            "error": "endpoint disabled in unit test",
+        },
+    )
     payload = {
         "accountId": "7958910093110",
         "bizType": "sal_bill_order",
@@ -110,8 +118,11 @@ def test_process_sales_order_webhook_does_not_touch_sales_cache_or_jdy(monkeypat
     monkeypatch.setattr(server, "_sales_cache_conn", lambda: conn)
     monkeypatch.setattr(
         server,
-        "_sales_client_for_account",
-        lambda account: (_raise("sales order request must not call JDY"), account),
+        "_refresh_sales_order_request_from_jdy",
+        lambda account, query, mode="number", endpoint="": {
+            "success": True,
+            "written": 1,
+        },
     )
     payload = {
         "accountId": "7958910093110",
@@ -129,7 +140,7 @@ def test_process_sales_order_webhook_does_not_touch_sales_cache_or_jdy(monkeypat
     result = server._process_webhook_event(event)
 
     assert result["ok"] is True
-    assert result["reason"] == "sales_order_request_webhook_cached"
+    assert result["reason"] == "sales_order_request_webhook_refreshed"
     assert conn.execute("SELECT COUNT(*) FROM sales_order_requests").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM sales_order_request_details").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM sales_orders").fetchone()[0] == 0

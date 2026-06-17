@@ -4183,6 +4183,36 @@ def _cache_sales_order_request_from_webhook(account, number, payload):
         _cache_upsert_sales_order_request(conn, order)
         _cache_upsert_sales_order_request_detail(conn, order)
         conn.commit()
+    internal_id = str(order.get('internalId') or number or '').strip()
+    if internal_id:
+        try:
+            refreshed = _refresh_sales_order_request_from_jdy(
+                account,
+                internal_id,
+                mode='internal_id',
+                endpoint='/jdyscm/saleOrder/list',
+            )
+            if refreshed.get('success') and refreshed.get('written'):
+                return _webhook_process_result(
+                    ok=True,
+                    cached=True,
+                    reason='sales_order_request_webhook_refreshed',
+                    message=(
+                        f'sales_order webhook cached and refreshed locally: '
+                        f'internal_id={internal_id}; written={refreshed.get("written")}'
+                    ),
+                )
+            _log_event(
+                'JDY_WEBHOOK',
+                f'sales_order webhook refresh skipped: account={account or "-"} '
+                f'internal_id={internal_id} reason={refreshed.get("error") or refreshed.get("matched")}',
+            )
+        except Exception as e:
+            _log_event(
+                'JDY_WEBHOOK',
+                f'sales_order webhook refresh failed: account={account or "-"} '
+                f'internal_id={internal_id} error={_short_sync_error(e)}',
+            )
     return _webhook_process_result(
         ok=True,
         cached=True,
@@ -4774,6 +4804,31 @@ def _customs_generation_missing_fields(base_item):
     ]
 
 
+def _customs_generation_item_summary(code, item=None, customs=None, jdy=None):
+    item = item or {}
+    customs = customs or {}
+    jdy = jdy or {}
+    return {
+        'code': _clean_excel_text(code),
+        'product_code': _clean_excel_text(code),
+        'product_name': (
+            _clean_excel_text(customs.get('product_name'))
+            or _clean_excel_text(jdy.get('product_name'))
+            or _clean_excel_text(item.get('name') or item.get('product_name'))
+        ),
+        'barcode': (
+            _clean_excel_text(customs.get('barcode'))
+            or _clean_excel_text(jdy.get('barcode'))
+            or _clean_excel_text(item.get('barcode'))
+        ),
+        'account': (
+            _clean_excel_text(item.get('account'))
+            or _clean_excel_text(jdy.get('account'))
+            or _clean_excel_text(customs.get('account'))
+        ),
+    }
+
+
 def _customs_generation_decode_product_row(row):
     data = _customs_product_row_to_dict(row)
     raw = {}
@@ -4867,11 +4922,14 @@ def _customs_generation_local_context(items, supplier_overrides=None):
                     jdy_candidates.setdefault(code, []).append(item)
 
         account_by_code = {}
+        item_by_code = {}
         for item in items or []:
             code = _clean_excel_text((item or {}).get('code'))
             account = _clean_excel_text((item or {}).get('account'))
             if code and account and code not in account_by_code:
                 account_by_code[code] = account
+            if code and code not in item_by_code:
+                item_by_code[code] = item or {}
 
         jdy_map = {
             code: _customs_generation_pick_jdy_row(code, account_by_code.get(code), jdy_candidates)
@@ -4917,8 +4975,8 @@ def _customs_generation_local_context(items, supplier_overrides=None):
             jdy = jdy_map.get(code) or {}
             if not customs:
                 result['missing_products'].append({
-                    'code': code,
-                    'reason': 'customs_product_master 无记录',
+                    **_customs_generation_item_summary(code, item_by_code.get(code), {}, jdy),
+                    'reason': '本次调拨单商品未维护报关资料',
                 })
                 continue
 
@@ -4926,7 +4984,7 @@ def _customs_generation_local_context(items, supplier_overrides=None):
             missing = _customs_generation_missing_fields(base_item)
             if missing:
                 result['missing_fields'].append({
-                    'code': code,
+                    **_customs_generation_item_summary(code, item_by_code.get(code), customs, jdy),
                     'fields': missing,
                 })
             result['base_map'][code] = base_item

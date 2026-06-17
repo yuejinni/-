@@ -2338,7 +2338,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
 </div>
 <div class="secondary-nav active" data-subnav="sales">
   <span class="secondary-label">销售</span>
-  <button class="subtab-btn active" data-sub-page="sales-list" onclick="showPage('sales-list')">销售单</button>
+  <button class="subtab-btn active" data-sub-page="sales-list" onclick="showPage('sales-list')">销售</button>
   <button class="subtab-btn" data-sub-page="sales-summary" onclick="showPage('sales-summary')">销售汇总</button>
   <button class="subtab-btn" data-sub-page="sales-products" onclick="showPage('sales-products')">商品</button>
   <button class="subtab-btn" data-sub-page="reorder-list" onclick="showPage('reorder-list')">返单</button>
@@ -2685,12 +2685,16 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <button type="button" id="sales-view-mobile" class="sales-icon-btn active" onclick="setSalesView('mobile')" title="手机模式" aria-label="手机模式">📱</button>
           <button type="button" id="sales-view-table" class="sales-icon-btn" onclick="setSalesView('table')" title="电脑模式" aria-label="电脑模式">💻</button>
         </div>
-        <div class="sales-phone-title">销货单</div>
+        <div class="sales-phone-title" id="sales-phone-title">销货单</div>
         <div class="sales-header-actions right">
           <button type="button" class="sales-icon-btn" onclick="loadSalesOrders()" title="刷新本地缓存" aria-label="刷新本地缓存">↻</button>
         </div>
       </div>
       <div class="sales-filter">
+        <div class="sales-filter-line">
+          <button type="button" class="sales-account-pill active" data-sales-doc-type="delivery" onclick="setSalesDocType('delivery', this)">销货单</button>
+          <button type="button" class="sales-account-pill" data-sales-doc-type="order_request" onclick="setSalesDocType('order_request', this)">销货订单</button>
+        </div>
         <input id="sales-search" placeholder="搜索客户 / 单号 / 商品" onkeydown="if(event.key==='Enter') loadSalesOrders()">
         <div class="sales-filter-line">
           <input id="sales-date" type="date" onchange="loadSalesOrders()">
@@ -2701,7 +2705,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
         <div class="sales-filter-line">
           <button type="button" class="sales-account-pill active" data-sales-date-mode="bill_date" onclick="setSalesDateMode('bill_date', this)">按单据日期</button>
           <button type="button" class="sales-account-pill" data-sales-date-mode="updated" onclick="setSalesDateMode('updated', this)">最近同步</button>
-          <span class="tip" id="sales-date-mode-help">单据日期：按销售单日期筛选</span>
+          <span class="tip" id="sales-date-mode-help">单据日期：按销货单日期筛选</span>
         </div>
       </div>
       <div class="sales-list" id="sales-list-wrap">
@@ -2716,7 +2720,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
           <button type="button" class="sales-back-btn" onclick="showSalesListLevel()">返回</button>
           <h3 id="sales-detail-title">销货单详情</h3>
           <div class="sales-detail-actions">
-            <button type="button" class="btn btn-success btn-sm" onclick="importSelectedSalesToReorder()">导入供应商返单</button>
+            <button type="button" class="btn btn-success btn-sm" id="sales-import-reorder-btn" onclick="importSelectedSalesToReorder()">导入供应商返单</button>
           </div>
         </div>
         <div class="sales-detail-meta" id="sales-detail-meta">
@@ -4026,7 +4030,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
       <button class="btn btn-ghost" onclick="closeGenerateModal()">取消</button>
       <button class="btn btn-primary" onclick="doGenerate()">生成</button>
     </div>
-    <div id="generate-result" style="margin-top:12px;font-size:13px;color:#19a453;"></div>
+    <div id="generate-result" style="margin-top:12px;font-size:13px;color:#19a453;white-space:pre-wrap;line-height:1.55;"></div>
     <div id="generate-qty-warn" style="display:none;margin-top:8px;padding:8px 12px;
       background:#fff8e1;border:1px solid #f9a825;border-radius:6px;
       font-size:12px;color:#7a5c00;white-space:pre-wrap;line-height:1.6;"></div>
@@ -4233,6 +4237,7 @@ let salesAccount    = 'all';
 let salesSource     = 'cache';
 let salesView       = 'mobile';
 let salesDateMode   = 'bill_date';
+let salesDocType    = 'delivery';
 let localProductAccount = 'all';
 let salesDetailHistoryPushed = false;
 let salesTouchStartX = 0;
@@ -5880,6 +5885,7 @@ function extractItems(detail, account) {
     return {
       code:           r.productNumber || r.productCode || r.number || r.code || '—',
       name:           r.productName   || r.name        || '—',
+      barcode:        r.barcode       || r.barCode     || r.productBarcode || '',
       unit:           r.unitName      || r.unit         || 'PCS',
       qty,
       rmb_price,
@@ -5969,6 +5975,35 @@ function setSalesAccount(account, btn) {
   loadSalesOrders();
 }
 
+function salesDocTypeLabel() {
+  return salesDocType === 'order_request' ? '销货订单' : '销货单';
+}
+
+function updateSalesDocTypeUi() {
+  document.querySelectorAll('.sales-account-pill[data-sales-doc-type]').forEach(p => {
+    p.classList.toggle('active', p.dataset.salesDocType === salesDocType);
+  });
+  const title = document.getElementById('sales-phone-title');
+  if (title) title.textContent = salesDocTypeLabel();
+  const search = document.getElementById('sales-search');
+  if (search) search.placeholder = salesDocType === 'order_request'
+    ? '搜索客户 / 订单号 / 商品'
+    : '搜索客户 / 单号 / 商品';
+  const importBtn = document.getElementById('sales-import-reorder-btn');
+  if (importBtn) importBtn.style.display = salesDocType === 'order_request' ? 'none' : '';
+}
+
+function setSalesDocType(type, btn) {
+  salesDocType = type === 'order_request' ? 'order_request' : 'delivery';
+  if (btn) {
+    document.querySelectorAll('.sales-account-pill[data-sales-doc-type]').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+  }
+  updateSalesDocTypeUi();
+  showSalesListLevel();
+  loadSalesOrders();
+}
+
 function setSalesDateMode(mode, btn) {
   salesDateMode = mode === 'updated' ? 'updated' : 'bill_date';
   document.querySelectorAll('.sales-account-pill[data-sales-date-mode]').forEach(p => {
@@ -5981,7 +6016,7 @@ function setSalesDateMode(mode, btn) {
   if (helpEl) {
     helpEl.textContent = salesDateMode === 'updated'
       ? '最近同步：按进入本地缓存的时间排序，用于查看 Webhook 刚同步进来的单据'
-      : '单据日期：按销售单日期筛选';
+      : `单据日期：按${salesDocTypeLabel()}日期筛选`;
   }
   loadSalesOrders();
 }
@@ -6099,7 +6134,7 @@ function resetSalesFilters() {
   const dateEl = document.getElementById('sales-date');
   if (dateEl) dateEl.disabled = false;
   const helpEl = document.getElementById('sales-date-mode-help');
-  if (helpEl) helpEl.textContent = '单据日期：按销售单日期筛选';
+  if (helpEl) helpEl.textContent = `单据日期：按${salesDocTypeLabel()}日期筛选`;
   setSalesToday();
   loadSalesOrders();
 }
@@ -6107,6 +6142,7 @@ function resetSalesFilters() {
 async function loadSalesOrders() {
   setSalesToday();
   setSalesView(salesView);
+  updateSalesDocTypeUi();
   const wrap = document.getElementById('sales-list-wrap');
   const date = document.getElementById('sales-date').value;
   const search = document.getElementById('sales-search').value.trim();
@@ -6125,11 +6161,13 @@ async function loadSalesOrders() {
     } else {
       params.set('date', date);
     }
-    const url = `${API}/sales-orders?${params.toString()}`;
+    const url = salesDocType === 'order_request'
+      ? `${API}/sales-order-requests?${params.toString()}`
+      : `${API}/sales-orders?${params.toString()}`;
     const res = await fetch(url);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
-    window._salesRawList = data.list || [];
+    window._salesRawList = data.list || data.items || [];
     renderSalesOrders(window._salesRawList, data.summary || {});
     if (window._salesRawList.length && salesView === 'table') {
       openSalesOrder(window._salesRawList[0].number, window._salesRawList[0].account);
@@ -6170,7 +6208,7 @@ async function refreshSalesCacheMonth() {
 function renderSalesOrders(list, summary) {
   const wrap = document.getElementById('sales-list-wrap');
   if (!list.length) {
-    wrap.innerHTML = '<div class="empty">暂无销货单</div>';
+    wrap.innerHTML = `<div class="empty">暂无${salesDocTypeLabel()}</div>`;
     document.getElementById('sales-total-bar').innerHTML = '共 <b>0</b> 笔，数量 <b>0</b>，金额 <b>0.00</b>';
     return;
   }
@@ -6196,7 +6234,10 @@ function renderSalesOrders(list, summary) {
 async function openSalesOrder(number, account) {
   const date = document.getElementById('sales-date').value;
   try {
-    const res = await fetch(`${API}/sales-order/${encodeURIComponent(number)}?date=${encodeURIComponent(date)}&account=${encodeURIComponent(account || '')}&source=${encodeURIComponent(salesSource)}`);
+    const endpoint = salesDocType === 'order_request'
+      ? `${API}/sales-order-request/${encodeURIComponent(number)}?account=${encodeURIComponent(account || '')}`
+      : `${API}/sales-order/${encodeURIComponent(number)}?date=${encodeURIComponent(date)}&account=${encodeURIComponent(account || '')}&source=${encodeURIComponent(salesSource)}`;
+    const res = await fetch(endpoint);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || '接口错误');
     renderSalesDetail(data.data);
@@ -6214,13 +6255,13 @@ function renderSalesDetail(order) {
   const products = document.getElementById('sales-detail-products');
   window._currentSalesDetail = order || null;
   if (!order) {
-    title.textContent = '销货单详情';
-    meta.innerHTML = '<span>左侧选择一张销货单查看商品、库存和采购待收数量。</span>';
+    title.textContent = `${salesDocTypeLabel()}详情`;
+    meta.innerHTML = `<span>左侧选择一张${salesDocTypeLabel()}查看商品明细。</span>`;
     products.innerHTML = '<div class="empty">暂无详情</div>';
     return;
   }
 
-  title.textContent = order.customerName || order.number || '销货单详情';
+  title.textContent = order.customerName || order.number || `${salesDocTypeLabel()}详情`;
   meta.innerHTML = `
     <span>单号：${order.number || '—'}</span>
     <span>日期：${order.date || '—'}</span>
@@ -6248,7 +6289,7 @@ function renderSalesDetail(order) {
         <p>商品编号：${item.code || '—'}</p>
         <p>规格：${item.spec || '—'}</p>
         <p>条码：${item.barcode || '—'}</p>
-        <p>本单销售：<span class="sales-sold">${item.qty || 0}</span> ${item.unit || ''}</p>
+        <p>本单数量：<span class="sales-sold">${item.qty || 0}</span> ${item.unit || ''}</p>
       </div>
       <div class="sales-side-mini">
         <div class="sales-stock-mini">
@@ -8840,6 +8881,46 @@ function cancelManualLicenseModal() {
   if (_manualLicenseResolve) { _manualLicenseResolve(null); _manualLicenseResolve = null; }
 }
 
+function formatGenerateCustomsMissing(data) {
+  const missingProducts = data.missing_customs_products || [];
+  const missingFields = data.missing_customs_fields || [];
+  if (!missingProducts.length && !missingFields.length) return '';
+
+  const lines = [
+    '',
+    `本次调拨单需要维护 ${missingProducts.length + missingFields.length} 个商品，不需要维护整张表。`,
+  ];
+  const limit = 30;
+  let shown = 0;
+
+  missingProducts.slice(0, limit).forEach(item => {
+    shown += 1;
+    const code = item.product_code || item.code || '未知编号';
+    const name = item.product_name ? ` ${item.product_name}` : '';
+    const barcode = item.barcode ? `；条码：${item.barcode}` : '';
+    const account = item.account ? `；账套：${item.account}` : '';
+    const reason = item.reason || '未维护报关资料';
+    lines.push(`${shown}. ${code}${name}${barcode}${account}：${reason}`);
+  });
+
+  const remainingSlots = Math.max(0, limit - shown);
+  missingFields.slice(0, remainingSlots).forEach(item => {
+    shown += 1;
+    const code = item.product_code || item.code || '未知编号';
+    const name = item.product_name ? ` ${item.product_name}` : '';
+    const barcode = item.barcode ? `；条码：${item.barcode}` : '';
+    const account = item.account ? `；账套：${item.account}` : '';
+    const fields = (item.fields || []).map(f => f.label || f.field || f).join('、') || '必填字段';
+    lines.push(`${shown}. ${code}${name}${barcode}${account}：缺 ${fields}`);
+  });
+
+  const total = missingProducts.length + missingFields.length;
+  if (total > shown) {
+    lines.push(`还有 ${total - shown} 个未显示，请先处理以上商品后再重新生成。`);
+  }
+  return lines.join('\n');
+}
+
 async function doGenerate(supplierOverrides, manualLicenses) {
   const rate    = parseFloat(document.getElementById('g-rate').value);
   const invoice = document.getElementById('g-invoice').value.trim();
@@ -8946,7 +9027,7 @@ async function doGenerate(supplierOverrides, manualLicenses) {
       }).catch(()=>{});
     } else {
       resultEl.style.color = '#d93025';
-      resultEl.textContent = '✗ 生成失败: ' + (data.error || '未知错误');
+      resultEl.textContent = '✗ 生成失败: ' + (data.error || '未知错误') + formatGenerateCustomsMissing(data);
     }
   } catch(e) {
     resultEl.style.color = '#d93025';
