@@ -2360,6 +2360,7 @@ td.code { font-family: monospace; color: #1a2c5b; }
   <span class="secondary-label">分拣</span>
   <button class="subtab-btn active" data-sub-page="sorting-batch" onclick="showPage('sorting-batch')">批次管理</button>
   <button class="subtab-btn" data-sub-page="sorting-dashboard" onclick="showPage('sorting-dashboard')">扫码看板</button>
+  <button class="subtab-btn" data-sub-page="sorting-replenishment" onclick="showPage('sorting-replenishment');loadReplenTasks()">店补任务</button>
 </div>
 
 <!-- ══════════════════════════════════════════════════
@@ -4226,6 +4227,41 @@ td.code { font-family: monospace; color: #1a2c5b; }
     </div>
     <!-- 内容 -->
     <div id="bdm-content" style="padding:16px 20px;max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     分拣 — 店补任务
+════════════════════════════════════════════════════ -->
+<div class="page" id="page-sorting-replenishment">
+  <div class="sorting-shell" style="max-width:900px;">
+    <!-- 筛选栏 -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <span style="font-weight:600;">店补任务</span>
+      <select id="replen-status-filter" onchange="loadReplenTasks()" style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:6px;">
+        <option value="">全部状态</option>
+        <option value="pending">待配货</option>
+        <option value="packing">装箱中</option>
+        <option value="packed">已装箱</option>
+        <option value="dispatched">已调拨</option>
+      </select>
+      <input id="replen-date-filter" type="date" onchange="loadReplenTasks()"
+        style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:6px;">
+      <button onclick="loadReplenTasks()" style="padding:4px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;">刷新</button>
+      <span id="replen-count" style="color:#888;font-size:13px;"></span>
+    </div>
+    <!-- 任务列表 -->
+    <div id="replen-task-list"></div>
+  </div>
+
+  <!-- 任务详情 Modal -->
+  <div id="replen-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;overflow-y:auto;">
+    <div style="background:#fff;max-width:680px;margin:40px auto;border-radius:12px;padding:24px;position:relative;">
+      <button onclick="closeReplenModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;">✕</button>
+      <h3 id="replen-modal-title" style="margin:0 0 16px;">店补任务详情</h3>
+      <div id="replen-modal-body"></div>
+      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;" id="replen-modal-actions"></div>
+    </div>
   </div>
 </div>
 
@@ -11476,6 +11512,131 @@ async function syncOrderRequests() {
   }
 }
 
+// ── 店补任务 ──────────────────────────────────────────────────────────────────
+const _REPLEN_STATUS_LABEL = {
+  pending: '待配货', packing: '装箱中', packed: '已装箱', dispatched: '已调拨'
+};
+const _REPLEN_STATUS_COLOR = {
+  pending: '#faad14', packing: '#1677ff', packed: '#52c41a', dispatched: '#8c8c8c'
+};
+
+async function loadReplenTasks() {
+  const status = (document.getElementById('replen-status-filter') || {}).value || '';
+  const date   = (document.getElementById('replen-date-filter') || {}).value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (date)   params.set('date', date);
+  params.set('limit', 300);
+  try {
+    const r = await fetch('/sorting/replenishment/tasks?' + params, {credentials:'same-origin'});
+    const d = await r.json();
+    const el = document.getElementById('replen-task-list');
+    const cnt = document.getElementById('replen-count');
+    if (!d.ok || !d.tasks.length) {
+      el.innerHTML = '<div style="color:#888;padding:32px;text-align:center;">暂无店补任务</div>';
+      if (cnt) cnt.textContent = '';
+      return;
+    }
+    if (cnt) cnt.textContent = `共 ${d.total} 条`;
+    el.innerHTML = d.tasks.map(t => {
+      const color = _REPLEN_STATUS_COLOR[t.status] || '#8c8c8c';
+      const label = _REPLEN_STATUS_LABEL[t.status] || t.status;
+      return `<div style="border:1px solid #f0f0f0;border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;background:#fff;"
+                   onclick="openReplenTask('${t.task_no}')">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:600;color:#1677ff;">${t.task_no}</span>
+          <span style="font-size:12px;padding:2px 8px;border-radius:10px;background:${color}22;color:${color};">${label}</span>
+        </div>
+        <div style="margin-top:6px;font-size:13px;color:#555;">
+          来源：${t.source_order} &nbsp;·&nbsp; ${t.customer_name} &nbsp;·&nbsp; ${t.date}
+        </div>
+        <div style="margin-top:4px;font-size:13px;color:#888;">
+          ${t.total_qty} 件 &nbsp;|&nbsp; 批次：${t.batch_no || '—'}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    console.error('[replen] loadReplenTasks 失败', e);
+  }
+}
+
+async function openReplenTask(taskNo) {
+  const r = await fetch(`/sorting/replenishment/task/${taskNo}`, {credentials:'same-origin'});
+  const d = await r.json();
+  if (!d.ok) { alert(d.error); return; }
+  const t     = d.task;
+  const items = d.items;
+  const color = _REPLEN_STATUS_COLOR[t.status] || '#8c8c8c';
+  const label = _REPLEN_STATUS_LABEL[t.status] || t.status;
+
+  // 按仓库分组
+  const byLoc = {};
+  items.forEach(i => {
+    const loc = i.location || '未知';
+    if (!byLoc[loc]) byLoc[loc] = [];
+    byLoc[loc].push(i);
+  });
+
+  let itemsHtml = Object.entries(byLoc).map(([loc, rows]) => `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:12px;color:#888;margin-bottom:6px;">📦 ${loc}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:#fafafa;">
+          <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #f0f0f0;">货号</th>
+          <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #f0f0f0;">条码</th>
+          <th style="padding:6px 8px;text-align:right;border-bottom:1px solid #f0f0f0;">数量</th>
+        </tr></thead>
+        <tbody>${rows.map(i => `
+          <tr>
+            <td style="padding:6px 8px;border-bottom:1px solid #f5f5f5;">${i.goodsno||'—'}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #f5f5f5;color:#666;">${i.barcode}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #f5f5f5;text-align:right;">${i.qty}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`).join('');
+
+  document.getElementById('replen-modal-title').textContent = `${t.task_no} · ${label} · ${t.total_qty} 件`;
+  document.getElementById('replen-modal-body').innerHTML = `
+    <div style="font-size:13px;color:#555;margin-bottom:12px;">
+      来源订单：<b>${t.source_order}</b> &nbsp;·&nbsp; ${t.customer_name} &nbsp;·&nbsp; ${t.date}<br>
+      关联批次：${t.batch_no || '—'}
+    </div>
+    ${itemsHtml}`;
+
+  // 操作按钮（根据当前状态）
+  const next = {pending:'packing', packing:'packed', packed:'dispatched'};
+  const nextLabel = {pending:'开始装箱', packing:'确认已装箱', packed:'确认已调拨'};
+  let actions = '';
+  if (next[t.status]) {
+    actions += `<button onclick="updateReplenStatus('${t.task_no}','${next[t.status]}')"
+      style="padding:6px 16px;background:#1677ff;color:#fff;border:none;border-radius:6px;cursor:pointer;">
+      ${nextLabel[t.status]}</button>`;
+  }
+  document.getElementById('replen-modal-actions').innerHTML = actions;
+  document.getElementById('replen-detail-modal').style.display = 'block';
+}
+
+async function updateReplenStatus(taskNo, status) {
+  const r = await fetch(`/sorting/replenishment/task/${taskNo}/status`, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({status})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    closeReplenModal();
+    loadReplenTasks();
+  } else {
+    alert('更新失败: ' + d.error);
+  }
+}
+
+function closeReplenModal() {
+  document.getElementById('replen-detail-modal').style.display = 'none';
+}
+
 function _renderSortingOrders() {
   const wrap = document.getElementById('sorting-order-list');
   const raw  = window._sortingOrdersRaw;
@@ -11518,9 +11679,7 @@ function _renderSortingOrders() {
       : '';
     const dt = o.deliveryType || '';
     const deliveryBadge = dt === '仓店-仓送'
-      ? (o.storeDelivery
-          ? `<span style="font-size:11px;background:#fff7e6;color:#d46b08;padding:1px 6px;border-radius:10px;margin-left:4px;">店配</span>`
-          : `<span style="font-size:11px;background:#e6f7ff;color:#1677ff;padding:1px 6px;border-radius:10px;margin-left:4px;">仓店</span>`)
+      ? `<span style="font-size:11px;background:#e6f7ff;color:#1677ff;padding:1px 6px;border-radius:10px;margin-left:4px;">仓店</span>`
       : dt === '仓配-仓送'
         ? `<span style="font-size:11px;background:#f6ffed;color:#52c41a;padding:1px 6px;border-radius:10px;margin-left:4px;">仓配</span>`
         : '';

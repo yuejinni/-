@@ -174,6 +174,36 @@ def _ensure_tables():
             done_at       TEXT
         );
         CREATE INDEX IF NOT EXISTS IX_cro_status ON cloud_rush_orders(status);
+
+        CREATE TABLE IF NOT EXISTS store_replenishment_tasks (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_no       TEXT UNIQUE NOT NULL,
+            source_order  TEXT NOT NULL,
+            account       TEXT DEFAULT '',
+            customer_name TEXT DEFAULT '',
+            date          TEXT DEFAULT '',
+            batch_no      TEXT DEFAULT '',
+            status        TEXT DEFAULT 'pending',
+            total_qty     INTEGER DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            updated_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS IX_srt_status ON store_replenishment_tasks(status);
+        CREATE INDEX IF NOT EXISTS IX_srt_date   ON store_replenishment_tasks(date);
+
+        CREATE TABLE IF NOT EXISTS store_replenishment_items (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_no        TEXT NOT NULL,
+            barcode        TEXT NOT NULL,
+            product_number TEXT DEFAULT '',
+            goodsno        TEXT DEFAULT '',
+            goodsmodel     TEXT DEFAULT '',
+            location       TEXT DEFAULT '',
+            qty            INTEGER DEFAULT 1,
+            box_no         TEXT DEFAULT '',
+            created_at     TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS IX_sri_task ON store_replenishment_items(task_no);
     """)
     # 安全升级：添加新列（SQLite 支持 ADD COLUMN，已存在时静默忽略）
     for ddl in [
@@ -197,6 +227,38 @@ def _ensure_tables():
         except Exception:
             pass
     conn.close()
+
+
+def _next_task_no(conn) -> str:
+    """生成店补任务编号：SR-YYYYMMDD-NNN"""
+    prefix = 'SR-' + datetime.now().strftime('%Y%m%d') + '-'
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM store_replenishment_tasks WHERE task_no LIKE ?",
+        (prefix + '%',)
+    ).fetchone()
+    seq = (row['cnt'] if row else 0) + 1
+    return f'{prefix}{seq:03d}'
+
+
+def _create_store_replenishment_task(conn, source_order: str, account: str,
+                                      customer: str, date: str,
+                                      store_goods: list, batch_no: str) -> str:
+    """将店面配货的明细写入店补任务表，返回 task_no。"""
+    task_no   = _next_task_no(conn)
+    total_qty = sum(g['qty'] for g in store_goods)
+    conn.execute("""
+        INSERT INTO store_replenishment_tasks
+            (task_no, source_order, account, customer_name, date, batch_no, status, total_qty)
+        VALUES (?,?,?,?,?,?,?,?)
+    """, (task_no, source_order, account, customer, date, batch_no, 'pending', total_qty))
+    for g in store_goods:
+        conn.execute("""
+            INSERT INTO store_replenishment_items
+                (task_no, barcode, product_number, goodsno, goodsmodel, location, qty)
+            VALUES (?,?,?,?,?,?,?)
+        """, (task_no, g['barcode'], g.get('goodsno',''), g.get('goodsno',''),
+              g.get('goodsmodel',''), g.get('location',''), g['qty']))
+    return task_no
 
 
 # ── 规则差量下发 ────────────────────────────────────────────────────────────────
@@ -688,6 +750,7 @@ def sorting_batch_plan():
         return jsonify({"ok": False, "msg": "sales_cache.sqlite3 不存在，请先同步销货单"}), 400
 
     orders = []
+    _store_replen_orders = []   # [{source_order, account, customer, date, goods:[...]}]
     for no in order_nos:
         # 优先查销货订单（XHDD），兜底查销货单（XH）
         row = sc.execute(
@@ -702,9 +765,11 @@ def sorting_batch_plan():
         if not row:
             continue
         order = json.loads(row['data_json'])
-        customer = str(order.get('customerName') or '').strip()
+        customer      = str(order.get('customerName') or '').strip()
         delivery_type = str(order.get('deliveryType') or '').strip()
-        goods = []
+        order_date    = str(order.get('date') or '')[:10]
+        machine_goods = []   # → 分拣机
+        store_goods   = []   # → 店补系统
         raw_entries = order.get('_raw', {}).get('entries', [])
         for i, entry in enumerate(order.get('entries') or []):
             if not isinstance(entry, dict):
@@ -725,12 +790,15 @@ def sorting_batch_plan():
             if not barcode or qty <= 0:
                 continue
             entry_id = raw_entries[i].get('entryId', i + 1) if i < len(raw_entries) else (i + 1)
-            # 仓店-仓送 + 非新大仓库 → 店配标记
-            store_delivery = 1 if (
-                delivery_type == '仓店-仓送' and location and location != '新大仓库'
-            ) else 0
+            # 仓店-仓送 + 非新大仓库 → 店补
+            is_store = (delivery_type == '仓店-仓送' and location and location != '新大仓库')
+            if is_store:
+                store_goods.append({
+                    'barcode': barcode, 'goodsno': goodsno,
+                    'goodsmodel': goodsmodel, 'location': location, 'qty': qty,
+                })
+                continue
             # 查商品尺寸 + brand（barcode 优先，product_number 兜底）
-            # brand 列可能不存在（旧版 sales_cache），用 try/except 容错
             try:
                 prod = sc.execute(
                     "SELECT length, width, height, brand FROM jdy_products "
@@ -746,7 +814,6 @@ def sorting_batch_plan():
                 ).fetchone()
                 brand = ''
             picktype = 1 if brand == '手工' else 0
-            # 优先用前端传入的尺寸覆盖（补录弹窗）
             if barcode in dim_overrides:
                 ov = dim_overrides[barcode]
                 l = float(ov.get('l') or 0)
@@ -756,21 +823,20 @@ def sorting_batch_plan():
                 l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
                 w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
                 h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
-            goods.append({
-                'barcode':       barcode,
-                'goodsno':       goodsno,
-                'goodsmodel':    goodsmodel,
-                'customer':      customer,
-                'l': l, 'w': w, 'h': h,
-                'qty':           qty,
-                'serialnum':     0,
-                'picktype':      picktype,
-                'entry_id':      entry_id,
-                'store_delivery': store_delivery,
+            machine_goods.append({
+                'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
+                'customer': customer, 'l': l, 'w': w, 'h': h,
+                'qty': qty, 'serialnum': 0, 'picktype': picktype,
+                'entry_id': entry_id, 'store_delivery': 0,
             })
-        if goods:
-            order_dict = {'orderno': no, 'goods': goods}
-            # 支持每张订单的箱型覆盖（前端传入的 order_box_types）
+        # 有店补货 → 暂存，稍后建任务
+        if store_goods:
+            _store_replen_orders.append({
+                'source_order': no, 'account': data.get('account') or '',
+                'customer': customer, 'date': order_date, 'goods': store_goods,
+            })
+        if machine_goods:
+            order_dict = {'orderno': no, 'goods': machine_goods}
             bt_str = str(order_box_types.get(no, ''))
             if bt_str in ('1', '2', '3'):
                 order_dict['box_type_override'] = int(bt_str)
@@ -859,17 +925,29 @@ def sorting_batch_plan():
     """, (batchno, new_ver, json.dumps(order_nos, ensure_ascii=False),
           len(orders), len(rules), box_count, port_min, port_max, len(rules),
           json.dumps(box_configs)))
+
+    # ── 创建店补任务（非新大仓库的货）────────────────────────────────────────────
+    replen_task_nos = []
+    for sr in _store_replen_orders:
+        task_no = _create_store_replenishment_task(
+            conn, sr['source_order'], sr['account'],
+            sr['customer'], sr['date'], sr['goods'], batchno
+        )
+        replen_task_nos.append(task_no)
+
     conn.close()
 
     return jsonify({
-        "ok":           True,
-        "batchno":      batchno,
-        "ver":          new_ver,
-        "orders_count": len(orders),
-        "rules_count":  len(rules),
-        "box_count":    box_count,
-        "port_min":     port_min,
-        "port_max":     port_max,
+        "ok":                True,
+        "batchno":           batchno,
+        "ver":               new_ver,
+        "orders_count":      len(orders),
+        "rules_count":       len(rules),
+        "box_count":         box_count,
+        "port_min":          port_min,
+        "port_max":          port_max,
+        "replen_tasks":      replen_task_nos,
+        "replen_count":      len(replen_task_nos),
     })
 
 
@@ -1308,6 +1386,76 @@ def sorting_events_api():
         ).fetchall()
     conn.close()
     return jsonify({"events": [dict(r) for r in rows], "total": len(rows)})
+
+
+# ── 店补任务接口 ─────────────────────────────────────────────────────────────────
+@sorting_bp.get('/sorting/replenishment/tasks')
+def replenishment_tasks():
+    """
+    GET /sorting/replenishment/tasks?status=pending&date=YYYY-MM-DD&limit=200
+    """
+    status  = request.args.get('status', '').strip()
+    date_s  = request.args.get('date', '').strip()
+    limit   = request.args.get('limit', 200, type=int)
+    conn    = _get_conn()
+    clauses, params = [], []
+    if status:
+        clauses.append("status=?"); params.append(status)
+    if date_s:
+        clauses.append("date=?"); params.append(date_s[:10])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM store_replenishment_tasks {where} "
+        f"ORDER BY created_at DESC LIMIT ?",
+        params + [limit]
+    ).fetchall()
+    conn.close()
+    return jsonify({"ok": True, "tasks": [dict(r) for r in rows], "total": len(rows)})
+
+
+@sorting_bp.get('/sorting/replenishment/task/<task_no>')
+def replenishment_task_detail(task_no):
+    """
+    GET /sorting/replenishment/task/<task_no>
+    返回任务主表 + 明细列表。
+    """
+    conn = _get_conn()
+    task = conn.execute(
+        "SELECT * FROM store_replenishment_tasks WHERE task_no=?", (task_no,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        return jsonify({"ok": False, "error": "任务不存在"}), 404
+    items = conn.execute(
+        "SELECT * FROM store_replenishment_items WHERE task_no=? ORDER BY id",
+        (task_no,)
+    ).fetchall()
+    conn.close()
+    return jsonify({
+        "ok":    True,
+        "task":  dict(task),
+        "items": [dict(r) for r in items],
+    })
+
+
+@sorting_bp.patch('/sorting/replenishment/task/<task_no>/status')
+def replenishment_task_status(task_no):
+    """
+    PATCH /sorting/replenishment/task/<task_no>/status
+    body: {"status": "packing"|"packed"|"dispatched"}
+    """
+    VALID = {'pending', 'packing', 'packed', 'dispatched'}
+    body   = request.get_json() or {}
+    status = (body.get('status') or '').strip()
+    if status not in VALID:
+        return jsonify({"ok": False, "error": f"status 须为 {VALID}"}), 400
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE store_replenishment_tasks SET status=?, updated_at=datetime('now','localtime') WHERE task_no=?",
+        (status, task_no)
+    )
+    conn.close()
+    return jsonify({"ok": True, "task_no": task_no, "status": status})
 
 
 # 初始化表（模块导入时执行）
