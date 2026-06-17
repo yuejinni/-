@@ -2338,7 +2338,8 @@ td.code { font-family: monospace; color: #1a2c5b; }
 </div>
 <div class="secondary-nav active" data-subnav="sales">
   <span class="secondary-label">销售</span>
-  <button class="subtab-btn active" data-sub-page="sales-list" onclick="showPage('sales-list')">销售</button>
+  <button class="subtab-btn active" data-sub-page="sales-list" data-sales-doc-nav="delivery" onclick="showSalesDocPage('delivery')">销售</button>
+  <button class="subtab-btn" data-sales-doc-nav="order_request" onclick="showSalesDocPage('order_request')">销货订单</button>
   <button class="subtab-btn" data-sub-page="sales-summary" onclick="showPage('sales-summary')">销售汇总</button>
   <button class="subtab-btn" data-sub-page="sales-products" onclick="showPage('sales-products')">商品</button>
   <button class="subtab-btn" data-sub-page="reorder-list" onclick="showPage('reorder-list')">返单</button>
@@ -4433,6 +4434,9 @@ function updateNavigationState(name) {
   document.querySelectorAll('[data-sub-page]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.subPage === name);
   });
+  if (name !== 'sales-list') {
+    document.querySelectorAll('[data-sales-doc-nav]').forEach(btn => btn.classList.remove('active'));
+  }
 }
 
 // ── 页面切换 ─────────────────────────────────────────────────────
@@ -4448,6 +4452,7 @@ function showPage(name) {
   }
   document.getElementById('page-' + name).classList.add('active');
   updateNavigationState(name);
+  if (name === 'sales-list') updateSalesDocTypeUi();
   if (name === 'settings') loadSettings();
   if (name === 'purchase-list' && !window._poRawList.length) setPODateRange(30);
   if (name === 'reorder-list') {
@@ -6017,6 +6022,9 @@ function updateSalesDocTypeUi() {
   document.querySelectorAll('.sales-account-pill[data-sales-doc-type]').forEach(p => {
     p.classList.toggle('active', p.dataset.salesDocType === salesDocType);
   });
+  document.querySelectorAll('[data-sales-doc-nav]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.salesDocNav === salesDocType);
+  });
   const title = document.getElementById('sales-phone-title');
   if (title) title.textContent = salesDocTypeLabel();
   const search = document.getElementById('sales-search');
@@ -6025,6 +6033,14 @@ function updateSalesDocTypeUi() {
     : '搜索客户 / 单号 / 商品';
   const importBtn = document.getElementById('sales-import-reorder-btn');
   if (importBtn) importBtn.style.display = salesDocType === 'order_request' ? 'none' : '';
+}
+
+function showSalesDocPage(type) {
+  salesDocType = type === 'order_request' ? 'order_request' : 'delivery';
+  showPage('sales-list');
+  updateSalesDocTypeUi();
+  showSalesListLevel();
+  loadSalesOrders();
 }
 
 function setSalesDocType(type, btn) {
