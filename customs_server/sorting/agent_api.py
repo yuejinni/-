@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template_string
 
@@ -22,7 +23,11 @@ logger = logging.getLogger(__name__)
 
 sorting_bp = Blueprint('sorting', __name__)
 
-_SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    # PyInstaller unpacks modules under Temp; runtime data belongs next to server.exe.
+    _SERVER_DIR = os.path.dirname(sys.executable)
+else:
+    _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ── 本地 SQLite（复用 customs_server 现有 sales_cache）──────────────────────────
 # 分拣规则和扫码事件存入独立的表（不影响现有报关功能）
