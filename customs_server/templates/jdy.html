@@ -185,6 +185,10 @@ body {
   color: #fff;
   font-weight: 700;
 }
+.secondary-nav[data-subnav="sales"] .subtab-btn {
+  min-width: 86px;
+  text-align: center;
+}
 .summary-filter-line {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2338,8 +2342,8 @@ td.code { font-family: monospace; color: #1a2c5b; }
 </div>
 <div class="secondary-nav active" data-subnav="sales">
   <span class="secondary-label">销售</span>
-  <button class="subtab-btn active" data-sub-page="sales-list" data-sales-doc-nav="delivery" onclick="showSalesDocPage('delivery')">销售</button>
   <button class="subtab-btn" data-sales-doc-nav="order_request" onclick="showSalesDocPage('order_request')">销货订单</button>
+  <button class="subtab-btn active" data-sub-page="sales-list" data-sales-doc-nav="delivery" onclick="showSalesDocPage('delivery')">销售</button>
   <button class="subtab-btn" data-sub-page="sales-summary" onclick="showPage('sales-summary')">销售汇总</button>
   <button class="subtab-btn" data-sub-page="sales-products" onclick="showPage('sales-products')">商品</button>
   <button class="subtab-btn" data-sub-page="reorder-list" onclick="showPage('reorder-list')">返单</button>
