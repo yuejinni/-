@@ -60,7 +60,8 @@ def _emit_box(rules: list, order: dict, goods_list: list,
                 'box_type':   box_type,
                 'serialnum':  g.get('serialnum', 0),
                 'picktype':   g.get('picktype', 0),
-                'entry_id':   g.get('entry_id', 0),
+                'entry_id':      g.get('entry_id', 0),
+                'store_delivery': g.get('store_delivery', 0),
                 # label_data：账号-CTN序号（对应 Wcs_goods.column4）
                 'label_data': box_no,
             })

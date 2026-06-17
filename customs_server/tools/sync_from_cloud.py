@@ -74,6 +74,102 @@ def local_detail_exists(conn, account: str, number: str) -> bool:
     return bool(row)
 
 
+def local_order_request_updated_at(conn, account: str, number: str) -> str | None:
+    try:
+        row = conn.execute(
+            "SELECT updated_at FROM sales_order_requests WHERE account=? AND number=?",
+            (account, number),
+        ).fetchone()
+        return row["updated_at"] if row else None
+    except Exception:
+        return None
+
+
+def local_order_request_detail_exists(conn, account: str, number: str) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sales_order_request_details WHERE account=? AND number=?",
+            (account, number),
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def ensure_order_request_tables(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sales_order_requests (
+            account TEXT NOT NULL,
+            number TEXT NOT NULL,
+            internal_id TEXT,
+            date TEXT,
+            customer_name TEXT,
+            total_qty REAL DEFAULT 0,
+            total_amount REAL DEFAULT 0,
+            bill_status TEXT,
+            bill_status_name TEXT,
+            check_status TEXT,
+            source TEXT,
+            sync_status TEXT,
+            data_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (account, number)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sales_order_request_details (
+            account TEXT NOT NULL,
+            number TEXT NOT NULL,
+            internal_id TEXT,
+            date TEXT,
+            data_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (account, number)
+        )
+    """)
+    conn.commit()
+
+
+def upsert_order_request(conn, data: dict, now: str):
+    account      = data.get("account") or ""
+    number       = data.get("number") or ""
+    internal_id  = data.get("internalId") or data.get("internal_id") or ""
+    date         = data.get("date") or ""
+    customer_name = data.get("customerName") or data.get("customer_name") or ""
+    total_qty    = float(data.get("totalQty") or data.get("total_qty") or 0)
+    total_amount = float(data.get("totalAmount") or data.get("total_amount") or 0)
+    bill_status      = data.get("billStatus") or data.get("bill_status") or ""
+    bill_status_name = data.get("billStatusName") or data.get("bill_status_name") or ""
+    check_status     = data.get("checkStatusName") or data.get("check_status") or ""
+    source       = data.get("source") or ""
+    sync_status  = data.get("syncStatus") or data.get("sync_status") or ""
+    data_json    = json.dumps(data, ensure_ascii=False)
+
+    conn.execute(
+        """INSERT OR REPLACE INTO sales_order_requests
+           (account, number, internal_id, date, customer_name, total_qty, total_amount,
+            bill_status, bill_status_name, check_status, source, sync_status, data_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (account, number, internal_id, date, customer_name, total_qty, total_amount,
+         bill_status, bill_status_name, check_status, source, sync_status, data_json, now),
+    )
+
+
+def upsert_order_request_detail(conn, data: dict, now: str):
+    account     = data.get("account") or ""
+    number      = data.get("number") or ""
+    internal_id = data.get("internalId") or data.get("internal_id") or ""
+    date        = data.get("date") or ""
+    data_json   = json.dumps(data, ensure_ascii=False)
+
+    conn.execute(
+        """INSERT OR REPLACE INTO sales_order_request_details
+           (account, number, internal_id, date, data_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (account, number, internal_id, date, data_json, now),
+    )
+
+
 def upsert_order(conn, order_data: dict, now: str):
     """order_data 是云端 /sales-order/<no> 返回的 data 字段（含 _raw）"""
     account = order_data.get("account") or ""
@@ -129,6 +225,71 @@ def date_range(start: str, end: str):
     while d <= end_d:
         yield d.strftime("%Y-%m-%d")
         d += timedelta(days=1)
+
+
+def sync_order_requests(sess: requests.Session, conn, dry_run: bool = False):
+    """从云端拉取 sales_order_requests（销货订单）并增量写入本地。"""
+    print("\n📋 同步销货订单（sales_order_requests）...")
+    ensure_order_request_tables(conn)
+
+    try:
+        list_data = fetch_with_retry(
+            sess,
+            f"{CLOUD_BASE}/sales-order-requests",
+            params={"account": "all", "limit": 1000},
+        )
+    except Exception as e:
+        print(f"  ❌ 列表拉取失败: {e}")
+        return
+
+    items = list_data.get("items") or []
+    print(f"  云端共 {len(items)} 条")
+
+    upserted = skipped = errors = 0
+    for summary in items:
+        number  = summary.get("number") or ""
+        account = summary.get("account") or ""
+        cloud_updated = summary.get("updatedAt") or ""
+        if not number:
+            continue
+
+        local_updated = local_order_request_updated_at(conn, account, number)
+        detail_ok     = local_order_request_detail_exists(conn, account, number)
+        if local_updated and detail_ok and local_updated >= cloud_updated:
+            skipped += 1
+            continue
+
+        time.sleep(REQUEST_DELAY)
+        try:
+            detail_resp = fetch_with_retry(
+                sess,
+                f"{CLOUD_BASE}/sales-order-request/{number}",
+                params={"account": account},
+            )
+        except Exception as e:
+            print(f"  ❌ {number} 详情失败: {e}")
+            errors += 1
+            continue
+
+        if not detail_resp.get("success"):
+            print(f"  ⚠️ {number}: {detail_resp.get('error')}")
+            errors += 1
+            continue
+
+        data = detail_resp.get("data") or {}
+        if not data:
+            errors += 1
+            continue
+
+        if not dry_run:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            upsert_order_request(conn, data, now)
+            upsert_order_request_detail(conn, data, now)
+        upserted += 1
+
+    if not dry_run and upserted:
+        conn.commit()
+    print(f"  ✅ 写入: {upserted}  跳过: {skipped}  错误: {errors}")
 
 
 def sync(from_date: str | None = None, dry_run: bool = False):
@@ -217,6 +378,9 @@ def sync(from_date: str | None = None, dry_run: bool = False):
                 if not dry_run:
                     conn.commit()
                 print(f"  ✅ {date_str}: 更新 {day_upserted} 条 (当天共 {len(orders_in_day)} 条)")
+
+        # ── 同步销货订单 ─────────────────────────────────────────────────────
+        sync_order_requests(sess, conn, dry_run=dry_run)
 
     except KeyboardInterrupt:
         print("\n⏹ 用户中断")

@@ -3699,6 +3699,10 @@ def _sales_cache_conn():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_date ON sales_order_requests(date)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_customer ON sales_order_requests(customer_name)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_requests_internal ON sales_order_requests(account, internal_id)')
+    try:
+        conn.execute("ALTER TABLE sales_order_requests ADD COLUMN delivery_type TEXT DEFAULT ''")
+    except Exception:
+        pass  # 列已存在
     conn.execute('CREATE INDEX IF NOT EXISTS idx_sales_order_request_details_internal ON sales_order_request_details(account, internal_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_transfer_orders_date ON transfer_orders(date)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_transfer_orders_out_location ON transfer_orders(out_location)')
@@ -4026,6 +4030,14 @@ def _sales_order_list_projection(order):
     }
 
 
+def _extract_delivery_type(udf_value):
+    """从 udfValue 数组中提取 index='1'（配送字段）的值。"""
+    for item in (udf_value or []):
+        if str(item.get('index', '')) == '1':
+            return str(item.get('value') or '').strip()
+    return ''
+
+
 def _normalize_sales_order_request_entry(entry):
     return {
         'code': _first_value(entry, ['productNumber', 'productCode', 'number', 'code'], ''),
@@ -4050,6 +4062,8 @@ def _normalize_sales_order_request(row, account, source='jdy_sales_order'):
     internal_id = str(_first_value(row, ['id', 'billId', 'fid'], '') or '').strip()
     visible_number = str(_first_value(row, ['number', 'billNo', 'billNumber', 'orderNo', 'orderNumber'], '') or '').strip()
     number = visible_number or (f'internal:{internal_id}' if internal_id else '')
+    udf_value = row.get('udfValue') or []
+    delivery_type = _extract_delivery_type(udf_value)
     return {
         'number': number,
         'internalId': internal_id,
@@ -4061,6 +4075,7 @@ def _normalize_sales_order_request(row, account, source='jdy_sales_order'):
         'billStatus': _first_value(row, ['billStatus', 'billstatus', 'status'], ''),
         'billStatusName': _first_value(row, ['billStatusName', 'statusName'], ''),
         'checkStatus': _first_value(row, ['checkStatus', 'check_status'], ''),
+        'deliveryType': delivery_type,
         'source': source,
         'syncStatus': 'placeholder' if not visible_number else 'synced',
         'entries': entries,
@@ -4098,6 +4113,7 @@ def _cache_upsert_sales_order_request(conn, order):
             'DELETE FROM sales_order_requests WHERE account = ? AND number = ? AND internal_id = ?',
             (account, f'internal:{internal_id}', internal_id),
         )
+    delivery_type = str(order.get('deliveryType') or '')
     if db_backend.is_mssql_connection(conn):
         return db_backend.upsert_by_key(conn, 'sales_order_requests', {
             'account': account,
@@ -4110,6 +4126,7 @@ def _cache_upsert_sales_order_request(conn, order):
             'bill_status': str(order.get('billStatus') or ''),
             'bill_status_name': str(order.get('billStatusName') or ''),
             'check_status': str(order.get('checkStatus') or ''),
+            'delivery_type': delivery_type,
             'source': str(order.get('source') or ''),
             'sync_status': str(order.get('syncStatus') or ''),
             'data_json': json.dumps(order, ensure_ascii=False),
@@ -4118,8 +4135,8 @@ def _cache_upsert_sales_order_request(conn, order):
     conn.execute('''
         INSERT OR REPLACE INTO sales_order_requests
         (account, number, internal_id, date, customer_name, total_qty, total_amount,
-         bill_status, bill_status_name, check_status, source, sync_status, data_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         bill_status, bill_status_name, check_status, delivery_type, source, sync_status, data_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         order.get('account') or '',
         order.get('number') or '',
@@ -4131,6 +4148,7 @@ def _cache_upsert_sales_order_request(conn, order):
         str(order.get('billStatus') or ''),
         str(order.get('billStatusName') or ''),
         str(order.get('checkStatus') or ''),
+        delivery_type,
         str(order.get('source') or ''),
         str(order.get('syncStatus') or ''),
         json.dumps(order, ensure_ascii=False),

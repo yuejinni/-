@@ -4118,7 +4118,12 @@ td.code { font-family: monospace; color: #1a2c5b; }
     </div>
 
     <!-- 创建按钮 -->
-    <div style="display:flex;justify-content:center;">
+    <div style="display:flex;justify-content:center;gap:10px;">
+      <button class="btn btn-ghost btn-sm" id="sorting-sync-btn"
+              onclick="syncOrderRequests()"
+              style="padding:8px 18px;font-size:13px;border-radius:6px;">
+        同步 JDY
+      </button>
       <button class="btn btn-primary btn-sorting" id="sorting-create-btn"
               onclick="createSortingBatch()"
               style="padding:12px 40px;font-size:15px;border-radius:6px;">
@@ -11430,19 +11435,44 @@ async function loadSortingOrders() {
   wrap.innerHTML = '<div style="padding:16px;text-align:center;color:#aaa;font-size:13px;">加载中...</div>';
 
   try {
-    const params = new URLSearchParams({date, account, source: 'cache', sort_filter: sortFilter});
+    const params = new URLSearchParams({date, account, limit: 500});
     if (search) params.set('search', search);
-    const r = await fetch('/sales-orders?' + params, {credentials:'same-origin'});
+    const r = await fetch('/sorting/order-requests?' + params, {credentials:'same-origin'});
     const d = await r.json();
-    if (!d.success) throw new Error(d.error || '加载失败');
+    if (!d.ok) throw new Error(d.error || '加载失败');
     window._sortingOrdersRaw = d.list || [];
     window._sortingOrdersLoaded = true;
-    // 同步已在批次的单号（服务端已帮我们合并全量 batched）
     window._batchedOrders = new Set(d.batched_numbers || []);
     _renderSortingOrders();
     _genSortingBatchno();
   } catch(e) {
     wrap.innerHTML = `<div style="padding:16px;color:#c0392b;font-size:13px;">加载失败：${e.message}</div>`;
+  }
+}
+
+async function syncOrderRequests() {
+  const date    = document.getElementById('sorting-date').value || _fmtDate(new Date());
+  const account = document.getElementById('sorting-account').value || '';
+  const btn = document.getElementById('sorting-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '同步中...'; }
+  try {
+    const r = await fetch('/sorting/sync-order-requests', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({date, account})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await loadSortingOrders();
+      alert(`同步完成：写入 ${d.written||0} 条，跳过 ${d.skipped||0} 条`);
+    } else {
+      alert('同步失败：' + (d.msg || JSON.stringify(d)));
+    }
+  } catch(e) {
+    alert('同步失败：' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '同步 JDY'; }
   }
 }
 
@@ -11486,13 +11516,21 @@ function _renderSortingOrders() {
     const rushBadge = isRush
       ? `<span style="font-size:11px;background:#fff1f0;color:#d4380d;padding:1px 6px;border-radius:10px;margin-left:4px;">已入加急</span>`
       : '';
+    const dt = o.deliveryType || '';
+    const deliveryBadge = dt === '仓店-仓送'
+      ? (o.storeDelivery
+          ? `<span style="font-size:11px;background:#fff7e6;color:#d46b08;padding:1px 6px;border-radius:10px;margin-left:4px;">店配</span>`
+          : `<span style="font-size:11px;background:#e6f7ff;color:#1677ff;padding:1px 6px;border-radius:10px;margin-left:4px;">仓店</span>`)
+      : dt === '仓配-仓送'
+        ? `<span style="font-size:11px;background:#f6ffed;color:#52c41a;padding:1px 6px;border-radius:10px;margin-left:4px;">仓配</span>`
+        : '';
     let cls = 'sorting-order-item';
     if (sel)    cls += ' selected';
     if (isRush) cls += ' rush';
     return `<div class="${cls}" onclick="toggleSortingOrder('${o.number}')">
       <input class="sorting-order-cb" type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();toggleSortingOrder('${o.number}')">
       <div class="sorting-order-info">
-        <div class="sorting-order-no">${o.number}${batchedBadge}${rushBadge}</div>
+        <div class="sorting-order-no">${o.number}${batchedBadge}${rushBadge}${deliveryBadge}</div>
         <div class="sorting-order-meta">${o.customerName||''} · ${o.account||''} · ${_sortingFmt(o.date)}</div>
       </div>
       <div class="sorting-order-right" style="align-items:flex-end;gap:4px;">
