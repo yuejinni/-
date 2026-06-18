@@ -162,6 +162,8 @@ def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
         select_cols.insert(0, 'account')
     if 'brand' in cols:
         select_cols.append('brand')
+    if 'spec' in cols:
+        select_cols.append('spec')
     col_sql = ', '.join(select_cols)
     by_number = {}
     by_barcode = {}
@@ -170,6 +172,11 @@ def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
         item = {k: row[k] if k in row.keys() else '' for k in select_cols}
         pn = str(item.get('product_number') or '').strip()
         bc = str(item.get('barcode') or '').strip()
+        acct = str(item.get('account') or '').strip()
+        if acct and pn and (acct, pn) not in by_number:
+            by_number[(acct, pn)] = item
+        if acct and bc and (acct, bc) not in by_barcode:
+            by_barcode[(acct, bc)] = item
         if pn and pn not in by_number:
             by_number[pn] = item
         if bc and bc not in by_barcode:
@@ -191,9 +198,17 @@ def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
     return by_number, by_barcode
 
 
-def _product_for(by_number, by_barcode, goodsno='', barcode=''):
+def _product_for(by_number, by_barcode, goodsno='', barcode='', account=''):
     barcode = str(barcode or '').strip()
     goodsno = str(goodsno or '').strip()
+    account = str(account or '').strip()
+    if account and account != 'all':
+        return (
+            by_barcode.get((account, barcode))
+            or by_number.get((account, goodsno))
+            or by_barcode.get(barcode)
+            or by_number.get(goodsno)
+        )
     return by_barcode.get(barcode) or by_number.get(goodsno)
 
 
@@ -222,7 +237,7 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
             qty = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
             location = str(entry.get('location') or '').strip()
             barcode = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
-            prod = _product_for(by_number, by_barcode, goodsno, barcode)
+            prod = _product_for(by_number, by_barcode, goodsno, barcode, ctx.get('account') or account)
             if not barcode and prod:
                 barcode = str(prod.get('barcode') or '').strip()
             if not barcode or qty <= 0:
@@ -238,7 +253,9 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
                 })
                 continue
 
-            prod = prod or _product_for(by_number, by_barcode, goodsno, barcode)
+            prod = prod or _product_for(by_number, by_barcode, goodsno, barcode, ctx.get('account') or account)
+            if not goodsmodel and prod:
+                goodsmodel = str(prod.get('spec') or '').strip()
             brand = str((prod or {}).get('brand') or '').strip()
             picktype = 1 if brand == '手工' else 0
             if barcode in dim_overrides:
