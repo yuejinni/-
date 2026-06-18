@@ -610,6 +610,44 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 #result-mask .rm-icon { font-size: 72px; }
 #result-mask .rm-msg  { font-size: 22px; font-weight: 700; text-align: center; color: #fff; }
 #result-mask .rm-sub  { font-size: 16px; color: rgba(255,255,255,.8); text-align: center; }
+
+/* 结果遮罩撤销按钮 */
+.rm-undo-btn {
+  background: rgba(255,255,255,.2);
+  border: 2px solid rgba(255,255,255,.6);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  padding: 12px 28px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.rm-undo-btn:active { background: rgba(255,255,255,.35); }
+
+/* 异常面板底部 */
+.ep-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ep-reset-btn {
+  background: rgba(239,68,68,.12);
+  border: 1px solid rgba(239,68,68,.4);
+  border-radius: 10px;
+  color: var(--red);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 13px 0;
+  cursor: pointer;
+  width: 100%;
+}
+.ep-reset-btn:active { background: rgba(239,68,68,.25); }
+.ep-reset-btn.confirm-1 {
+  background: rgba(239,68,68,.3);
+  border-color: var(--red);
+  color: #fff;
+}
 </style>
 </head>
 <body>
@@ -731,6 +769,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   <div class="ep-list" id="ep-list">
     <div class="ep-empty">加载中...</div>
   </div>
+  <div class="ep-footer">
+    <button id="ep-reset-btn" class="ep-reset-btn" onclick="batchRollback()">重置批次（清空已拣记录）</button>
+  </div>
 </div>
 
 <!-- ══ 结果遮罩 ══ -->
@@ -738,6 +779,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   <div class="rm-icon" id="rm-icon"></div>
   <div class="rm-msg"  id="rm-msg"></div>
   <div class="rm-sub"  id="rm-sub"></div>
+  <button id="rm-undo" class="rm-undo-btn" onclick="triggerUndo()" style="display:none">↩ 撤销此次</button>
 </div>
 
 <script>
@@ -926,7 +968,7 @@ async function doScan(barcode) {
     );
     const data = await res.json();
     if (data.ok) {
-      showResult('ok', '✅', data.msg || '扫码成功', barcode);
+      showResult('ok', '✅', data.msg || '扫码成功', barcode, barcode);
       loadList();
     } else {
       showResult('err', '❌', data.msg || '扫码失败', barcode);
@@ -1169,8 +1211,11 @@ async function exceptionConfirm(barcode, idx) {
 
 // ── 结果遮罩 ──────────────────────────────────────────────────────
 let maskTimer = null;
-function showResult(type, icon, msg, sub) {
-  const mask = document.getElementById('result-mask');
+let _pendingUndo = null;  // 当前可撤销的条码（null=不可撤销）
+
+function showResult(type, icon, msg, sub, undoBarcode) {
+  const mask    = document.getElementById('result-mask');
+  const undoBtn = document.getElementById('rm-undo');
   document.getElementById('rm-icon').textContent = icon;
   document.getElementById('rm-msg').textContent  = msg;
   document.getElementById('rm-sub').textContent  = sub || '';
@@ -1178,16 +1223,27 @@ function showResult(type, icon, msg, sub) {
   mask.style.display = 'flex';
   void mask.offsetWidth;
   mask.classList.add(type);
+
+  _pendingUndo = (type === 'ok' && undoBarcode) ? undoBarcode : null;
+  undoBtn.style.display = _pendingUndo ? '' : 'none';
+
   if (maskTimer) clearTimeout(maskTimer);
+  const delay = _pendingUndo ? 3000 : 1500;
   maskTimer = setTimeout(() => {
     mask.style.display = 'none';
+    _pendingUndo = null;
+    undoBtn.style.display = 'none';
     focusScan();
-  }, 1500);
+  }, delay);
 }
 
-document.getElementById('result-mask').addEventListener('click', () => {
+document.getElementById('result-mask').addEventListener('click', (e) => {
+  // 点击按钮由 triggerUndo 处理，不要在此关闭
+  if (e.target.id === 'rm-undo') return;
   if (maskTimer) clearTimeout(maskTimer);
   document.getElementById('result-mask').style.display = 'none';
+  _pendingUndo = null;
+  document.getElementById('rm-undo').style.display = 'none';
   focusScan();
 });
 
@@ -1198,6 +1254,81 @@ function escHtml(s) {
 
 function focusScan() {
   setTimeout(() => scanInput.focus(), 0);
+}
+
+// ── 撤销上一次扫码（情况B） ────────────────────────────────────────
+function triggerUndo() {
+  if (!_pendingUndo) return;
+  const bc = _pendingUndo;
+  _pendingUndo = null;
+  if (maskTimer) clearTimeout(maskTimer);
+  const mask = document.getElementById('result-mask');
+  mask.style.display = 'none';
+  document.getElementById('rm-undo').style.display = 'none';
+  undoScan(bc);
+}
+
+async function undoScan(barcode) {
+  try {
+    const res  = await fetch('/api/pda/unscan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({barcode, floor: state.floor}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showResult('ok', '↩', data.msg || '撤销成功', barcode);
+      loadList();
+    } else {
+      showResult('err', '❌', data.msg || '撤销失败', barcode);
+    }
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', barcode);
+  }
+}
+
+// ── 批次重置（情况A，双击确认） ────────────────────────────────────
+let _rollbackTaps = 0;
+let _rollbackTimer = null;
+
+function batchRollback() {
+  const btn = document.getElementById('ep-reset-btn');
+  _rollbackTaps++;
+  if (_rollbackTaps === 1) {
+    btn.textContent = '⚠️ 再次点击确认重置（不可撤销）';
+    btn.classList.add('confirm-1');
+    if (_rollbackTimer) clearTimeout(_rollbackTimer);
+    _rollbackTimer = setTimeout(() => {
+      _rollbackTaps = 0;
+      btn.textContent = '重置批次（清空已拣记录）';
+      btn.classList.remove('confirm-1');
+    }, 3000);
+  } else if (_rollbackTaps >= 2) {
+    _rollbackTaps = 0;
+    if (_rollbackTimer) clearTimeout(_rollbackTimer);
+    btn.textContent = '重置批次（清空已拣记录）';
+    btn.classList.remove('confirm-1');
+    doRollback();
+  }
+}
+
+async function doRollback() {
+  try {
+    const res  = await fetch('/api/batch/active/rollback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+    });
+    const data = await res.json();
+    closeExceptionPanel();
+    if (data.ok) {
+      showResult('ok', '↺', data.msg || '批次已重置', '');
+      loadList();
+    } else {
+      showResult('err', '❌', data.msg || '重置失败', '');
+    }
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', '');
+  }
 }
 
 // 保持输入框焦点（扫码枪需要）
