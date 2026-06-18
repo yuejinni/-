@@ -42,31 +42,84 @@ def _find_box_type(vol: float, box_configs: dict) -> int:
 
 def _emit_box(rules: list, order: dict, goods_list: list,
               port: int, box_num: int, box_type: int) -> None:
-    """将 goods_list 中的商品展开为 rules 行（qty=N → slot_seq 1..N）。"""
+    """将 goods_list 中的商品展开为 rules 行（qty=N → slot_seq 1..N）。
+    innerport 初始设为 portno，_assign_queue_seq 会将 queue_seq>100 的置为 0。
+    """
     box_no    = f"{order['orderno']}-{box_num}"
-    innerport = port if port <= 102 else 0
     for g in goods_list:
         floor = floor_from_goodsmodel(g.get('goodsmodel', ''))
         for slot in range(1, g['qty'] + 1):
             rules.append({
-                'barcode':    g['barcode'],
-                'slot_seq':   slot,
-                'portno':     port,
-                'innerport':  innerport,
-                'floor':      floor,
-                'orderno':    order['orderno'],
-                'goodsno':    g.get('goodsno', ''),
-                'goodsmodel': g.get('goodsmodel', ''),
-                'customer':   g.get('customer', ''),
-                'box_no':     box_no,
-                'box_type':   box_type,
-                'serialnum':  g.get('serialnum', 0),
-                'picktype':   g.get('picktype', 0),
-                'entry_id':      g.get('entry_id', 0),
-                'store_delivery': g.get('store_delivery', 0),
-                # label_data：账号-CTN序号（对应 Wcs_goods.column4）
-                'label_data': box_no,
+                'barcode':          g['barcode'],
+                'slot_seq':         slot,
+                'portno':           port,
+                'innerport':        port,   # _assign_queue_seq 会按 queue_seq 覆盖
+                'floor':            floor,
+                'orderno':          order['orderno'],
+                'goodsno':          g.get('goodsno', ''),
+                'goodsmodel':       g.get('goodsmodel', ''),
+                'customer':         g.get('customer', ''),
+                'box_no':           box_no,
+                'box_type':         box_type,
+                'serialnum':        g.get('serialnum', 0),
+                'picktype':         g.get('picktype', 0),
+                'entry_id':         g.get('entry_id', 0),
+                'store_delivery':   g.get('store_delivery', 0),
+                'label_data':       box_no,
+                # 排队调度用（不写 DB，仅供 _assign_queue_seq 读取）
+                'payment_priority': order.get('payment_priority', 2),
+                'queue_seq':        0,      # 由 _assign_queue_seq 赋值
             })
+
+
+def _assign_queue_seq(rules: list, max_on_machine: int = 100) -> None:
+    """
+    批次分箱完成后，按优先级为每个格口（箱）赋 queue_seq，
+    超出首批上机数量（max_on_machine）的箱将 innerport 置 0（排队等候）。
+
+    排序依据（优先级由高到低）：
+      1. overlap_score DESC — 与其他箱共享条码越多越优先上机
+      2. payment_priority ASC — 支付优先级数值越小越优先（1=现金已收）
+
+    wave_num = ceil(queue_seq / max_on_machine)
+      wave1: queue_seq 1-100，innerport=portno（已上机）
+      wave2: queue_seq 101-200，innerport=0（排队）
+      …
+    """
+    # 按 portno 分组（每个 portno 代表一个物理箱）
+    portno_rules: dict = {}
+    for r in rules:
+        portno_rules.setdefault(r['portno'], []).append(r)
+
+    if not portno_rules:
+        return
+
+    # barcode → set of portnos（计算跨箱共享条码）
+    barcode_ports: dict = {}
+    for portno, ruleset in portno_rules.items():
+        for r in ruleset:
+            barcode_ports.setdefault(r['barcode'], set()).add(portno)
+
+    # 每个 portno 的 (overlap_score, payment_priority)
+    portno_meta: dict = {}
+    for portno, ruleset in portno_rules.items():
+        barcodes_in_box = {r['barcode'] for r in ruleset}
+        overlap_score   = sum(1 for b in barcodes_in_box if len(barcode_ports[b]) > 1)
+        pay_pri         = ruleset[0].get('payment_priority', 2)
+        portno_meta[portno] = (overlap_score, pay_pri)
+
+    # 排序：overlap_score 大 → 先上机；同分时 payment_priority 小 → 先上机
+    sorted_portnos = sorted(
+        portno_rules.keys(),
+        key=lambda p: (-portno_meta[p][0], portno_meta[p][1])
+    )
+
+    # 赋 queue_seq；超出 max_on_machine 的置 innerport=0
+    for seq, portno in enumerate(sorted_portnos, 1):
+        for r in portno_rules[portno]:
+            r['queue_seq'] = seq
+            if seq > max_on_machine:
+                r['innerport'] = 0
 
 
 def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
@@ -76,6 +129,7 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
     orders: [
         {
             'orderno': str,
+            'payment_priority': int,   # 1-6，来自 JDY 自定义字段2（默认 2）
             'goods': [
                 {
                     'barcode': str,       # JDY 产品条码
@@ -95,7 +149,7 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
     ]
     box_configs: {1: small_max_vol, 2: medium_max_vol, 3: large_max_vol}  ← cm³
 
-    返回: list[dict]，每个 SKU qty=N 展开为 N 行（slot_seq 1..N），含 label_data 字段。
+    返回: list[dict]，每个 SKU qty=N 展开为 N 行（slot_seq 1..N），含 queue_seq 字段。
 
     装箱规则：
     - 订单按总数量降序（大单优先，格口号靠前）
@@ -105,7 +159,8 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
       （当前箱型 = 能装下已累积体积的最小箱型，即"装满一箱再开另一箱"）
     - 每箱的箱型 = 能装下该箱合计体积的最小箱型（装不下任何箱则用大箱）
     - 格口 51 跳过
-    - 格口 <= 102 → innerport=portno；格口 > 102 → innerport=0（分拨溢出）
+    - 首批上机 100 箱（queue_seq ≤ 100 → innerport=portno）
+    - 超出 100 箱 → innerport=0（排队），按 queue_seq 顺序逐个上机
     - ⚠️ label_data = "orderno-box_num"（对应 Wcs_goods.column4，账号-CTN序号）
     """
     curr_port  = 0
@@ -159,5 +214,8 @@ def allocate_ports(orders: list, box_configs: dict) -> list[dict]:
             _emit_box(rules, order, box['goods'], curr_port, box_num, box_type)
             if box_num < len(order_boxes):
                 curr_port = _next_port(curr_port)
+
+    # ── 阶段 4：排队调度 — 赋 queue_seq，超出首批 100 箱的置 innerport=0 ──
+    _assign_queue_seq(rules, max_on_machine=100)
 
     return rules

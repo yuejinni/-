@@ -32,6 +32,7 @@ CREATE TABLE sorting_rules (
     serialnum   INT DEFAULT 0,           -- 写PLC byte 8-9
     label_data  NVARCHAR(200),           -- 面单数据（账号-CTN序号），打印用
     box_type    INT DEFAULT 1,
+    queue_seq   INT DEFAULT 0,           -- 排队序号（1=最先上机；>100 时 innerport=0 等候）
     status      INT DEFAULT 0,           -- 0=待扫 1=等待拣货 2=可上机 3=已落包 4=格口已清 5=批次已完成
     created_at  DATETIME DEFAULT GETDATE(),
     synced_at   DATETIME,

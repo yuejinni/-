@@ -4,6 +4,7 @@ api/web_api.py — Flask Web API（:5009）
 替代原 C# EMSAPI，12 条路由。
 ⚠️ 每个请求独立获取 DB 连接（Flask 多线程模式下不共享 connection）。
 """
+import math
 import os
 import logging
 import json
@@ -33,19 +34,59 @@ def _location_sort_key(model: str) -> str:
 def get_pick_list():
     """
     PDA 拣货列表（替代 GET /GetPickInfo?floor=N&type=N）
-    type 参数对应 Wcs_goods.column3：0=自动分拣（默认），1=手工分拣
+    type=0 上机分拣：只返回已上机（innerport>0）的货品，附带 wave_num。
+    type=1 手工分拣：返回所有待拣货品（无 sorting_rules 依赖），附带 portno。
     """
     floor    = request.args.get('floor', type=int, default=0)
     picktype = request.args.get('type',  type=int, default=0)
     db = get_db_conn()
     active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
-    rows = qall(db,
-        "SELECT barcode, port AS portno, goodsnum, model, unit, quantity, num, anum "
-        "FROM pick_progress "
-        "WHERE batchno=? AND num>anum AND floor=? AND picktype=? ",
-        (active, floor, picktype))
-    rows = sorted(rows, key=lambda r: _location_sort_key(r.get('model', '')))
-    return jsonify(rows)
+
+    if picktype == 0:
+        # 上机分拣：必须有至少一条已上机规则
+        rows = qall(db, """
+            SELECT pp.barcode, pp.port AS portno, pp.goodsnum, pp.model,
+                   pp.unit, pp.quantity, pp.num, pp.anum,
+                   (SELECT MIN(sr.queue_seq)
+                    FROM sorting_rules sr
+                    WHERE sr.batchno = pp.batchno
+                      AND sr.barcode = pp.barcode
+                      AND sr.innerport > 0
+                   ) AS min_queue_seq
+            FROM pick_progress pp
+            WHERE pp.batchno = ? AND pp.num > pp.anum
+              AND pp.floor = ? AND pp.picktype = 0
+              AND EXISTS (
+                  SELECT 1 FROM sorting_rules sr
+                  WHERE sr.batchno = pp.batchno
+                    AND sr.barcode = pp.barcode
+                    AND sr.innerport > 0
+              )
+        """, (active, floor))
+        result = []
+        for r in rows:
+            d = dict(r)
+            min_qs = d.get('min_queue_seq') or 1
+            d['wave_num'] = math.ceil(min_qs / 100) if min_qs > 0 else 1
+            result.append(d)
+    else:
+        # 手工分拣：直接按 pick_progress 返回，不过滤 sorting_rules
+        rows = qall(db, """
+            SELECT pp.barcode, pp.port AS portno, pp.goodsnum, pp.model,
+                   pp.unit, pp.quantity, pp.num, pp.anum,
+                   0 AS min_queue_seq
+            FROM pick_progress pp
+            WHERE pp.batchno = ? AND pp.num > pp.anum
+              AND pp.floor = ? AND pp.picktype = 1
+        """, (active, floor))
+        result = []
+        for r in rows:
+            d = dict(r)
+            d['wave_num'] = 0
+            result.append(d)
+
+    result = sorted(result, key=lambda r: _location_sort_key(r.get('model', '')))
+    return jsonify(result)
 
 
 # ── 2. PDA 扫码确认拣货 ────────────────────────────────────────────────────────
@@ -90,6 +131,220 @@ def manual_sort():
                         "msg": "条码不存在或非手工分拣商品"})
     return jsonify({"success": True, "port": portno, "autoRunning": auto_running,
                     "msg": f"请放入格口 {portno}"})
+
+
+# ── 3a. 手工：扫货品 → 查目标格口 ────────────────────────────────────────────
+@app.get('/api/manual/item-info')
+def manual_item_info():
+    """手工分拣：扫货品条码 → 返回目标格口号（GKxxx 格式）。"""
+    barcode = request.args.get('barcode', '').strip()
+    if not barcode:
+        return jsonify({"ok": False, "msg": "barcode 不能为空"}), 400
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    rows = qall(db,
+        "SELECT goodsnum, model, unit, num, anum, port FROM pick_progress "
+        "WHERE batchno=? AND barcode=? AND picktype=1",
+        (active, barcode))
+    if not rows:
+        return jsonify({"ok": False, "msg": "条码不在手工分拣列表"})
+    r = dict(rows[0])
+    portno = int(r.get('port') or 0)
+    return jsonify({
+        "ok": True,
+        "barcode": barcode,
+        "goodsnum": r.get('goodsnum') or '',
+        "model": r.get('model') or '',
+        "unit": r.get('unit') or '',
+        "num": r.get('num') or 0,
+        "anum": r.get('anum') or 0,
+        "portno": portno,
+        "port_label": f"GK{portno:03d}",
+    })
+
+
+# ── 3b. 手工：扫格口 → 查待放货品 ────────────────────────────────────────────
+@app.get('/api/manual/port-items')
+def manual_port_items():
+    """手工分拣：扫格口号（GKxxx）→ 返回该格口所有待放货品。"""
+    port_label = request.args.get('port', '').strip().upper()
+    if port_label.startswith('GK'):
+        try:
+            portno = int(port_label[2:])
+        except ValueError:
+            return jsonify({"ok": False, "msg": "格口号格式错误（应为 GKxxx）"}), 400
+    else:
+        try:
+            portno = int(port_label)
+        except ValueError:
+            return jsonify({"ok": False, "msg": "格口号格式错误"}), 400
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    rows = qall(db,
+        "SELECT barcode, goodsnum, model, unit, num, anum "
+        "FROM pick_progress "
+        "WHERE batchno=? AND port=? AND picktype=1 AND num > anum",
+        (active, portno))
+    items = []
+    for r in rows:
+        d = dict(r)
+        d['remaining'] = (d.get('num') or 0) - (d.get('anum') or 0)
+        items.append(d)
+    return jsonify({
+        "ok": True,
+        "portno": portno,
+        "port_label": f"GK{portno:03d}",
+        "items": items,
+    })
+
+
+# ── 3c. 手工：确认放箱 ────────────────────────────────────────────────────────
+@app.post('/api/manual/confirm')
+def manual_confirm():
+    """
+    手工分拣：确认一件货品已放入格口（anum+1）。
+    body: {"barcode": str, "portno": int}
+    """
+    body    = request.get_json() or {}
+    barcode = body.get('barcode', '').strip()
+    portno  = int(body.get('portno') or 0)
+    if not barcode or not portno:
+        return jsonify({"ok": False, "msg": "barcode 和 portno 不能为空"}), 400
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    rows = qall(db,
+        "SELECT num, anum FROM pick_progress "
+        "WHERE batchno=? AND barcode=? AND port=? AND picktype=1",
+        (active, barcode, portno))
+    if not rows:
+        return jsonify({"ok": False, "msg": "条码与格口不匹配或不在手工分拣列表"})
+    r = dict(rows[0])
+    num  = int(r.get('num') or 0)
+    anum = int(r.get('anum') or 0)
+    if anum >= num:
+        return jsonify({"ok": False, "msg": "该货品已全部放入"})
+    try:
+        execute(db,
+            "UPDATE pick_progress SET anum=anum+1, updated_at=GETDATE() "
+            "WHERE batchno=? AND barcode=? AND port=? AND picktype=1",
+            (active, barcode, portno))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    new_anum = anum + 1
+    return jsonify({
+        "ok": True,
+        "done": new_anum >= num,
+        "anum": new_anum,
+        "num": num,
+        "msg": f"已确认 {new_anum}/{num}",
+    })
+
+
+# ── 3d. 查件/异常处理：查询所有待确认货品（含上机+手工） ───────────────────────
+@app.get('/api/exception/items')
+def exception_items():
+    """
+    查件面板：返回当前批次所有 anum < num 的货品，覆盖上机（picktype=0）和手工（picktype=1）。
+    q: 货号/条码模糊搜索（空=全部）
+    floor: 0=全部楼层
+    """
+    q     = request.args.get('q', '').strip()
+    floor = request.args.get('floor', type=int, default=0)
+    db    = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify([])
+
+    where = ["pp.batchno = ?", "pp.num > pp.anum"]
+    params = [active]
+    if floor > 0:
+        where.append("pp.floor = ?")
+        params.append(floor)
+    if q:
+        where.append("(pp.goodsnum LIKE ? OR pp.barcode LIKE ?)")
+        params.extend([f'%{q}%', f'%{q}%'])
+
+    rows = qall(db, f"""
+        SELECT pp.barcode, pp.goodsnum, pp.model, pp.unit,
+               pp.num, pp.anum, pp.picktype, pp.port AS portno, pp.floor
+        FROM pick_progress pp
+        WHERE {" AND ".join(where)}
+        ORDER BY pp.picktype, pp.goodsnum
+    """, tuple(params))
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        portno = int(d.get('portno') or 0)
+        # 上机件：优先取 sorting_rules 里第一条未完成规则的实际 innerport
+        if d.get('picktype') == 0:
+            actual = qval(db,
+                "SELECT TOP 1 innerport FROM sorting_rules "
+                "WHERE batchno=? AND barcode=? AND status < 3 AND innerport > 0 "
+                "ORDER BY queue_seq ASC, id ASC",
+                (active, d['barcode']))
+            if actual:
+                portno = int(actual)
+        d['portno']     = portno
+        d['port_label'] = f"GK{portno:03d}" if portno > 0 else "—"
+        d['remaining']  = (d.get('num') or 0) - (d.get('anum') or 0)
+        result.append(d)
+
+    result = sorted(result, key=lambda r: _location_sort_key(r.get('model', '')))
+    return jsonify(result)
+
+
+# ── 3e. 查件/异常处理：手动确认放入（anum+1，支持两种类型） ────────────────────
+@app.post('/api/exception/confirm')
+def exception_confirm():
+    """
+    异常/查件确认：手动将某件货品标记为已放入（anum+1）。
+    适用于 picktype=0（上机条码损坏）和 picktype=1（手工）。
+    body: {"barcode": str}
+    """
+    body    = request.get_json() or {}
+    barcode = body.get('barcode', '').strip()
+    if not barcode:
+        return jsonify({"ok": False, "msg": "barcode 不能为空"}), 400
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    rows = qall(db,
+        "SELECT num, anum FROM pick_progress WHERE batchno=? AND barcode=?",
+        (active, barcode))
+    if not rows:
+        return jsonify({"ok": False, "msg": "条码不在当前批次"})
+    r = dict(rows[0])
+    num  = int(r.get('num') or 0)
+    anum = int(r.get('anum') or 0)
+    if anum >= num:
+        return jsonify({"ok": False, "msg": "该货品已全部确认放入"})
+    try:
+        execute(db,
+            "UPDATE pick_progress SET anum=anum+1, updated_at=GETDATE() "
+            "WHERE batchno=? AND barcode=?",
+            (active, barcode))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    new_anum = anum + 1
+    return jsonify({
+        "ok": True,
+        "done": new_anum >= num,
+        "anum": new_anum,
+        "num": num,
+        "msg": f"已确认 {new_anum}/{num}",
+    })
 
 
 # ── 4. 看板数据 ────────────────────────────────────────────────────────────────
