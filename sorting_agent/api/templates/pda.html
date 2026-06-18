@@ -611,19 +611,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 #result-mask .rm-msg  { font-size: 22px; font-weight: 700; text-align: center; color: #fff; }
 #result-mask .rm-sub  { font-size: 16px; color: rgba(255,255,255,.8); text-align: center; }
 
-/* 结果遮罩撤销按钮 */
-.rm-undo-btn {
-  background: rgba(255,255,255,.2);
-  border: 2px solid rgba(255,255,255,.6);
-  border-radius: 12px;
-  color: #fff;
-  font-size: 17px;
-  font-weight: 700;
-  padding: 12px 28px;
-  cursor: pointer;
-  margin-top: 4px;
-}
-.rm-undo-btn:active { background: rgba(255,255,255,.35); }
 
 /* 异常面板底部 */
 .ep-footer {
@@ -779,7 +766,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   <div class="rm-icon" id="rm-icon"></div>
   <div class="rm-msg"  id="rm-msg"></div>
   <div class="rm-sub"  id="rm-sub"></div>
-  <button id="rm-undo" class="rm-undo-btn" onclick="triggerUndo()" style="display:none">↩ 撤销此次</button>
 </div>
 
 <script>
@@ -968,7 +954,7 @@ async function doScan(barcode) {
     );
     const data = await res.json();
     if (data.ok) {
-      showResult('ok', '✅', data.msg || '扫码成功', barcode, barcode);
+      showResult('ok', '✅', data.msg || '扫码成功', barcode);
       loadList();
     } else {
       showResult('err', '❌', data.msg || '扫码失败', barcode);
@@ -1211,11 +1197,9 @@ async function exceptionConfirm(barcode, idx) {
 
 // ── 结果遮罩 ──────────────────────────────────────────────────────
 let maskTimer = null;
-let _pendingUndo = null;  // 当前可撤销的条码（null=不可撤销）
 
-function showResult(type, icon, msg, sub, undoBarcode) {
-  const mask    = document.getElementById('result-mask');
-  const undoBtn = document.getElementById('rm-undo');
+function showResult(type, icon, msg, sub) {
+  const mask = document.getElementById('result-mask');
   document.getElementById('rm-icon').textContent = icon;
   document.getElementById('rm-msg').textContent  = msg;
   document.getElementById('rm-sub').textContent  = sub || '';
@@ -1223,27 +1207,16 @@ function showResult(type, icon, msg, sub, undoBarcode) {
   mask.style.display = 'flex';
   void mask.offsetWidth;
   mask.classList.add(type);
-
-  _pendingUndo = (type === 'ok' && undoBarcode) ? undoBarcode : null;
-  undoBtn.style.display = _pendingUndo ? '' : 'none';
-
   if (maskTimer) clearTimeout(maskTimer);
-  const delay = _pendingUndo ? 3000 : 1500;
   maskTimer = setTimeout(() => {
     mask.style.display = 'none';
-    _pendingUndo = null;
-    undoBtn.style.display = 'none';
     focusScan();
-  }, delay);
+  }, 1500);
 }
 
-document.getElementById('result-mask').addEventListener('click', (e) => {
-  // 点击按钮由 triggerUndo 处理，不要在此关闭
-  if (e.target.id === 'rm-undo') return;
+document.getElementById('result-mask').addEventListener('click', () => {
   if (maskTimer) clearTimeout(maskTimer);
   document.getElementById('result-mask').style.display = 'none';
-  _pendingUndo = null;
-  document.getElementById('rm-undo').style.display = 'none';
   focusScan();
 });
 
@@ -1256,38 +1229,7 @@ function focusScan() {
   setTimeout(() => scanInput.focus(), 0);
 }
 
-// ── 撤销上一次扫码（情况B） ────────────────────────────────────────
-function triggerUndo() {
-  if (!_pendingUndo) return;
-  const bc = _pendingUndo;
-  _pendingUndo = null;
-  if (maskTimer) clearTimeout(maskTimer);
-  const mask = document.getElementById('result-mask');
-  mask.style.display = 'none';
-  document.getElementById('rm-undo').style.display = 'none';
-  undoScan(bc);
-}
-
-async function undoScan(barcode) {
-  try {
-    const res  = await fetch('/api/pda/unscan', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({barcode, floor: state.floor}),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      showResult('ok', '↩', data.msg || '撤销成功', barcode);
-      loadList();
-    } else {
-      showResult('err', '❌', data.msg || '撤销失败', barcode);
-    }
-  } catch(e) {
-    showResult('err', '⚠️', '网络错误', barcode);
-  }
-}
-
-// ── 批次重置（情况A，双击确认） ────────────────────────────────────
+// ── 批次重置（双击确认） ─────────────────────────────────────────────
 let _rollbackTaps = 0;
 let _rollbackTimer = null;
 
