@@ -105,13 +105,18 @@
   .order-card .row2 span b { color: #1e293b; }
 
   /* 货品进度条 */
-  .goods-progress { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+  .goods-progress { margin-top: 8px; display: flex; flex-direction: column; gap: 7px; }
   .goods-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
   .goods-row .gname { width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .progress-lines { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .progress-line { display: flex; align-items: center; gap: 5px; }
+  .progress-label { width: 12px; color: var(--gray); font-weight: 600; }
   .prog-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
-  .prog-fill { height: 100%; border-radius: 3px; background: var(--blue); transition: width .3s; }
+  .prog-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+  .prog-fill.picked { background: var(--blue); }
+  .prog-fill.dropped { background: var(--yellow); }
   .prog-fill.full { background: var(--green); }
-  .goods-row .prog-text { width: 40px; text-align: right; color: var(--gray); }
+  .goods-row .prog-text { width: 34px; text-align: right; color: var(--gray); }
 
   /* ── 右侧面板 ── */
   .right-panel { width: 300px; display: flex; flex-direction: column; gap: 10px; }
@@ -428,11 +433,24 @@ function renderOrders() {
         ${o.goods.slice(0,3).map(g => `
           <div class="goods-row">
             <span class="gname">${g.goodsno}</span>
-            <div class="prog-bar">
-              <div class="prog-fill ${g.picked>=g.total?'full':''}"
-                   style="width:${Math.min(100,g.total?g.picked/g.total*100:0)}%"></div>
+            <div class="progress-lines">
+              <div class="progress-line">
+                <span class="progress-label">拣</span>
+                <div class="prog-bar">
+                  <div class="prog-fill picked ${g.picked>=g.total?'full':''}"
+                       style="width:${Math.min(100,g.total?g.picked/g.total*100:0)}%"></div>
+                </div>
+                <span class="prog-text">${g.picked}/${g.total}</span>
+              </div>
+              <div class="progress-line">
+                <span class="progress-label">落</span>
+                <div class="prog-bar">
+                  <div class="prog-fill dropped ${g.scanned>=g.total?'full':''}"
+                       style="width:${Math.min(100,g.total?g.scanned/g.total*100:0)}%"></div>
+                </div>
+                <span class="prog-text">${g.scanned}/${g.total}</span>
+              </div>
             </div>
-            <span class="prog-text">拣 ${g.picked}/${g.total} · 落 ${g.scanned}/${g.total}</span>
           </div>`).join('')}
         ${o.goods.length > 3 ? `<div style="font-size:11px;color:var(--gray);padding-top:2px">…还有 ${o.goods.length-3} 种货品</div>` : ''}
       </div>` : ''}
