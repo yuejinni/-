@@ -11642,10 +11642,10 @@ function _renderSortingOrders() {
   const wrap = document.getElementById('sorting-order-list');
   const raw  = window._sortingOrdersRaw;
 
-  // 客户端补充过滤：未生成批次 → 同时排除已入加急的单
+  // 客户端补充过滤：未生成批次 → 排除已入批次 + 已入加急的单
   const sortFilter = (document.getElementById('sorting-sort-filter') || {}).value || 'all';
   const list = (sortFilter === 'unmatched')
-    ? raw.filter(o => !window._rushOrders.has(o.number))
+    ? raw.filter(o => !window._rushOrders.has(o.number) && !window._batchedOrders.has(o.number))
     : raw;
 
   // 显示/隐藏全选栏
@@ -11803,6 +11803,21 @@ function _genSortingBatchno() {
 // 暂存批次生成参数，供尺寸弹窗确认后复用
 window._pendingBatchParams = null;
 
+async function _sortingReadJsonResponse(resp, label) {
+  const text = await resp.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    const preview = text ? text.slice(0, 180) : '空响应';
+    throw new Error(`${label || '请求'}返回非 JSON（HTTP ${resp.status}）：${preview}`);
+  }
+  if (!resp.ok) {
+    throw new Error(data.msg || data.error || `${label || '请求'}失败（HTTP ${resp.status}）`);
+  }
+  return data;
+}
+
 async function createSortingBatch() {
   const allSel  = [...window._sortingSelected];
   if (!allSel.length) { alert('请先勾选销货单'); return; }
@@ -11827,6 +11842,7 @@ async function createSortingBatch() {
   const box1 = +document.getElementById('sorting-box1').value || 40000;
   const box2 = +document.getElementById('sorting-box2').value || 85000;
   const box3 = +document.getElementById('sorting-box3').value || 198000;
+  const account = (document.getElementById('sorting-account') || {}).value || 'all';
 
   // 收集所选订单的箱型覆盖（仅 1/2/3，'auto' 或未设置则不传）
   const orderBoxTypes = {};
@@ -11836,7 +11852,7 @@ async function createSortingBatch() {
   });
 
   // 暂存本次参数
-  window._pendingBatchParams = { batchno, sel, box1, box2, box3, orderBoxTypes, rushNos };
+  window._pendingBatchParams = { batchno, sel, box1, box2, box3, orderBoxTypes, rushNos, account };
 
   // ── 检查缺失尺寸 ──
   try {
@@ -11844,9 +11860,9 @@ async function createSortingBatch() {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       credentials: 'same-origin',
-      body: JSON.stringify({order_numbers: sel})
+      body: JSON.stringify({order_numbers: sel, account})
     });
-    const chkData = await chk.json();
+    const chkData = await _sortingReadJsonResponse(chk, '尺寸检查');
     if (chkData.ok && chkData.missing && chkData.missing.length > 0) {
       // 有缺失尺寸 → 弹窗补录
       _showDimFillModal(chkData.missing);
@@ -11892,7 +11908,7 @@ async function _dimFillConfirm() {
 }
 
 async function _doCreateBatch(dimOverrides) {
-  const { batchno, sel, box1, box2, box3, orderBoxTypes, rushNos } = window._pendingBatchParams || {};
+  const { batchno, sel, box1, box2, box3, orderBoxTypes, rushNos, account } = window._pendingBatchParams || {};
   if (!batchno || !sel) return;
 
   const btn = document.getElementById('sorting-create-btn');
@@ -11911,10 +11927,11 @@ async function _doCreateBatch(dimOverrides) {
         order_numbers: sel,
         box_configs: {1: box1, 2: box2, 3: box3},
         order_box_types: orderBoxTypes,
-        dim_overrides: dimOverrides
+        dim_overrides: dimOverrides,
+        account: account || 'all'
       })
     });
-    const d = await r.json();
+    const d = await _sortingReadJsonResponse(r, '生成分拣批次');
     resultEl.style.display = 'block';
     if (d.ok) {
       const portRange = (d.port_min && d.port_max)

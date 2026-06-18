@@ -20,7 +20,7 @@ class MainActivity : Activity() {
 
     companion object {
         // ⚠️ 仓库 PC 的实际 IP + 端口，与 config.json flask_port 一致
-        const val SERVER_URL = "http://10.39.1.65:5010/pda"
+        const val SERVER_URL = "http://192.168.70.158:5010/pda"
     }
 
     private lateinit var webView: WebView

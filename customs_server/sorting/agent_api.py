@@ -82,6 +82,227 @@ def _num(v, default=0):
         return default
 
 
+def _chunks(items, size=500):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def _select_order_detail_row(conn, number, account=''):
+    account = str(account or '').strip()
+    if account and account != 'all':
+        row = conn.execute(
+            "SELECT account, data_json FROM sales_order_request_details "
+            "WHERE number=? AND account=? ORDER BY updated_at DESC LIMIT 1",
+            (number, account)
+        ).fetchone()
+        if row:
+            return row
+        row = conn.execute(
+            "SELECT account, data_json FROM sales_details "
+            "WHERE number=? AND account=? ORDER BY updated_at DESC LIMIT 1",
+            (number, account)
+        ).fetchone()
+        if row:
+            return row
+    row = conn.execute(
+        "SELECT account, data_json FROM sales_order_request_details "
+        "WHERE number=? ORDER BY updated_at DESC LIMIT 1",
+        (number,)
+    ).fetchone()
+    if row:
+        return row
+    return conn.execute(
+        "SELECT account, data_json FROM sales_details "
+        "WHERE number=? ORDER BY updated_at DESC LIMIT 1",
+        (number,)
+    ).fetchone()
+
+
+def _load_order_contexts(conn, order_numbers, account=''):
+    contexts = []
+    product_numbers = set()
+    barcodes = set()
+    for number in order_numbers:
+        row = _select_order_detail_row(conn, number, account)
+        if not row:
+            continue
+        try:
+            order = json.loads(row['data_json'] or '{}')
+        except Exception:
+            logger.warning(f"[sorting] invalid order detail json: {number}")
+            continue
+        entries = order.get('entries') or []
+        raw_entries = order.get('_raw', {}).get('entries', [])
+        contexts.append({
+            'number': number,
+            'account': row['account'] if 'account' in row.keys() else '',
+            'order': order,
+            'entries': entries,
+            'raw_entries': raw_entries,
+        })
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            goodsno = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            barcode = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            if goodsno:
+                product_numbers.add(goodsno)
+            if barcode:
+                barcodes.add(barcode)
+    return contexts, product_numbers, barcodes
+
+
+def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
+    product_numbers = sorted(x for x in (product_numbers or set()) if x)
+    barcodes = sorted(x for x in (barcodes or set()) if x)
+    account = str(account or '').strip()
+    cols = {r['name'] for r in conn.execute("PRAGMA table_info(jdy_products)").fetchall()}
+    select_cols = ['product_number', 'barcode', 'length', 'width', 'height']
+    if 'account' in cols:
+        select_cols.insert(0, 'account')
+    if 'brand' in cols:
+        select_cols.append('brand')
+    col_sql = ', '.join(select_cols)
+    by_number = {}
+    by_barcode = {}
+
+    def add_row(row):
+        item = {k: row[k] if k in row.keys() else '' for k in select_cols}
+        pn = str(item.get('product_number') or '').strip()
+        bc = str(item.get('barcode') or '').strip()
+        if pn and pn not in by_number:
+            by_number[pn] = item
+        if bc and bc not in by_barcode:
+            by_barcode[bc] = item
+
+    def query_in(field, values):
+        for batch in _chunks(values):
+            marks = ','.join('?' for _ in batch)
+            params = list(batch)
+            where = f"{field} IN ({marks})"
+            if account and account != 'all' and 'account' in cols:
+                where += " AND account=?"
+                params.append(account)
+            for row in conn.execute(f"SELECT {col_sql} FROM jdy_products WHERE {where}", params).fetchall():
+                add_row(row)
+
+    query_in('product_number', product_numbers)
+    query_in('barcode', barcodes)
+    return by_number, by_barcode
+
+
+def _product_for(by_number, by_barcode, goodsno='', barcode=''):
+    barcode = str(barcode or '').strip()
+    goodsno = str(goodsno or '').strip()
+    return by_barcode.get(barcode) or by_number.get(goodsno)
+
+
+def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, dim_overrides):
+    """Build planner input with bulk-loaded order details and product dimensions."""
+    contexts, product_numbers, barcodes = _load_order_contexts(sc, order_nos, account)
+    by_number, by_barcode = _load_product_maps(sc, product_numbers, barcodes, account)
+
+    orders = []
+    store_replen_orders = []
+    for ctx in contexts:
+        no = ctx['number']
+        order = ctx['order']
+        customer = str(order.get('customerName') or '').strip()
+        delivery_type = str(order.get('deliveryType') or '').strip()
+        order_date = str(order.get('date') or '')[:10]
+        machine_goods = []
+        store_goods = []
+        raw_entries = ctx['raw_entries']
+
+        for i, entry in enumerate(ctx['entries']):
+            if not isinstance(entry, dict):
+                continue
+            goodsno = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            goodsmodel = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
+            qty = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+            location = str(entry.get('location') or '').strip()
+            barcode = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            prod = _product_for(by_number, by_barcode, goodsno, barcode)
+            if not barcode and prod:
+                barcode = str(prod.get('barcode') or '').strip()
+            if not barcode or qty <= 0:
+                continue
+
+            raw_entry = raw_entries[i] if i < len(raw_entries) and isinstance(raw_entries[i], dict) else {}
+            entry_id = raw_entry.get('entryId', i + 1)
+            is_store = (delivery_type == '仓店-仓送' and location and location != '新大仓库')
+            if is_store:
+                store_goods.append({
+                    'barcode': barcode, 'goodsno': goodsno,
+                    'goodsmodel': goodsmodel, 'location': location, 'qty': qty,
+                })
+                continue
+
+            prod = prod or _product_for(by_number, by_barcode, goodsno, barcode)
+            brand = str((prod or {}).get('brand') or '').strip()
+            picktype = 1 if brand == '手工' else 0
+            if barcode in dim_overrides:
+                ov = dim_overrides[barcode]
+                l = float(ov.get('l') or 0)
+                w = float(ov.get('w') or 0)
+                h = float(ov.get('h') or 0)
+            else:
+                l = float((prod or {}).get('length') or 0)
+                w = float((prod or {}).get('width') or 0)
+                h = float((prod or {}).get('height') or 0)
+            machine_goods.append({
+                'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
+                'customer': customer, 'l': l, 'w': w, 'h': h,
+                'qty': qty, 'serialnum': 0, 'picktype': picktype,
+                'entry_id': entry_id, 'store_delivery': 0,
+            })
+
+        if store_goods:
+            store_replen_orders.append({
+                'source_order': no, 'account': ctx.get('account') or account or '',
+                'customer': customer, 'date': order_date, 'goods': store_goods,
+            })
+        if machine_goods:
+            order_dict = {'orderno': no, 'goods': machine_goods}
+            bt_str = str(order_box_types.get(no, ''))
+            if bt_str in ('1', '2', '3'):
+                order_dict['box_type_override'] = int(bt_str)
+            orders.append(order_dict)
+
+    return orders, store_replen_orders
+
+
+def _apply_customer_box_overrides(orders, account):
+    # Preserve existing behavior: taxPayerNo=1 means force big box, failures fall back silently.
+    try:
+        import jdy_api
+        c2 = jdy_api.get_client_2()
+        c1 = jdy_api.get_client()
+        if '饰品' in (account or ''):
+            jdy_cli = c1 or c2
+        else:
+            jdy_cli = c2 or c1
+        if not jdy_cli:
+            return
+        cust_cache = {}
+        for order_dict in orders:
+            if 'box_type_override' in order_dict:
+                continue
+            customer = order_dict['goods'][0]['customer'] if order_dict['goods'] else ''
+            if not customer:
+                continue
+            if customer not in cust_cache:
+                try:
+                    cust_cache[customer] = jdy_cli.get_customer_by_name(customer)
+                except Exception:
+                    cust_cache[customer] = None
+            cust = cust_cache.get(customer)
+            if cust and str(cust.get('taxPayerNo') or '').strip() == '1':
+                order_dict['box_type_override'] = 3
+    except Exception as ex:
+        logger.warning(f"[batch_plan] JDY 客户箱型检测失败（将用默认中箱）: {ex}")
+
+
 def _ensure_tables():
     """初始化云端分拣表（首次调用时建表）。"""
     conn = _get_conn()
@@ -612,7 +833,26 @@ def sorting_order_requests():
         result.append(item)
 
     sc.close()
-    return jsonify({"ok": True, "list": result, "count": len(result)})
+
+    # 查询当天已入批次的订单号
+    batched_numbers = []
+    try:
+        conn = _get_conn()
+        rows_b = conn.execute(
+            "SELECT order_numbers FROM cloud_sorting_batches WHERE date = ?",
+            (date_str[:10] if date_str else '',)
+        ).fetchall()
+        for rb in rows_b:
+            try:
+                batched_numbers.extend(json.loads(rb['order_numbers'] or '[]'))
+            except Exception:
+                pass
+        conn.close()
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "list": result, "count": len(result),
+                    "batched_numbers": batched_numbers})
 
 
 # ── 手动触发 JDY 销货订单同步 ────────────────────────────────────────────────────
@@ -675,6 +915,42 @@ def sorting_batch_check_dims():
     """
     data      = request.get_json() or {}
     order_nos = data.get('order_numbers') or []
+    account   = (data.get('account') or '').strip()
+
+    sc = _get_sales_conn()
+    if not sc:
+        return jsonify({"ok": False, "msg": "sales_cache missing"}), 400
+
+    missing = []
+    seen_barcodes = set()
+    contexts, product_numbers, barcodes = _load_order_contexts(sc, order_nos, account)
+    by_number, by_barcode = _load_product_maps(sc, product_numbers, barcodes, account)
+
+    for ctx in contexts:
+        for entry in ctx['entries']:
+            if not isinstance(entry, dict):
+                continue
+            goodsno = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+            goodsmodel = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
+            qty = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+            barcode = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+            prod = _product_for(by_number, by_barcode, goodsno, barcode)
+            if not barcode and prod:
+                barcode = str(prod.get('barcode') or '').strip()
+            if not barcode or qty <= 0 or barcode in seen_barcodes:
+                continue
+            prod = prod or _product_for(by_number, by_barcode, goodsno, barcode)
+            l = float(prod.get('length') or 0) if prod else 0.0
+            w = float(prod.get('width') or 0) if prod else 0.0
+            h = float(prod.get('height') or 0) if prod else 0.0
+            if not (l > 0 and w > 0 and h > 0):
+                seen_barcodes.add(barcode)
+                missing.append({'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel})
+
+    sc.close()
+    return jsonify({"ok": True, "missing": missing})
+
+    order_nos = data.get('order_numbers') or []
 
     sc = _get_sales_conn()
     if not sc:
@@ -729,6 +1005,112 @@ def sorting_batch_check_dims():
 
 
 # ── 从销货单缓存构建批次 ────────────────────────────────────────────────────────
+def _sorting_batch_plan_fast():
+    data = request.get_json() or {}
+    batchno = (data.get('batchno') or '').strip()
+    order_nos = data.get('order_numbers') or []
+    box_configs = {int(k): float(v) for k, v in (data.get('box_configs') or {}).items()}
+    order_box_types = data.get('order_box_types') or {}
+    dim_overrides = data.get('dim_overrides') or {}
+    account = (data.get('account') or '').strip()
+    if not batchno:
+        return jsonify({"ok": False, "msg": "batchno 不能为空"}), 400
+    if not order_nos:
+        return jsonify({"ok": False, "msg": "order_numbers 不能为空"}), 400
+    if not box_configs:
+        box_configs = {1: 500.0, 2: 2000.0, 3: 5000.0}
+
+    sc = _get_sales_conn()
+    if not sc:
+        return jsonify({"ok": False, "msg": "sales_cache.sqlite3 不存在，请先同步销货单"}), 400
+    try:
+        orders, store_replen_orders = _build_sorting_orders_from_cache(
+            sc, order_nos, account, order_box_types, dim_overrides
+        )
+    finally:
+        sc.close()
+
+    if dim_overrides:
+        sc_rw = _get_sales_conn_rw()
+        if sc_rw:
+            for bc, ov in dim_overrides.items():
+                sc_rw.execute(
+                    "UPDATE jdy_products SET length=?, width=?, height=? WHERE barcode=?",
+                    (float(ov.get('l') or 0), float(ov.get('w') or 0), float(ov.get('h') or 0), bc)
+                )
+            sc_rw.commit()
+            sc_rw.close()
+
+    if not orders:
+        return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
+
+    _apply_customer_box_overrides(orders, account)
+
+    from sorting.batch_planner import allocate_ports
+    rules = allocate_ports(orders, box_configs)
+
+    conn = _get_conn()
+    ver_row = conn.execute("SELECT ver FROM cloud_rule_version WHERE id=1").fetchone()
+    new_ver = (ver_row['ver'] if ver_row else 0) + 1
+
+    port_set = {r['portno'] for r in rules}
+    box_count = len({r['label_data'] for r in rules})
+    port_min = min(port_set) if port_set else 0
+    port_max = max(port_set) if port_set else 0
+    replen_task_nos = []
+    try:
+        conn.execute("BEGIN")
+        conn.executemany("""
+            INSERT INTO cloud_sorting_rules
+                (ver, batchno, barcode, slot_seq, portno, innerport,
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, [(
+            new_ver, batchno,
+            r['barcode'], r['slot_seq'],
+            r['portno'], r['innerport'],
+            r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
+            r['floor'], r['serialnum'],
+            r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
+            r.get('store_delivery', 0)
+        ) for r in rules])
+        conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
+        conn.execute("""
+            INSERT OR REPLACE INTO cloud_sorting_batches
+                (batchno, ver, order_numbers, orders_count, rules_count,
+                 box_count, port_min, port_max, total_qty, box_configs_json, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
+        """, (batchno, new_ver, json.dumps(order_nos, ensure_ascii=False),
+              len(orders), len(rules), box_count, port_min, port_max, len(rules),
+              json.dumps(box_configs)))
+
+        for sr in store_replen_orders:
+            task_no = _create_store_replenishment_task(
+                conn, sr['source_order'], sr['account'],
+                sr['customer'], sr['date'], sr['goods'], batchno
+            )
+            replen_task_nos.append(task_no)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return jsonify({
+        "ok": True,
+        "batchno": batchno,
+        "ver": new_ver,
+        "orders_count": len(orders),
+        "rules_count": len(rules),
+        "box_count": box_count,
+        "port_min": port_min,
+        "port_max": port_max,
+        "replen_tasks": replen_task_nos,
+        "replen_count": len(replen_task_nos),
+    })
+
+
 @sorting_bp.post('/sorting/batch/plan')
 def sorting_batch_plan():
     """
@@ -737,6 +1119,12 @@ def sorting_batch_plan():
     从本地销货单缓存查商品尺寸，自动调 allocate_ports，写入云端规则。
     ⚠️ 依赖 sales_cache.sqlite3 已同步，否则商品尺寸为 0（依然可分拣，但分箱不准）。
     """
+    try:
+        return _sorting_batch_plan_fast()
+    except Exception as ex:
+        logger.exception("[batch_plan] failed")
+        return jsonify({"ok": False, "msg": f"生成分拣批次失败：{ex}"}), 500
+
     data            = request.get_json() or {}
     batchno         = (data.get('batchno') or '').strip()
     order_nos       = data.get('order_numbers') or []

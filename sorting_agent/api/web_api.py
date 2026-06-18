@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder='templates')
 
 
+_LOC_CHARS = set('ABCDabcdEFGefgHIJhijKLMNklmn')
+
+def _location_sort_key(model: str) -> str:
+    """从 model 字段提取库位码用于排序（首个以楼层字母开头的段，大写统一比较）。"""
+    for seg in (model or '').split():
+        if seg and seg[0] in _LOC_CHARS:
+            return seg.upper()
+    return model or ''
+
+
 # ── 1. PDA 拣货列表 ────────────────────────────────────────────────────────────
 @app.get('/api/pick')
 def get_pick_list():
@@ -32,9 +42,9 @@ def get_pick_list():
     rows = qall(db,
         "SELECT barcode, port AS portno, goodsnum, model, unit, quantity, num, anum "
         "FROM pick_progress "
-        "WHERE batchno=? AND num>anum AND floor=? AND picktype=? "
-        "ORDER BY model ASC",
+        "WHERE batchno=? AND num>anum AND floor=? AND picktype=? ",
         (active, floor, picktype))
+    rows = sorted(rows, key=lambda r: _location_sort_key(r.get('model', '')))
     return jsonify(rows)
 
 
