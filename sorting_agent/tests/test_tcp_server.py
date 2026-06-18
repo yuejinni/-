@@ -54,6 +54,29 @@ class ExtractFramesTests(unittest.TestCase):
         self.assertEqual([("STX/ETX", b"1#ABC")], frames)
         self.assertEqual([b"noise"], dropped)
 
+    def test_contiguous_frames_use_next_car_number_as_boundary(self):
+        buffer = bytearray(
+            b"0121#NoRead0122#230921C0290150123#NoRead"
+        )
+        frames, dropped = extract_frames(buffer)
+        self.assertEqual(
+            [
+                ("CONTIGUOUS", b"0121#NoRead"),
+                ("CONTIGUOUS", b"0122#230921C029015"),
+            ],
+            frames,
+        )
+        self.assertEqual([], dropped)
+        self.assertEqual(bytearray(b"0123#NoRead"), buffer)
+
+        frames, dropped = extract_frames(buffer, flush_contiguous=True)
+        self.assertEqual(
+            [("CONTIGUOUS", b"0123#NoRead")],
+            frames,
+        )
+        self.assertEqual([], dropped)
+        self.assertEqual(bytearray(), buffer)
+
 
 class ProcessFrameTests(unittest.TestCase):
     def setUp(self):
@@ -79,6 +102,10 @@ class ProcessFrameTests(unittest.TestCase):
 
     def test_invalid_frame_is_ignored(self):
         process_frame(b"not-a-valid-frame", "CRLF", object(), object())
+        self.handle_scan.assert_not_called()
+
+    def test_noread_frame_is_ignored(self):
+        process_frame(b"0121#NoRead", "CONTIGUOUS", object(), object())
         self.handle_scan.assert_not_called()
 
 
