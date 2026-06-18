@@ -181,6 +181,8 @@ def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
         select_cols.append('spec')
     if 'unit_name' in cols:
         select_cols.append('unit_name')
+    if 'unit_id' in cols:
+        select_cols.append('unit_id')
     col_sql = ', '.join(select_cols)
     by_number = {}
     by_barcode = {}
@@ -1154,8 +1156,9 @@ def _sorting_batch_plan_fast():
         conn.executemany("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery,
+                 queue_seq, unit)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, [(
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
@@ -1163,7 +1166,8 @@ def _sorting_batch_plan_fast():
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
             r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
-            r.get('store_delivery', 0)
+            r.get('store_delivery', 0),
+            r.get('queue_seq', 0), r.get('unit', '')
         ) for r in rules])
         conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
         conn.execute("""
@@ -1403,8 +1407,8 @@ def sorting_batch_plan():
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
                  customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery,
-                 queue_seq)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 queue_seq, unit)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
@@ -1413,7 +1417,7 @@ def sorting_batch_plan():
             r['floor'], r['serialnum'],
             r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
             r.get('store_delivery', 0),
-            r.get('queue_seq', 0)
+            r.get('queue_seq', 0), r.get('unit', '')
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     # 计算批次统计字段
