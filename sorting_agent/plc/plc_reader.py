@@ -70,19 +70,13 @@ def read_button_loop(db_conn, plc, config: dict):
                     port = qone(db_conn,
                         "SELECT init_num, fj_num FROM sort_ports WHERE portno=?", (portno,))
                     if port and port["fj_num"] == port["init_num"] != 0:
-                        # 绿灯状态（全部落包）→ 异步打印
+                        # 绿灯状态（全部落包）→ 异步：先打印完成，再释放格口 + 拉下一箱
                         threading.Thread(
-                            target=print_port_label,
-                            args=(get_db_conn(), portno,
+                            target=_print_then_release,
+                            args=(get_db_conn(), get_db_conn(), plc, portno,
                                   config.get("printer_name", ""),
                                   config.get("label_template", "print/templates/label.html"),
                                   config.get("wkhtmltopdf_path", "wkhtmltopdf.exe")),
-                            daemon=True
-                        ).start()
-                        # 异步清格口 + 写灯（不阻塞按钮轮询）
-                        threading.Thread(
-                            target=_release_port_after_button,
-                            args=(get_db_conn(), plc, portno),
                             daemon=True
                         ).start()
             prev_states = states
@@ -93,9 +87,10 @@ def read_button_loop(db_conn, plc, config: dict):
 
 def _release_port_after_button(db_conn, plc, portno: int):
     """
-    按钮按下后异步执行：
-    1. auto_update_port — 清格口或把溢出包分配进来
-    2. 写灯 — 有溢出重分配 → 黄灯闪烁(5)，无 → 全灭(0)
+    清格口 + 写灯：
+    1. auto_update_port — 清格口或把队列下一箱分配进来
+    2. 写灯 — 有队列重分配 → 黄灯闪烁(5)，无 → 全灭(0)
+    ⚠️ 必须在打印完成后调用，确保面单已打出再上新箱。
     """
     from core.port_manager import auto_update_port
     from plc.plc_client import write_port_light
@@ -106,3 +101,17 @@ def _release_port_after_button(db_conn, plc, portno: int):
         logger.info(f"[button_loop] 格口 {portno} 清格口完成，写灯={light}")
     except Exception as e:
         logger.warning(f"[button_loop] 清格口失败 portno={portno}: {e}")
+
+
+def _print_then_release(db_print, db_release, plc, portno: int,
+                        printer_name: str, label_template: str, wkhtmltopdf_path: str):
+    """
+    串行执行：① 打印面单 → ② 释放格口 + 拉队列下一箱。
+    打印完成（无论成功与否）才执行格口释放，保证面单已打出再上新箱。
+    """
+    from print.print_manager import print_port_label
+    try:
+        print_port_label(db_print, portno, printer_name, label_template, wkhtmltopdf_path)
+    except Exception as e:
+        logger.warning(f"[button_loop] 打印失败 portno={portno}: {e}")
+    _release_port_after_button(db_release, plc, portno)

@@ -4,6 +4,7 @@ api/web_api.py — Flask Web API（:5009）
 替代原 C# EMSAPI，12 条路由。
 ⚠️ 每个请求独立获取 DB 连接（Flask 多线程模式下不共享 connection）。
 """
+import math
 import os
 import logging
 import json
@@ -34,18 +35,43 @@ def get_pick_list():
     """
     PDA 拣货列表（替代 GET /GetPickInfo?floor=N&type=N）
     type 参数对应 Wcs_goods.column3：0=自动分拣（默认），1=手工分拣
+
+    只返回「已上机」货品（至少有一条 sorting_rules.innerport>0）。
+    每条结果附带 wave_num（ceil(min_queue_seq/100)），用于 PDA 颜色区分。
     """
     floor    = request.args.get('floor', type=int, default=0)
     picktype = request.args.get('type',  type=int, default=0)
     db = get_db_conn()
     active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
-    rows = qall(db,
-        "SELECT barcode, port AS portno, goodsnum, model, unit, quantity, num, anum "
-        "FROM pick_progress "
-        "WHERE batchno=? AND num>anum AND floor=? AND picktype=? ",
-        (active, floor, picktype))
-    rows = sorted(rows, key=lambda r: _location_sort_key(r.get('model', '')))
-    return jsonify(rows)
+    rows = qall(db, """
+        SELECT pp.barcode, pp.port AS portno, pp.goodsnum, pp.model,
+               pp.unit, pp.quantity, pp.num, pp.anum,
+               (SELECT MIN(sr.queue_seq)
+                FROM sorting_rules sr
+                WHERE sr.batchno = pp.batchno
+                  AND sr.barcode = pp.barcode
+                  AND sr.innerport > 0
+               ) AS min_queue_seq
+        FROM pick_progress pp
+        WHERE pp.batchno = ? AND pp.num > pp.anum
+          AND pp.floor = ? AND pp.picktype = ?
+          AND EXISTS (
+              SELECT 1 FROM sorting_rules sr
+              WHERE sr.batchno = pp.batchno
+                AND sr.barcode = pp.barcode
+                AND sr.innerport > 0
+          )
+    """, (active, floor, picktype))
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        min_qs = d.get('min_queue_seq') or 1
+        d['wave_num'] = math.ceil(min_qs / 100) if min_qs > 0 else 1
+        result.append(d)
+
+    result = sorted(result, key=lambda r: _location_sort_key(r.get('model', '')))
+    return jsonify(result)
 
 
 # ── 2. PDA 扫码确认拣货 ────────────────────────────────────────────────────────

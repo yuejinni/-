@@ -37,8 +37,8 @@ def try_reassign_overflow(db_conn, scanned_innerport: int):
         return  # 还有未落包，不处理
 
     overflow_rows = qall(db_conn,
-        "SELECT id, barcode, portno FROM sorting_rules "
-        "WHERE innerport=0 AND portno>102 AND status=1 ORDER BY id")
+        "SELECT id, barcode, portno, queue_seq FROM sorting_rules "
+        "WHERE innerport=0 AND status=1 ORDER BY queue_seq ASC, id ASC")
 
     if not overflow_rows:
         # 无溢出，直接标格口已清
@@ -79,7 +79,7 @@ def auto_update_port(db_conn, freed_port: int) -> bool:
     """
     has_overflow = qval(db_conn,
         "SELECT COUNT(*) FROM sorting_rules "
-        "WHERE innerport=0 AND portno>102 AND status=1")
+        "WHERE innerport=0 AND status=1")
     port_is_free = qval(db_conn,
         "SELECT COUNT(*) FROM sort_ports WHERE portno=? AND init_num=fj_num AND init_num!=0",
         (freed_port,))
@@ -88,7 +88,7 @@ def auto_update_port(db_conn, freed_port: int) -> bool:
         if has_overflow and port_is_free:
             overflow_portno = qval(db_conn,
                 "SELECT TOP 1 portno FROM sorting_rules "
-                "WHERE innerport=0 AND portno>102 AND status=1 ORDER BY portno")
+                "WHERE innerport=0 AND status=1 ORDER BY queue_seq ASC")
             total = qval(db_conn,
                 "SELECT COUNT(*) FROM sorting_rules WHERE portno=? AND innerport=0",
                 (overflow_portno,))

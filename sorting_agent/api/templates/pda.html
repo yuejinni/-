@@ -20,6 +20,14 @@
   --text:    #f1f5f9;
   --muted:   #94a3b8;
   --radius:  12px;
+  /* 波次颜色（wave_num区分） */
+  --wave1-border: #334155;          /* 默认边框 */
+  --wave2-border: #d97706;          /* wave2 橙色 */
+  --wave2-bg:     rgba(217,119,6,.08);
+  --wave3-border: #3b82f6;          /* wave3 蓝色 */
+  --wave3-bg:     rgba(59,130,246,.08);
+  --wave4-border: #a855f7;          /* wave4+ 紫色 */
+  --wave4-bg:     rgba(168,85,247,.08);
 }
 
 html, body { height: 100%; background: var(--bg); color: var(--text);
@@ -157,11 +165,38 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 }
 .pick-item {
   background: var(--card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--wave1-border);
   border-radius: var(--radius);
   padding: 14px;
   margin-top: 10px;
 }
+/* 第二波：橙色边框 */
+.pick-item.wave2 {
+  border-color: var(--wave2-border);
+  background: var(--wave2-bg);
+}
+/* 第三波：蓝色边框 */
+.pick-item.wave3 {
+  border-color: var(--wave3-border);
+  background: var(--wave3-bg);
+}
+/* 第四波及以上：紫色边框 */
+.pick-item.wave4plus {
+  border-color: var(--wave4-border);
+  background: var(--wave4-bg);
+}
+/* 波次标签 */
+.wave-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.wave-tag.w2 { background: rgba(217,119,6,.25); color: #fbbf24; }
+.wave-tag.w3 { background: rgba(59,130,246,.25); color: #93c5fd; }
+.wave-tag.w4 { background: rgba(168,85,247,.25); color: #d8b4fe; }
 .pi-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
 .pi-goodsno { font-size: 17px; font-weight: 700; }
 .pi-progress {
@@ -340,10 +375,24 @@ function renderList(items) {
   el.innerHTML = items.map(item => {
     const remaining = item.num - item.anum;
     const done = remaining <= 0;
+    const wave = item.wave_num || 1;
+    // 波次样式
+    let waveClass = '';
+    let waveTag = '';
+    if (wave === 2) {
+      waveClass = ' wave2';
+      waveTag = '<span class="wave-tag w2">第二波</span>';
+    } else if (wave === 3) {
+      waveClass = ' wave3';
+      waveTag = '<span class="wave-tag w3">第三波</span>';
+    } else if (wave >= 4) {
+      waveClass = ' wave4plus';
+      waveTag = `<span class="wave-tag w4">第${wave}波</span>`;
+    }
     return `
-    <div class="pick-item">
+    <div class="pick-item${waveClass}">
       <div class="pi-top">
-        <div class="pi-goodsno">${escHtml(item.goodsnum || item.barcode)}</div>
+        <div class="pi-goodsno">${escHtml(item.goodsnum || item.barcode)}${waveTag}</div>
         <div class="pi-progress${done ? ' done' : ''}">${item.anum}/${item.num}</div>
       </div>
       <div class="pi-barcode">${escHtml(item.barcode)}</div>

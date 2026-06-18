@@ -225,6 +225,7 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
         customer = str(order.get('customerName') or '').strip()
         delivery_type = str(order.get('deliveryType') or '').strip()
         order_date = str(order.get('date') or '')[:10]
+        payment_priority = _extract_payment_priority(order)   # 1-6，来自 JDY 自定义项2
         machine_goods = []
         store_goods = []
         raw_entries = ctx['raw_entries']
@@ -280,7 +281,11 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
                 'customer': customer, 'date': order_date, 'goods': store_goods,
             })
         if machine_goods:
-            order_dict = {'orderno': no, 'goods': machine_goods}
+            order_dict = {
+                'orderno': no,
+                'goods': machine_goods,
+                'payment_priority': payment_priority,   # 1-6，排队优先级
+            }
             bt_str = str(order_box_types.get(no, ''))
             if bt_str in ('1', '2', '3'):
                 order_dict['box_type_override'] = int(bt_str)
@@ -318,6 +323,33 @@ def _apply_customer_box_overrides(orders, account):
                 order_dict['box_type_override'] = 3
     except Exception as ex:
         logger.warning(f"[batch_plan] JDY 客户箱型检测失败（将用默认中箱）: {ex}")
+
+
+# 支付优先级映射（JDY 自定义项2 → 1-6 整数，1=最优先上机）
+_PAYMENT_PRIORITY_MAP = {
+    '现金--已收':     1,
+    '现金--取现':     2,
+    '支票（写）--已取':  3,
+    '支票（写）--取支票': 4,
+    '支票（欠）--取支票': 5,
+    '支票（欠）--送货':  6,
+}
+
+
+def _extract_payment_priority(order_json: dict) -> int:
+    """
+    从订单 JSON 的 _raw.udfValue 中提取自定义项2（支付优先级），转换为 1-6 整数。
+    找不到时默认返回 2（现金--取现，较高优先级）。
+    """
+    try:
+        udf_value = order_json.get('_raw', {}).get('udfValue') or []
+        for item in udf_value:
+            if str(item.get('index', '')) == '2':
+                val = str(item.get('value') or '').strip()
+                return _PAYMENT_PRIORITY_MAP.get(val, 2)
+    except Exception:
+        pass
+    return 2
 
 
 def _ensure_tables():
@@ -464,6 +496,8 @@ def _ensure_tables():
         "ALTER TABLE cloud_sorting_rules ADD COLUMN entry_id INTEGER DEFAULT 0",
         # 配送类型（仓配-仓送/仓店-仓送/店配）
         "ALTER TABLE cloud_sorting_rules ADD COLUMN store_delivery INTEGER DEFAULT 0",
+        # 排队序号（queue_seq=0 表示未分配，1=最先上机）
+        "ALTER TABLE cloud_sorting_rules ADD COLUMN queue_seq INTEGER DEFAULT 0",
     ]:
         try:
             conn.execute(ddl)
@@ -677,15 +711,17 @@ def sorting_batch_assign():
         conn.execute("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id,
+                 queue_seq)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
             r['portno'], r['innerport'],
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
-            r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0)
+            r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
+            r.get('queue_seq', 0)
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     conn.close()
@@ -1175,9 +1211,10 @@ def sorting_batch_plan():
         if not row:
             continue
         order = json.loads(row['data_json'])
-        customer      = str(order.get('customerName') or '').strip()
-        delivery_type = str(order.get('deliveryType') or '').strip()
-        order_date    = str(order.get('date') or '')[:10]
+        customer         = str(order.get('customerName') or '').strip()
+        delivery_type    = str(order.get('deliveryType') or '').strip()
+        order_date       = str(order.get('date') or '')[:10]
+        payment_priority = _extract_payment_priority(order)   # 1-6，来自 JDY 自定义项2
         machine_goods = []   # → 分拣机
         store_goods   = []   # → 店补系统
         raw_entries = order.get('_raw', {}).get('entries', [])
@@ -1246,7 +1283,11 @@ def sorting_batch_plan():
                 'customer': customer, 'date': order_date, 'goods': store_goods,
             })
         if machine_goods:
-            order_dict = {'orderno': no, 'goods': machine_goods}
+            order_dict = {
+                'orderno': no,
+                'goods': machine_goods,
+                'payment_priority': payment_priority,   # 1-6，排队优先级
+            }
             bt_str = str(order_box_types.get(no, ''))
             if bt_str in ('1', '2', '3'):
                 order_dict['box_type_override'] = int(bt_str)
@@ -1310,8 +1351,9 @@ def sorting_batch_plan():
         conn.execute("""
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
-                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id, store_delivery,
+                 queue_seq)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
@@ -1319,7 +1361,8 @@ def sorting_batch_plan():
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
             r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
-            r.get('store_delivery', 0)
+            r.get('store_delivery', 0),
+            r.get('queue_seq', 0)
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     # 计算批次统计字段

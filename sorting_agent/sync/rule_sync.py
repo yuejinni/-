@@ -40,21 +40,26 @@ def sync_rules_from_cloud(db_conn, cloud_url: str, current_ver: int):
                 "UPDATE sort_ports SET init_num=0, fj_num=0, remark=0")
 
         for r in rules:
-            # 溢出格口 innerport=0，等重分配后才有值
-            innerport = r["portno"] if r["portno"] <= 102 else 0
+            # 使用云端已计算好的 innerport（queue_seq>100 时云端已置 0）
+            # 兼容旧数据：若云端无 innerport 字段则按旧逻辑 portno<=102 判断
+            if "innerport" in r:
+                innerport = r["innerport"]
+            else:
+                innerport = r["portno"] if r["portno"] <= 102 else 0
+            queue_seq = r.get("queue_seq", 0)
             execute(db_conn, """
                 INSERT INTO sorting_rules
                     (rule_ver, batchno, barcode, slot_seq, portno, innerport,
                      customer, goodsno, goodsmodel, floor, serialnum,
-                     label_data, box_type, status, synced_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,GETDATE())
+                     label_data, box_type, queue_seq, status, synced_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,GETDATE())
             """, (
                 r["ver"], r["batchno"], r["barcode"], r.get("slot_seq", 1),
                 r["portno"], innerport,
                 r.get("customer"), r.get("goodsno"), r.get("goodsmodel"),
                 r.get("floor", 0), r["serialnum"],
                 r.get("label_data"),    # 云端 allocate_ports 返回（格式：orderno-box_num）
-                r.get("box_type", 1)
+                r.get("box_type", 1), queue_seq
             ))
             if innerport != 0:
                 execute(db_conn,
