@@ -44,6 +44,12 @@ def ensure_runtime_schema(conn) -> None:
             ALTER TABLE sorting_rules ADD unit NVARCHAR(50) NULL
         END
     """)
+    cur.execute("""
+        IF COL_LENGTH('pick_progress', 'unit') IS NULL
+        BEGIN
+            ALTER TABLE pick_progress ADD unit NVARCHAR(50) NULL
+        END
+    """)
     conn.commit()
 
 
