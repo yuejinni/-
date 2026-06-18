@@ -920,6 +920,18 @@ function buildCard(item) {
 const scanInput = document.getElementById('scan-input');
 let scanLock = false;
 
+// 广播方式（SUNMI App 注入，优先，不依赖焦点）
+window.onScannerInput = async function(barcode) {
+  barcode = (barcode || '').trim();
+  if (!barcode || scanLock) return;
+  scanLock = true;
+  scanInput.value = '';
+  await doScan(barcode);
+  scanLock = false;
+  focusScan();
+};
+
+// 键盘方式兜底（Enter 后缀，适配其他设备）
 scanInput.addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();

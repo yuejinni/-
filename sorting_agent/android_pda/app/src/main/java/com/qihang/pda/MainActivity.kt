@@ -2,6 +2,10 @@ package com.qihang.pda
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -11,25 +15,39 @@ import android.widget.Toast
 /**
  * 祺航分拣 PDA App
  *
- * 纯 WebView 壳，加载仓库服务器 http://10.39.1.65:5010/pda
- * Sunmi L2S-PRO 内置扫码枪以键盘模式输入，pda.html 监听 Enter 键触发扫码。
+ * 纯 WebView 壳，加载仓库服务器 http://192.168.70.158:5010/pda
  *
- * 修改服务器 IP/端口：只需改 SERVER_URL 常量，重新打包即可。
+ * 扫码枪接入方式（双保险）：
+ *   1. 广播接收（优先）：监听 SUNMI 扫码广播，直接注入 JS，不依赖焦点
+ *   2. 键盘 Enter（兜底）：pda.html 监听 keydown Enter，应对其他设备
  */
 class MainActivity : Activity() {
 
     companion object {
-        // ⚠️ 仓库 PC 的实际 IP + 端口，与 config.json flask_port 一致
         const val SERVER_URL = "http://192.168.70.158:5010/pda"
+
+        // SUNMI 扫码枪广播
+        private const val SUNMI_SCAN_ACTION  = "com.sunmi.scanner.ACTION_DATA_CODE_RECEIVED"
+        private const val SUNMI_SCAN_DATA_KEY = "data"
     }
 
     private lateinit var webView: WebView
+
+    // 接收 SUNMI 扫码广播，注入到网页
+    private val scanReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val barcode = intent?.getStringExtra(SUNMI_SCAN_DATA_KEY)?.trim() ?: return
+            if (barcode.isEmpty()) return
+            // 转义单引号，调用网页 JS 函数
+            val escaped = barcode.replace("\\", "\\\\").replace("'", "\\'")
+            webView.evaluateJavascript("if(window.onScannerInput)window.onScannerInput('$escaped');", null)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 全屏，保持屏幕常亮
         window.addFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN or
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -42,7 +60,6 @@ class MainActivity : Activity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            // 允许 http 混合内容（仓库内网无 HTTPS）
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
 
@@ -52,7 +69,6 @@ class MainActivity : Activity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-                // 连接失败时展示提示页
                 view?.loadData(
                     """
                     <html><body style="background:#0f172a;color:#f1f5f9;
@@ -71,7 +87,18 @@ class MainActivity : Activity() {
         webView.loadUrl(SERVER_URL)
     }
 
-    // 返回键：WebView 内部后退（若已在首页则提示）
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+        registerReceiver(scanReceiver, IntentFilter(SUNMI_SCAN_ACTION))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        webView.onPause()
+        unregisterReceiver(scanReceiver)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
             webView.goBack()
@@ -82,15 +109,5 @@ class MainActivity : Activity() {
             return true
         }
         return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        webView.onResume()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        webView.onPause()
     }
 }
