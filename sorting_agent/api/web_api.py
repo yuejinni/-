@@ -89,6 +89,105 @@ def get_pick_list():
     return jsonify(result)
 
 
+# ── 1b. PDA 撤销上一次拣货扫码 ────────────────────────────────────────────────
+@app.post('/api/pda/unscan')
+def pda_unscan():
+    """
+    撤销上一次 PDA 拣货扫码：pick_progress.anum-1，最后一条 status=2 规则改回 status=1。
+    body: {"barcode": str, "floor": int}
+    """
+    body    = request.get_json() or {}
+    barcode = body.get('barcode', '').strip()
+    floor   = int(body.get('floor', 0))
+    if not barcode:
+        return jsonify({"ok": False, "msg": "barcode 不能为空"}), 400
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    rows = qall(db,
+        "SELECT id, num, anum FROM pick_progress WITH (UPDLOCK, HOLDLOCK) "
+        "WHERE batchno=? AND barcode=? AND floor=?",
+        (active, barcode, floor))
+    if not rows:
+        return jsonify({"ok": False, "msg": "条码不在当前批次"})
+    r = dict(rows[0])
+    anum = int(r.get('anum') or 0)
+    if anum <= 0:
+        return jsonify({"ok": False, "msg": "该条码尚未拣货，无需撤销"})
+    rule_rows = qall(db,
+        "SELECT TOP 1 id FROM sorting_rules WITH (UPDLOCK, HOLDLOCK) "
+        "WHERE batchno=? AND barcode=? AND status=2 ORDER BY id DESC",
+        (active, barcode))
+    try:
+        execute(db,
+            "UPDATE pick_progress SET anum=anum-1, updated_at=GETDATE() "
+            "WHERE batchno=? AND barcode=? AND floor=?",
+            (active, barcode, floor))
+        if rule_rows:
+            execute(db, "UPDATE sorting_rules SET status=1 WHERE id=?",
+                    (dict(rule_rows[0])['id'],))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify({"ok": True, "msg": f"已撤销，当前已拣 {anum - 1} 件"})
+
+
+# ── 1c. 当前活跃批次回退拣货 ───────────────────────────────────────────────────
+@app.post('/api/batch/active/rollback')
+def rollback_active_batch():
+    """
+    活跃批次回退拣货：status=2→1，anum 归零，格口计数重置。
+    规则保留（不删除）。已实际落包（status>=3 或 scan_events）时拒绝。
+    """
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
+    scanned_rules = qval(db,
+        "SELECT COUNT(*) FROM sorting_rules WHERE batchno=? AND status>=3",
+        (active,)) or 0
+    scan_events = qval(db,
+        "SELECT COUNT(*) FROM scan_events WHERE batchno=?",
+        (active,)) or 0
+    if scanned_rules or scan_events:
+        return jsonify({
+            "ok": False,
+            "msg": (f"批次已有实际落包记录（规则 {scanned_rules} 条，"
+                    f"扫码事件 {scan_events} 条），不能回退拣货完成"),
+        }), 409
+    try:
+        execute(db,
+            "UPDATE sorting_rules SET status=1 WHERE batchno=? AND status=2",
+            (active,))
+        execute(db,
+            "UPDATE pick_progress SET anum=0, updated_at=GETDATE() WHERE batchno=?",
+            (active,))
+        execute(db, """
+            UPDATE sort_ports SET fj_num=0, modified_at=GETDATE()
+            WHERE portno IN (
+                SELECT DISTINCT innerport FROM sorting_rules
+                WHERE batchno=? AND innerport!=0
+            )
+        """, (active,))
+        execute(db, """
+            UPDATE sp SET sp.init_num = cnt.c
+            FROM sort_ports sp
+            JOIN (
+                SELECT innerport, COUNT(*) AS c
+                FROM sorting_rules
+                WHERE batchno=? AND status IN (1,2) AND innerport!=0
+                GROUP BY innerport
+            ) cnt ON sp.portno = cnt.innerport
+        """, (active,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify({"ok": True, "msg": f"批次 {active} 已回退为等待拣货，规则均已保留"})
+
+
 # ── 2. PDA 扫码确认拣货 ────────────────────────────────────────────────────────
 @app.get('/api/pda/scan')
 def pda_scan():
