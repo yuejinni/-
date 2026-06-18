@@ -920,7 +920,7 @@ function buildCard(item) {
 const scanInput = document.getElementById('scan-input');
 let scanLock = false;
 
-// 广播方式（SUNMI App 注入，优先，不依赖焦点）
+// 广播方式（新 App 注入，优先）
 window.onScannerInput = async function(barcode) {
   barcode = (barcode || '').trim();
   if (!barcode || scanLock) return;
@@ -931,10 +931,11 @@ window.onScannerInput = async function(barcode) {
   focusScan();
 };
 
-// 键盘方式兜底（Enter 后缀，适配其他设备）
+// 键盘 Enter 后缀（兜底，适配其他设备）
 scanInput.addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
+  clearTimeout(_fillTimer);
   const barcode = scanInput.value.trim();
   if (!barcode || scanLock) return;
   scanLock = true;
@@ -942,6 +943,34 @@ scanInput.addEventListener('keydown', async (e) => {
   await doScan(barcode);
   scanLock = false;
   focusScan();
+});
+
+// 直接填充模式 / 焦点丢失补救：100ms 无新输入自动提交
+let _fillTimer = null;
+scanInput.addEventListener('input', () => {
+  clearTimeout(_fillTimer);
+  if (!scanInput.value.trim()) return;
+  _fillTimer = setTimeout(async () => {
+    const barcode = scanInput.value.trim();
+    if (!barcode || scanLock) return;
+    scanLock = true;
+    scanInput.value = '';
+    await doScan(barcode);
+    scanLock = false;
+    focusScan();
+  }, 100);
+});
+
+// 强制维持焦点：任意元素失焦时把焦点拉回扫码框
+document.addEventListener('focusout', () => {
+  const pick = document.getElementById('s-pick');
+  if (!pick || !pick.classList.contains('active')) return;
+  if (state.inException) return;
+  const mo = document.getElementById('manual-overlay');
+  if (mo && mo.classList.contains('active')) return;
+  setTimeout(() => {
+    if (document.activeElement !== scanInput) scanInput.focus();
+  }, 30);
 });
 
 async function doScan(barcode) {
