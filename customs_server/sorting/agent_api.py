@@ -75,6 +75,21 @@ def _fv(d: dict, keys: list, default=''):
     return default
 
 
+def _unit_text(entry=None, raw_entry=None, product=None) -> str:
+    """提取单位名称：订单标准字段、原始字段、商品缓存依次兜底。"""
+    keys = ['unitName', 'unit_name', 'baseUnitName', 'unit']
+    for source in (entry, raw_entry, product):
+        if not isinstance(source, dict):
+            continue
+        value = _fv(source, keys)
+        if isinstance(value, dict):
+            value = _fv(value, ['name', 'unitName', 'unit_name', 'number', 'code'])
+        text = str(value or '').strip()
+        if text:
+            return text
+    return ''
+
+
 def _num(v, default=0):
     try:
         return float(v or 0)
@@ -164,6 +179,8 @@ def _load_product_maps(conn, product_numbers=None, barcodes=None, account=''):
         select_cols.append('brand')
     if 'spec' in cols:
         select_cols.append('spec')
+    if 'unit_name' in cols:
+        select_cols.append('unit_name')
     col_sql = ', '.join(select_cols)
     by_number = {}
     by_barcode = {}
@@ -268,7 +285,7 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
                 l = float((prod or {}).get('length') or 0)
                 w = float((prod or {}).get('width') or 0)
                 h = float((prod or {}).get('height') or 0)
-            unit = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
+            unit = _unit_text(entry, raw_entry, prod)
             machine_goods.append({
                 'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
                 'customer': customer, 'l': l, 'w': w, 'h': h,
@@ -1291,7 +1308,19 @@ def sorting_batch_plan():
                 l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
                 w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
                 h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
-            unit = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
+            raw_entry = raw_entries[i] if i < len(raw_entries) and isinstance(raw_entries[i], dict) else {}
+            product_unit = ''
+            try:
+                product_unit_row = sc.execute(
+                    "SELECT unit_name FROM jdy_products "
+                    "WHERE barcode=? OR product_number=? LIMIT 1",
+                    (barcode, goodsno)
+                ).fetchone()
+                if product_unit_row:
+                    product_unit = product_unit_row['unit_name'] or ''
+            except Exception:
+                pass
+            unit = _unit_text(entry, raw_entry, {'unit_name': product_unit})
             machine_goods.append({
                 'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
                 'customer': customer, 'l': l, 'w': w, 'h': h,
@@ -1868,8 +1897,9 @@ def agent_rush_orders():
                     if not customer:
                         customer = str(order_data.get('customerName') or '').strip()
                     entries    = order_data.get('entries') or []
+                    raw_entries = order_data.get('_raw', {}).get('entries', [])
                     barcode_map: dict = {}
-                    for entry in entries:
+                    for i, entry in enumerate(entries):
                         if not isinstance(entry, dict):
                             continue
                         bc  = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
@@ -1878,7 +1908,19 @@ def agent_rush_orders():
                             continue
                         gno   = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
                         gmod  = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
-                        unit  = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
+                        raw_entry = raw_entries[i] if i < len(raw_entries) and isinstance(raw_entries[i], dict) else {}
+                        product_unit = ''
+                        try:
+                            product_row = sc.execute(
+                                "SELECT unit_name FROM jdy_products "
+                                "WHERE barcode=? OR product_number=? LIMIT 1",
+                                (bc, gno)
+                            ).fetchone()
+                            if product_row:
+                                product_unit = product_row['unit_name'] or ''
+                        except Exception:
+                            pass
+                        unit = _unit_text(entry, raw_entry, {'unit_name': product_unit})
                         if bc in barcode_map:
                             barcode_map[bc]['qty'] += qty
                         else:
