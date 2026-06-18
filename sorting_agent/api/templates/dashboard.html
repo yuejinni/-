@@ -110,12 +110,13 @@
   .goods-row .gname { width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .progress-lines { flex: 1; display: flex; flex-direction: column; gap: 3px; }
   .progress-line { display: flex; align-items: center; gap: 5px; }
-  .progress-label { width: 12px; color: var(--gray); font-weight: 600; }
+  .progress-label { width: 12px; font-weight: 600; }
+  .progress-line.picked .progress-label { color: var(--blue); }
+  .progress-line.dropped .progress-label { color: var(--green); }
   .prog-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
   .prog-fill { height: 100%; border-radius: 3px; transition: width .3s; }
   .prog-fill.picked { background: var(--blue); }
-  .prog-fill.dropped { background: var(--yellow); }
-  .prog-fill.full { background: var(--green); }
+  .prog-fill.dropped { background: var(--green); }
   .goods-row .prog-text { width: 34px; text-align: right; color: var(--gray); }
 
   /* ── 右侧面板 ── */
@@ -434,18 +435,18 @@ function renderOrders() {
           <div class="goods-row">
             <span class="gname">${g.goodsno}</span>
             <div class="progress-lines">
-              <div class="progress-line">
+              <div class="progress-line picked">
                 <span class="progress-label">拣</span>
                 <div class="prog-bar">
-                  <div class="prog-fill picked ${g.picked>=g.total?'full':''}"
+                  <div class="prog-fill picked"
                        style="width:${Math.min(100,g.total?g.picked/g.total*100:0)}%"></div>
                 </div>
                 <span class="prog-text">${g.picked}/${g.total}</span>
               </div>
-              <div class="progress-line">
+              <div class="progress-line dropped">
                 <span class="progress-label">落</span>
                 <div class="prog-bar">
-                  <div class="prog-fill dropped ${g.scanned>=g.total?'full':''}"
+                  <div class="prog-fill dropped"
                        style="width:${Math.min(100,g.total?g.scanned/g.total*100:0)}%"></div>
                 </div>
                 <span class="prog-text">${g.scanned}/${g.total}</span>
