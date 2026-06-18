@@ -36,6 +36,7 @@ def get_pick_list():
     PDA 拣货列表（替代 GET /GetPickInfo?floor=N&type=N）
     type=0 上机分拣：只返回已上机（innerport>0）的货品，附带 wave_num。
     type=1 手工分拣：返回所有待拣货品（无 sorting_rules 依赖），附带 portno。
+    type=2 单票分拣：按 orderno 过滤，不限楼层，附带 portno。
     """
     floor    = request.args.get('floor', type=int, default=0)
     picktype = request.args.get('type',  type=int, default=0)
@@ -69,6 +70,29 @@ def get_pick_list():
             min_qs = d.get('min_queue_seq') or 1
             d['wave_num'] = math.ceil(min_qs / 100) if min_qs > 0 else 1
             result.append(d)
+    elif picktype == 2:
+        # 单票分拣：按 orderno（label_data 前缀）过滤，不限楼层
+        orderno = request.args.get('orderno', '').strip()
+        if not orderno or not active:
+            return jsonify([])
+        pattern = orderno + '-%'
+        barcode_rows = qall(db, """
+            SELECT DISTINCT barcode FROM sorting_rules
+            WHERE batchno=? AND (label_data LIKE ? OR label_data=?)
+        """, (active, pattern, orderno))
+        barcode_list = [r['barcode'] for r in barcode_rows]
+        if not barcode_list:
+            return jsonify([])
+        placeholders = ','.join('?' * len(barcode_list))
+        rows = qall(db, f"""
+            SELECT pp.barcode, pp.port AS portno, pp.goodsnum, pp.model,
+                   pp.unit, pp.quantity, pp.num, pp.anum,
+                   0 AS min_queue_seq
+            FROM pick_progress pp
+            WHERE pp.batchno=? AND pp.num > pp.anum
+              AND pp.barcode IN ({placeholders})
+        """, tuple([active] + barcode_list))
+        result = [dict(r) for r in rows]
     else:
         # 手工分拣：直接按 pick_progress 返回，不过滤 sorting_rules
         rows = qall(db, """
@@ -86,6 +110,49 @@ def get_pick_list():
             result.append(d)
 
     result = sorted(result, key=lambda r: _location_sort_key(r.get('model', '')))
+    return jsonify(result)
+
+
+# ── 1d. 单票分拣：订单列表 ────────────────────────────────────────────────────
+@app.get('/api/single-ticket/orders')
+def single_ticket_orders():
+    """单票分拣：返回当前批次所有有剩余货品的订单列表。"""
+    db = get_db_conn()
+    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
+    if not active:
+        return jsonify([])
+
+    # 获取 label_data（格式 orderno-N）和 customer
+    ld_rows = qall(db, """
+        SELECT DISTINCT label_data, COALESCE(customer, '') AS customer
+        FROM sorting_rules WHERE batchno=? AND COALESCE(label_data,'') != ''
+        ORDER BY label_data
+    """, (active,))
+
+    # Python 侧按真实 orderno（去掉最后 -N）去重
+    seen = {}
+    for r in ld_rows:
+        ld = r['label_data'] or ''
+        orderno = ld.rsplit('-', 1)[0] if '-' in ld else ld
+        if orderno not in seen:
+            seen[orderno] = r['customer']
+
+    # 查各订单剩余件数
+    result = []
+    for orderno, customer in seen.items():
+        pattern = orderno + '-%'
+        row = qall(db, f"""
+            SELECT SUM(pp.num - pp.anum) AS remaining
+            FROM pick_progress pp
+            WHERE pp.batchno=? AND pp.num > pp.anum
+              AND pp.barcode IN (
+                  SELECT DISTINCT barcode FROM sorting_rules
+                  WHERE batchno=? AND (label_data LIKE ? OR label_data=?)
+              )
+        """, (active, active, pattern, orderno))
+        remaining = int((row[0]['remaining'] or 0) if row else 0)
+        if remaining > 0:
+            result.append({'orderno': orderno, 'customer': customer, 'remaining': remaining})
     return jsonify(result)
 
 
