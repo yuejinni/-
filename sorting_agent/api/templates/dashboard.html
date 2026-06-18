@@ -81,6 +81,9 @@
   .order-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
   .order-card.status-ok     { border-left-color: var(--green); }
   .order-card.status-partial{ border-left-color: var(--blue); }
+  .order-card.status-picked { border-left-color: var(--green); }
+  .order-card.status-picking{ border-left-color: var(--blue); }
+  .order-card.status-waiting{ border-left-color: var(--gray); }
   .order-card.status-timeout{ border-left-color: var(--yellow); }
   .order-card.status-missing{ border-left-color: var(--red); }
 
@@ -92,6 +95,9 @@
   }
   .tag.done    { background: var(--green-bg);  color: var(--green); }
   .tag.partial { background: var(--blue-bg);   color: var(--blue); }
+  .tag.picked  { background: var(--green-bg);  color: var(--green); }
+  .tag.picking { background: var(--blue-bg);   color: var(--blue); }
+  .tag.waiting { background: #f1f5f9; color: var(--gray); }
   .tag.timeout { background: var(--yellow-bg); color: var(--yellow); }
   .tag.missing { background: var(--red-bg);    color: var(--red); }
 
@@ -254,7 +260,10 @@
       <div class="filter-bar" style="margin-left:auto">
         <select id="filterStatus" onchange="renderOrders()">
           <option value="">全部状态</option>
-          <option value="partial">配货中</option>
+          <option value="waiting">待拣货</option>
+          <option value="picking">拣货中</option>
+          <option value="picked">已拣待上机</option>
+          <option value="partial">落包中</option>
           <option value="timeout">超时告警</option>
           <option value="missing">缺货</option>
           <option value="done">已完成</option>
@@ -308,7 +317,7 @@
       <div class="detail-grid" id="modalMeta"></div>
       <div style="font-weight:600;margin-bottom:8px;font-size:12px;color:var(--gray)">货品配货明细</div>
       <table class="goods-table">
-        <thead><tr><th>货号</th><th>规格</th><th>应发</th><th>已落包</th><th>格口</th><th>状态</th></tr></thead>
+        <thead><tr><th>货号</th><th>规格</th><th>应发</th><th>已拣</th><th>已落包</th><th>格口</th><th>状态</th></tr></thead>
         <tbody id="modalGoodsBody"></tbody>
       </table>
     </div>
@@ -396,8 +405,8 @@ function renderOrders() {
     return;
   }
 
-  // 排序：超时 > 缺货 > 配货中 > 完成
-  const order = {timeout:0, missing:1, partial:2, done:3};
+  // 排序：异常 > 待拣 > 拣货中 > 已拣 > 落包中 > 完成
+  const order = {timeout:0, missing:1, waiting:2, picking:3, picked:4, partial:5, done:6};
   list.sort((a,b) => (order[a.status]||9) - (order[b.status]||9));
 
   document.getElementById('orderList').innerHTML = list.map(o => `
@@ -410,8 +419,9 @@ function renderOrders() {
       <div class="row2">
         <span>格口 <b>${o.ports.join(', ') || '--'}</b></span>
         <span>应发 <b>${o.total_qty}</b> 件</span>
+        <span>已拣 <b style="color:${o.picked_qty>=o.total_qty?'var(--green)':'var(--blue)'}">${o.picked_qty}</b> 件</span>
         <span>已落包 <b>${o.scanned_qty}</b> 件</span>
-        <span>缺货 <b style="color:${o.missing_qty>0?'var(--red)':'inherit'}">${o.missing_qty}</b> 件</span>
+        <span>待落包 <b>${o.pending_scan_qty}</b> 件</span>
       </div>
       ${o.goods && o.goods.length ? `
       <div class="goods-progress">
@@ -419,10 +429,10 @@ function renderOrders() {
           <div class="goods-row">
             <span class="gname">${g.goodsno}</span>
             <div class="prog-bar">
-              <div class="prog-fill ${g.scanned>=g.total?'full':''}"
-                   style="width:${Math.min(100,g.total?g.scanned/g.total*100:0)}%"></div>
+              <div class="prog-fill ${g.picked>=g.total?'full':''}"
+                   style="width:${Math.min(100,g.total?g.picked/g.total*100:0)}%"></div>
             </div>
-            <span class="prog-text">${g.scanned}/${g.total}</span>
+            <span class="prog-text">拣 ${g.picked}/${g.total} · 落 ${g.scanned}/${g.total}</span>
           </div>`).join('')}
         ${o.goods.length > 3 ? `<div style="font-size:11px;color:var(--gray);padding-top:2px">…还有 ${o.goods.length-3} 种货品</div>` : ''}
       </div>` : ''}
@@ -430,7 +440,15 @@ function renderOrders() {
 }
 
 function statusLabel(s) {
-  return {done:'已完成', partial:'配货中', timeout:'超时⚠', missing:'缺货'}[s] || s;
+  return {
+    done:'已完成',
+    partial:'落包中',
+    picked:'已拣待上机',
+    picking:'拣货中',
+    waiting:'待拣货',
+    timeout:'超时⚠',
+    missing:'溢出待分配'
+  }[s] || s;
 }
 
 // ── 告警格口 ──────────────────────────────────────────────
@@ -503,17 +521,22 @@ async function openOrderDetail(orderno) {
     <div class="detail-item"><div class="d-label">格口</div><div class="d-val">${o.ports.join(', ')||'--'}</div></div>
     <div class="detail-item"><div class="d-label">楼层</div><div class="d-val">${o.floor||'--'}F</div></div>
     <div class="detail-item"><div class="d-label">应发件数</div><div class="d-val">${o.total_qty}</div></div>
+    <div class="detail-item"><div class="d-label">已拣货</div><div class="d-val" style="color:var(--blue)">${o.picked_qty}</div></div>
     <div class="detail-item"><div class="d-label">已落包</div><div class="d-val" style="color:var(--green)">${o.scanned_qty}</div></div>
-    <div class="detail-item"><div class="d-label">缺货</div><div class="d-val" style="color:var(--red)">${o.missing_qty}</div></div>`;
+    <div class="detail-item"><div class="d-label">待拣货</div><div class="d-val">${o.pending_pick_qty}</div></div>
+    <div class="detail-item"><div class="d-label">待落包</div><div class="d-val">${o.pending_scan_qty}</div></div>`;
 
   document.getElementById('modalGoodsBody').innerHTML = (o.goods||[]).map(g => {
-    const pct = g.total ? Math.round(g.scanned/g.total*100) : 0;
-    const st  = g.scanned >= g.total ? 'done' : (g.scanned > 0 ? 'partial' : 'missing');
-    const stl = {done:'已完成', partial:'配货中', missing:'未开始'}[st];
+    const st = g.scanned >= g.total ? 'done'
+      : (g.scanned > 0 ? 'partial'
+      : (g.picked >= g.total ? 'picked'
+      : (g.picked > 0 ? 'picking' : 'waiting')));
+    const stl = statusLabel(st);
     return `<tr class="${g.scanned>=g.total?'done-row':''}">
       <td>${g.goodsno}</td>
       <td>${g.spec||'--'}</td>
       <td>${g.total}</td>
+      <td><b>${g.picked}</b></td>
       <td><b>${g.scanned}</b></td>
       <td>${g.innerport||'--'}</td>
       <td><span class="status-pill tag ${st}">${stl}</span></td>

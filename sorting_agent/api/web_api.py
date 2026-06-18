@@ -485,6 +485,7 @@ def _get_order_summaries(db) -> list[dict]:
             COALESCE(MAX(customer), '') AS customer,
             MAX(floor) AS floor,
             COUNT(*) AS total_qty,
+            SUM(CASE WHEN status >= 2 THEN 1 ELSE 0 END) AS picked_qty,
             SUM(CASE WHEN status >= 3 THEN 1 ELSE 0 END) AS scanned_qty,
             SUM(CASE WHEN innerport = 0 THEN 1 ELSE 0 END) AS overflow_qty
         FROM sorting_rules
@@ -500,6 +501,7 @@ def _get_order_summaries(db) -> list[dict]:
             COALESCE(goodsmodel, '') AS spec,
             MAX(innerport) AS innerport,
             COUNT(*) AS total,
+            SUM(CASE WHEN status >= 2 THEN 1 ELSE 0 END) AS picked,
             SUM(CASE WHEN status >= 3 THEN 1 ELSE 0 END) AS scanned
         FROM sorting_rules
         WHERE batchno=?
@@ -521,6 +523,7 @@ def _get_order_summaries(db) -> list[dict]:
             "spec": row["spec"],
             "innerport": row["innerport"],
             "total": row["total"] or 0,
+            "picked": row["picked"] or 0,
             "scanned": row["scanned"] or 0,
         })
 
@@ -531,24 +534,32 @@ def _get_order_summaries(db) -> list[dict]:
     orders = []
     for row in rows:
         total = row["total_qty"] or 0
+        picked = row["picked_qty"] or 0
         scanned = row["scanned_qty"] or 0
-        missing = max(total - scanned, 0)
+        pending_pick = max(total - picked, 0)
+        pending_scan = max(total - scanned, 0)
         if scanned >= total and total:
             status = "done"
         elif scanned > 0:
             status = "partial"
+        elif picked >= total and total:
+            status = "picked"
+        elif picked > 0:
+            status = "picking"
         elif row["overflow_qty"]:
             status = "missing"
         else:
-            status = "partial"
+            status = "waiting"
         orders.append({
             "orderno": row["orderno"],
             "customer": row["customer"] or "--",
             "floor": row["floor"],
             "ports": ports_by_order.get(row["orderno"], []),
             "total_qty": total,
+            "picked_qty": picked,
             "scanned_qty": scanned,
-            "missing_qty": missing,
+            "pending_pick_qty": pending_pick,
+            "pending_scan_qty": pending_scan,
             "overflow_qty": row["overflow_qty"] or 0,
             "status": status,
             "goods": goods_by_order.get(row["orderno"], []),
