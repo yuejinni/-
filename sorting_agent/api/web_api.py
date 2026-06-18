@@ -92,6 +92,8 @@ def get_status():
     alerts = get_port_status(db)
     stats  = {r['key']: r['value'] for r in qall(db,
         "SELECT [key], value FROM sys_config WHERE [key] LIKE 'stat_%'")}
+    stats["active_batchno"] = qval(
+        db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
     orders = _get_order_summaries(db)
     return jsonify({
         "ports": ports,
