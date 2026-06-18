@@ -6564,22 +6564,6 @@ def _local_products_response():
             ORDER BY p.account ASC, p.product_number ASC, p.id ASC
             LIMIT ? OFFSET ?
         ''', [*params, page_size, offset]).fetchall()
-        transfer_transit = _local_products_transfer_transit_fallback(conn, [
-            {
-                'account': row['account'] or '',
-                'product_number': row['product_number'] or '',
-                'barcode': row['barcode'] or '',
-            }
-            for row in rows
-        ])
-        snapshot_factory = _local_products_inventory_snapshot_factory_fallback(conn, [
-            {
-                'account': row['account'] or '',
-                'product_number': row['product_number'] or '',
-                'barcode': row['barcode'] or '',
-            }
-            for row in rows
-        ])
         items = []
         for row in rows:
             item = {
@@ -6603,24 +6587,6 @@ def _local_products_response():
                 'has_quantity_cache': bool(row['has_quantity_cache']),
                 'data_source': 'jdy_products',
             }
-            transfer_fallback = transfer_transit.get((item['account'], item['product_number']))
-            if _num(item['stock_transit']) <= 0 and transfer_fallback:
-                item['stock_transit'] = _num(transfer_fallback.get('stock_transit'))
-                item['quantity_fallback'] = 'transfer_details'
-                item['quantity_fallback_detail'] = {
-                    'stock_transit': item['stock_transit'],
-                    'sources': transfer_fallback.get('sources') or [],
-                }
-            factory_fallback = snapshot_factory.get((item['account'], item['product_number']))
-            if _num(item['factory_qty']) <= 0 and _num(item['stock_factory']) <= 0 and factory_fallback:
-                item['stock_factory'] = _num(factory_fallback.get('stock_factory'))
-                if item.get('quantity_fallback') and item.get('quantity_fallback') != 'inventory_snapshots':
-                    item['quantity_fallback'] = str(item['quantity_fallback']) + '+inventory_snapshots'
-                else:
-                    item['quantity_fallback'] = 'inventory_snapshots'
-                detail = item.setdefault('quantity_fallback_detail', {})
-                detail['stock_factory'] = item['stock_factory']
-                detail['factory_sources'] = factory_fallback.get('sources') or []
             item.update({
                 'code': item['product_number'],
                 'name': item['product_name'],
@@ -6632,7 +6598,7 @@ def _local_products_response():
                     {'name': '新大仓库', 'qty': item['stock_new']},
                     {'name': '在途', 'qty': item['stock_transit']},
                     {'name': '金华/本地', 'qty': item['stock_local']},
-                    {'name': '工厂', 'qty': item['factory_qty'] or item['stock_factory']},
+                    {'name': '工厂', 'qty': item['factory_qty']},
                 ],
             })
             items.append(item)
@@ -9604,7 +9570,7 @@ def _reorder_item_payload_from_entry(entry, account='', source=None, local_ctx=N
         stock_transit = entry.get('stock_transit', entry.get('stockTransit', 0))
         stock_local = entry.get('stock_local', entry.get('stockLocal', 0))
         stock_factory = entry.get('stock_factory', entry.get('stockFactory', 0))
-        factory_qty = entry.get('factory_qty', entry.get('factoryQty', stock_factory))
+        factory_qty = entry.get('factory_qty', entry.get('factoryQty', 0))
         return {
             'account': account or '',
             'supplierNumber': entry.get('supplier_number') or entry.get('supplierNumber') or entry.get('default_supplier_number') or '',
@@ -10129,6 +10095,12 @@ def _accessory_purchase_row_time(row):
 def _cache_accessory_purchase_window_candidate(cli, account, row, internal_id):
     number = str(_first_value(row or {}, ['number', 'billNo', 'billNumber', 'id'], '')).strip()
     try:
+        _refresh_sales_product_quantities_for_purchase_order(
+            cli, account, _normalize_accessory_purchase_order(row or {}, account, {})
+        )
+    except Exception as e:
+        _log_event('JDY_WEBHOOK_ERROR', f'purchase quantity refresh failed: {_short_sync_error(e)}')
+    try:
         with _sales_cache_conn() as conn:
             supplier_no = str(_first_value(row, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')).strip()
             supplier = _read_cached_jdy_supplier(conn, account, supplier_no) if supplier_no else {}
@@ -10239,6 +10211,22 @@ def _cache_one_accessory_purchase_order_from_jdy(cli, account, number, event=Non
     payload = _accessory_webhook_payload(event)
     internal_ids = _accessory_webhook_internal_ids(payload, number)
     should_try_window = _accessory_webhook_should_try_window(event, number)
+    quantity_refreshed = False
+    quantity_result = cli.get_purchase_order_requests(
+        page=1, page_size=5, search=number
+    )
+    for row in (quantity_result.get('list') or []):
+        row_no = str(_first_value(row, ['number', 'billNo', 'id'], '')).strip()
+        if row_no and row_no != str(number).strip():
+            continue
+        try:
+            _refresh_sales_product_quantities_for_purchase_order(
+                cli, account, _normalize_accessory_purchase_order(row, account, {})
+            )
+            quantity_refreshed = True
+        except Exception as e:
+            _log_event('JDY_WEBHOOK_ERROR', f'purchase quantity refresh failed: {_short_sync_error(e)}')
+        break
     result = cli.get_purchase_order_requests(
         page=1, page_size=1, search=number, bill_status=0
     )
@@ -10247,6 +10235,13 @@ def _cache_one_accessory_purchase_order_from_jdy(cli, account, number, event=Non
         if should_try_window:
             return _cache_accessory_purchase_order_for_webhook_window(
                 cli, account, payload, internal_ids[0] if internal_ids else number, (event or {}).get('created_at')
+            )
+        if quantity_refreshed:
+            return _webhook_process_result(
+                ok=True,
+                cached=False,
+                reason='purchase_quantity_refreshed',
+                message='purchase order quantity refreshed; accessory cache skipped by bill_status filter',
             )
         return _webhook_process_result(
             reason='purchase_order_not_found',
@@ -10259,6 +10254,13 @@ def _cache_one_accessory_purchase_order_from_jdy(cli, account, number, event=Non
             if row_no and row_no != str(number).strip():
                 exact_mismatch = True
                 continue
+            if not quantity_refreshed:
+                try:
+                    _refresh_sales_product_quantities_for_purchase_order(
+                        cli, account, _normalize_accessory_purchase_order(row, account, {})
+                    )
+                except Exception as e:
+                    _log_event('JDY_WEBHOOK_ERROR', f'purchase quantity refresh failed: {_short_sync_error(e)}')
             supplier_no = str(_first_value(row, ['supplierNumber', 'supplierNo', 'vendorNumber'], '')).strip()
             supplier = _read_cached_jdy_supplier(conn, account, supplier_no) if supplier_no else {}
             if supplier_no and supplier is None:
@@ -11902,9 +11904,11 @@ def _sales_sync_worker():
                 try:
                     _run_sales_incremental_sync(reason='daily-compare')
                     _run_accessory_incremental_sync(reason='daily-compare')
+                    quantity_summary = _refresh_all_local_product_quantities(account='all')
                     begin = (now.date() - timedelta(days=int(conf.get('lookback_days') or 3) - 1)).strftime('%Y-%m-%d')
                     end = now.strftime('%Y-%m-%d')
                     _refresh_transfer_cache(begin, end, 'all', '')
+                    _daily_compare_state['quantity_summary'] = quantity_summary
                     _daily_compare_state['last_finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 except Exception as e:
                     _daily_compare_state.update({
@@ -12756,6 +12760,24 @@ def _cache_upsert_accessory_purchase_order(conn, order):
     ))
 
 
+def _refresh_sales_product_quantities_for_purchase_order(cli, account, order):
+    codes = [
+        str(entry.get('code') or entry.get('productNumber') or '').strip()
+        for entry in (order.get('entries') or [])
+        if str(entry.get('code') or entry.get('productNumber') or '').strip()
+    ]
+    codes = [code for code in dict.fromkeys(codes) if code]
+    if not codes:
+        return {'codes': 0, 'errors': []}
+    _, errors = _fetch_sales_quantity_map(
+        cli,
+        account,
+        codes,
+        order_date=order.get('date') or '',
+    )
+    return {'codes': len(codes), 'errors': errors}
+
+
 def _accessory_purchase_order_projection(order):
     return {
         'number': order.get('number') or '',
@@ -13374,6 +13396,7 @@ def _empty_sales_stock_buckets():
     return {'新大仓库': 0, '在途': 0, '金华/本地': 0, '工厂订单': 0}
 
 
+_SALES_FACTORY_LEGACY_BEGIN_DATE = '2025-11-01'
 _SALES_FACTORY_LEGACY_LAST_DATE = '2026-05-28'
 _SALES_FACTORY_NEW_LOGIC_BEGIN_DATE = '2026-05-29'
 
@@ -13444,6 +13467,97 @@ def _local_product_transfer_match_keys(product_number='', barcode=''):
     if barcode:
         keys.add('barcode:' + barcode.upper())
     return keys
+
+
+def _local_product_code_match_keys(code=''):
+    keys = set()
+    code = str(code or '').strip()
+    if code:
+        keys.add(code.upper())
+        no_prefix = _product_code_without_alpha_prefix(code)
+        if no_prefix:
+            keys.add(no_prefix.upper())
+    return keys
+
+
+def _legacy_purchase_inbound_product_keys(account=''):
+    keys = set()
+    account = str(account or '').strip()
+    if not account:
+        return keys
+    try:
+        with _sales_cache_conn() as conn:
+            if not _cache_sqlite_table_count(conn, 'purchase_inbounds').get('exists'):
+                return keys
+            rows = conn.execute(
+                '''
+                SELECT data_json
+                FROM purchase_inbounds
+                WHERE account = ?
+                  AND substr(COALESCE(date, ''), 1, 10) >= ?
+                  AND substr(COALESCE(date, ''), 1, 10) <= ?
+                ''',
+                (account, _SALES_FACTORY_LEGACY_BEGIN_DATE, _SALES_FACTORY_LEGACY_LAST_DATE),
+            ).fetchall()
+    except Exception:
+        return keys
+
+    for row in rows:
+        try:
+            order = json.loads(row['data_json'] or '{}')
+        except Exception:
+            continue
+        entries = (
+            order.get('entries')
+            or order.get('details')
+            or order.get('items')
+            or order.get('lines')
+            or order.get('goods')
+            or order.get('goodsList')
+            or []
+        )
+        if isinstance(entries, dict):
+            entries = list(entries.values())
+        if not isinstance(entries, list):
+            entries = []
+        for entry in [order] + entries:
+            if not isinstance(entry, dict):
+                continue
+            code = _first_value(entry, [
+                'productNumber', 'productCode', 'number', 'code',
+                'productNo', 'sku', 'skuNo',
+            ], '')
+            keys.update(_local_product_code_match_keys(code))
+    return keys
+
+
+def _legacy_purchase_inbound_source_available(account=''):
+    account = str(account or '').strip()
+    if not account:
+        return False
+    try:
+        with _sales_cache_conn() as conn:
+            if not _cache_sqlite_table_count(conn, 'purchase_inbounds').get('exists'):
+                return False
+            row = conn.execute(
+                '''
+                SELECT COUNT(*) AS cnt
+                FROM purchase_inbounds
+                WHERE account = ?
+                  AND substr(COALESCE(date, ''), 1, 10) >= ?
+                  AND substr(COALESCE(date, ''), 1, 10) <= ?
+                ''',
+                (account, _SALES_FACTORY_LEGACY_BEGIN_DATE, _SALES_FACTORY_LEGACY_LAST_DATE),
+            ).fetchone()
+            return bool(row and _num(row['cnt']) > 0)
+    except Exception:
+        return False
+
+
+def _code_in_match_keys(code, keys):
+    if not keys:
+        return False
+    return bool(_local_product_code_match_keys(code) & set(keys))
 
 
 def _local_products_transfer_transit_fallback(conn, products):
@@ -13729,6 +13843,14 @@ def _sales_order_uses_new_factory_logic(order_date=''):
     return bool(order_date and order_date >= begin_date)
 
 
+def _sales_order_uses_legacy_factory_logic(order_date=''):
+    order_date = str(order_date or '')[:10]
+    return bool(
+        order_date
+        and _SALES_FACTORY_LEGACY_BEGIN_DATE <= order_date <= _SALES_FACTORY_LEGACY_LAST_DATE
+    )
+
+
 def _sales_quantity_logic_key(order_date=''):
     conf = _sales_sync_config()
     begin_date = _effective_sales_factory_new_logic_begin_date(conf)
@@ -13769,23 +13891,46 @@ def _factory_qty_from_checked_purchase_strict(cli, code, stock=None):
     ordered = 0
     filter_conf = _sales_factory_purchase_filter_config()
     for order in _fetch_checked_factory_purchase_orders(cli, code, filter_conf):
-        linked = bool(_first_value(order, [
-            'sourceBillNo', 'sourceNumber', 'linkNumber', 'relationNumber',
-            'associatedNumber', 'convertNumber', 'purchaseNumber'
-        ], ''))
         for entry in (order.get('entries') or []):
             if str(entry.get('productNumber') or '').strip() != str(code).strip():
                 continue
-            ordered += _purchase_entry_order_qty(entry, prefer_actual=linked)
-    transit = _num((stock or {}).get('在途'))
-    local = _num((stock or {}).get('金华/本地'))
-    return max(ordered - transit - local, 0)
+            ordered += _purchase_entry_order_qty(entry)
+    return max(ordered, 0)
 
 
-def _factory_qty_from_purchase_strict(cli, code, stock=None, order_date=''):
+def _factory_qty_from_purchase_strict(
+    cli,
+    code,
+    stock=None,
+    order_date='',
+    account='',
+    legacy_purchase_keys=None,
+    legacy_source_available=True,
+    existing_factory_qty=0,
+):
     """按切换日期读取工厂数量：切换日前读仓库，切换日及以后读采购订单。"""
+    if not str(order_date or '').strip():
+        purchase_qty = _factory_qty_from_checked_purchase_strict(cli, code, stock)
+        if purchase_qty > 0:
+            return purchase_qty
+        if legacy_purchase_keys is not None:
+            if not _code_in_match_keys(code, legacy_purchase_keys):
+                if not legacy_source_available:
+                    return _num(existing_factory_qty)
+                return 0
+        elif account:
+            legacy_keys = _legacy_purchase_inbound_product_keys(account)
+            if not _code_in_match_keys(code, legacy_keys):
+                if not _legacy_purchase_inbound_source_available(account):
+                    return _num(existing_factory_qty)
+                return 0
+        if stock is None:
+            stock = _stock_from_inventory_strict(cli, code)
+        return _num((stock or {}).get('工厂订单'))
     if _sales_order_uses_new_factory_logic(order_date):
         return _factory_qty_from_checked_purchase_strict(cli, code, stock)
+    if not _sales_order_uses_legacy_factory_logic(order_date):
+        return 0
     if stock is None:
         stock = _stock_from_inventory_strict(cli, code)
     return _num((stock or {}).get('工厂订单'))
@@ -14151,15 +14296,33 @@ def _fetch_sales_quantity_map(cli, account, codes, order_date=''):
     cached = _read_cached_sales_product_quantities(account, codes)
     if not codes:
         return cached, []
-    # TODO: 暂停 JDY API 调用，改从自有云端拉取后删除此行
-    return cached, []
 
     errors = []
     workers = min(16, len(codes))
+    legacy_purchase_keys = None
+    legacy_source_available = True
+    if not str(order_date or '').strip():
+        legacy_purchase_keys = _legacy_purchase_inbound_product_keys(account)
+        legacy_source_available = _legacy_purchase_inbound_source_available(account)
+        if not legacy_source_available:
+            print(
+                f'[SALES CACHE] {account} 2025-11-01~2026-05-28 legacy purchase source unavailable; '
+                'preserving existing factory_qty for products not matched by new checked purchase orders'
+            )
 
     def _fetch_one(code):
         stock = _stock_from_inventory_strict(cli, code)
-        factory_qty = _factory_qty_from_purchase_strict(cli, code, stock=stock, order_date=order_date)
+        existing = cached.get(code) or {}
+        factory_qty = _factory_qty_from_purchase_strict(
+            cli,
+            code,
+            stock=stock,
+            order_date=order_date,
+            account=account,
+            legacy_purchase_keys=legacy_purchase_keys,
+            legacy_source_available=legacy_source_available,
+            existing_factory_qty=existing.get('factory_qty', 0),
+        )
         return code, {'stock': stock, 'factory_qty': factory_qty, 'error': ''}
 
     with ThreadPoolExecutor(max_workers=workers) as exe:
@@ -14185,6 +14348,65 @@ def _fetch_sales_quantity_map(cli, account, codes, order_date=''):
                     print(f'[SALES CACHE] {account} 数量进度 {done}/{len(codes)}')
             conn.commit()
     return cached, errors
+
+
+def _local_product_codes_for_quantity_refresh(account='all'):
+    result = {}
+    with _sales_cache_conn() as conn:
+        if not _cache_sqlite_table_count(conn, 'jdy_products').get('exists'):
+            return result
+        clauses = ["COALESCE(product_number, '') != ''"]
+        params = []
+        if account and account != 'all':
+            clauses.append('account = ?')
+            params.append(account)
+        rows = conn.execute(f'''
+            SELECT account, product_number
+            FROM jdy_products
+            WHERE {' AND '.join(clauses)}
+            ORDER BY account, product_number
+        ''', params).fetchall()
+    for row in rows:
+        acct = row['account'] or ''
+        code = row['product_number'] or ''
+        if acct and code:
+            result.setdefault(acct, []).append(code)
+    return {
+        acct: [code for code in dict.fromkeys(codes) if code]
+        for acct, codes in result.items()
+    }
+
+
+def _refresh_all_local_product_quantities(account='all', batch_size=100):
+    by_account = _local_product_codes_for_quantity_refresh(account)
+    sources = {
+        name: _client_for_sync_account(name, cli_fn)
+        for cli_fn, name in _sales_sources_for_account(account)
+    }
+    total_codes = 0
+    refreshed_codes = 0
+    errors = []
+    for acct, codes in by_account.items():
+        total_codes += len(codes)
+        cli = sources.get(acct)
+        if not cli:
+            errors.append(f'{acct}: JDY API not configured')
+            continue
+        size = max(1, min(int(batch_size or 100), 500))
+        for i in range(0, len(codes), size):
+            batch = codes[i:i + size]
+            _, batch_errors = _fetch_sales_quantity_map(cli, acct, batch, order_date='')
+            refreshed_codes += len(batch)
+            if batch_errors:
+                errors.extend([f'{acct}/{x}' for x in batch_errors[:50]])
+                if len(batch_errors) > 50:
+                    errors.append(f'{acct}: 另有 {len(batch_errors) - 50} 个商品数量读取失败')
+    return {
+        'accounts': len(by_account),
+        'total_codes': total_codes,
+        'refreshed_codes': refreshed_codes,
+        'errors': errors,
+    }
 
 
 def _enrich_sales_orders_batch(cli, orders, include_quantities=False, account=''):

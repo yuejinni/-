@@ -4814,7 +4814,7 @@ function renderLocalProducts(list, data) {
             <span>新大仓库<b>${salesAttr(item.stock_new || 0)}</b></span>
             <span>在途<b>${salesAttr(item.stock_transit || 0)}</b></span>
             <span>金华/本地<b>${salesAttr(item.stock_local || 0)}</b></span>
-            <span>工厂<b>${salesAttr(item.factory_qty || item.stock_factory || 0)}</b></span>
+            <span>工厂<b>${salesAttr(item.factory_qty || 0)}</b></span>
           </div>
           <div class="sales-price-mini">
             <span>账套<b>${salesAttr(item.account || '—')}</b></span>
@@ -4855,7 +4855,7 @@ async function importSelectedLocalProductsToReorder() {
     stock_transit: item.stock_transit || 0,
     stock_local: item.stock_local || 0,
     stock_factory: item.stock_factory || 0,
-    factory_qty: item.factory_qty || item.stock_factory || 0
+    factory_qty: item.factory_qty || 0
   }));
   try {
     const res = await fetch(`${API}/reorder-items/import`, {

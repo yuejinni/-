@@ -122,16 +122,24 @@ def insert_snapshot(conn, warehouse, qty, code="H.78669H-9", normalized="78669H-
     )
 
 
-def insert_quantity(conn, code="H.78669H-9", factory_qty=0, stock_factory=0):
+def insert_quantity(
+    conn,
+    code="H.78669H-9",
+    stock_new=0,
+    stock_transit=0,
+    stock_local=0,
+    stock_factory=0,
+    factory_qty=0,
+):
     conn.execute(
         """
         INSERT INTO sales_product_quantities (
             account, code, stock_new, stock_transit, stock_local, stock_factory,
             factory_qty, updated_at, error
         )
-        VALUES (?, ?, 0, 0, 0, ?, ?, '2026-06-12 10:00:00', '')
+        VALUES (?, ?, ?, ?, ?, ?, ?, '2026-06-12 10:00:00', '')
         """,
-        (ACCOUNT, code, stock_factory, factory_qty),
+        (ACCOUNT, code, stock_new, stock_transit, stock_local, stock_factory, factory_qty),
     )
 
 
@@ -174,7 +182,7 @@ def local_products_payload(conn, q="78669H-9"):
     return payload
 
 
-def test_snapshot_factory_fallback_without_quantity_row_keeps_transfer_transit():
+def test_local_products_does_not_fallback_without_quantity_row():
     conn = make_conn()
     insert_product(conn)
     insert_transfer(conn)
@@ -183,32 +191,39 @@ def test_snapshot_factory_fallback_without_quantity_row_keeps_transfer_transit()
     payload = local_products_payload(conn)
     item = payload["items"][0]
 
-    assert item["stock_transit"] == 112
-    assert item["stock_factory"] == 128
+    assert item["stock_new"] == 0
+    assert item["stock_transit"] == 0
+    assert item["stock_local"] == 0
+    assert item["stock_factory"] == 0
     assert item["factory_qty"] == 0
-    assert item["warehouses"][3]["qty"] == 128
-    assert "transfer_details" in item["quantity_fallback"]
-    assert "inventory_snapshots" in item["quantity_fallback"]
+    assert item["warehouses"][1]["qty"] == 0
+    assert item["warehouses"][3]["qty"] == 0
+    assert "quantity_fallback" not in item
     conn.close()
 
 
-def test_positive_quantity_cache_is_not_overwritten_by_snapshot():
+def test_positive_quantity_cache_is_not_overwritten_by_snapshot_or_transfer():
     conn = make_conn()
     insert_product(conn)
-    insert_quantity(conn, factory_qty=66, stock_factory=0)
+    insert_quantity(conn, stock_new=11, stock_transit=22, stock_local=33, factory_qty=66, stock_factory=77)
+    insert_transfer(conn)
     insert_snapshot(conn, "厂家订单", 128)
 
     payload = local_products_payload(conn)
     item = payload["items"][0]
 
+    assert item["stock_new"] == 11
+    assert item["stock_transit"] == 22
+    assert item["stock_local"] == 33
     assert item["factory_qty"] == 66
-    assert item["stock_factory"] == 0
+    assert item["stock_factory"] == 77
+    assert item["warehouses"][1]["qty"] == 22
     assert item["warehouses"][3]["qty"] == 66
-    assert item.get("quantity_fallback") != "inventory_snapshots"
+    assert "quantity_fallback" not in item
     conn.close()
 
 
-def test_factory_snapshot_warehouse_name_variants_are_summed():
+def test_snapshot_warehouse_name_variants_do_not_change_local_products():
     conn = make_conn()
     insert_product(conn)
     insert_snapshot(conn, "厂家订单", 10)
@@ -219,12 +234,13 @@ def test_factory_snapshot_warehouse_name_variants_are_summed():
     payload = local_products_payload(conn)
     item = payload["items"][0]
 
-    assert item["stock_factory"] == 60
-    assert item["warehouses"][3]["qty"] == 60
+    assert item["stock_factory"] == 0
+    assert item["warehouses"][3]["qty"] == 0
+    assert "quantity_fallback" not in item
     conn.close()
 
 
-def test_snapshot_matches_by_normalized_code_and_barcode():
+def test_snapshot_normalized_code_and_barcode_do_not_change_local_products():
     conn = make_conn()
     insert_product(conn, code="H.78669H-9", barcode="260114H036001")
     insert_snapshot(conn, "厂家订单", 40, code="", normalized="78669H-9", barcode="")
@@ -233,13 +249,15 @@ def test_snapshot_matches_by_normalized_code_and_barcode():
     payload = local_products_payload(conn)
     item = payload["items"][0]
 
-    assert item["stock_factory"] == 128
+    assert item["stock_factory"] == 0
+    assert item["warehouses"][3]["qty"] == 0
+    assert "quantity_fallback" not in item
     conn.close()
 
 
 if __name__ == "__main__":
-    test_snapshot_factory_fallback_without_quantity_row_keeps_transfer_transit()
-    test_positive_quantity_cache_is_not_overwritten_by_snapshot()
-    test_factory_snapshot_warehouse_name_variants_are_summed()
-    test_snapshot_matches_by_normalized_code_and_barcode()
-    print("local products inventory snapshot fallback tests passed")
+    test_local_products_does_not_fallback_without_quantity_row()
+    test_positive_quantity_cache_is_not_overwritten_by_snapshot_or_transfer()
+    test_snapshot_warehouse_name_variants_do_not_change_local_products()
+    test_snapshot_normalized_code_and_barcode_do_not_change_local_products()
+    print("local products inventory snapshot non-fallback tests passed")
