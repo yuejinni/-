@@ -61,9 +61,33 @@ def _get_sales_conn_rw():
     db = os.path.join(_SERVER_DIR, '_sales_cache', 'sales_cache.sqlite3')
     if not os.path.exists(db):
         return None
-    conn = sqlite3.connect(db, timeout=10, check_same_thread=False)
+    conn = sqlite3.connect(db, timeout=3, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _try_save_dim_overrides(dim_overrides):
+    """Best-effort cache update; batch generation must not fail if sales cache is busy."""
+    if not dim_overrides:
+        return
+    sc_rw = None
+    try:
+        sc_rw = _get_sales_conn_rw()
+        if not sc_rw:
+            return
+        for bc, ov in dim_overrides.items():
+            sc_rw.execute(
+                "UPDATE jdy_products SET length=?, width=?, height=? WHERE barcode=?",
+                (float(ov.get('l') or 0), float(ov.get('w') or 0), float(ov.get('h') or 0), bc)
+            )
+        sc_rw.commit()
+    except sqlite3.OperationalError as ex:
+        if sc_rw:
+            sc_rw.rollback()
+        logger.warning("[batch_plan] skipped dim override cache save: %s", ex)
+    finally:
+        if sc_rw:
+            sc_rw.close()
 
 
 def _fv(d: dict, keys: list, default=''):
@@ -1123,16 +1147,7 @@ def _sorting_batch_plan_fast():
     finally:
         sc.close()
 
-    if dim_overrides:
-        sc_rw = _get_sales_conn_rw()
-        if sc_rw:
-            for bc, ov in dim_overrides.items():
-                sc_rw.execute(
-                    "UPDATE jdy_products SET length=?, width=?, height=? WHERE barcode=?",
-                    (float(ov.get('l') or 0), float(ov.get('w') or 0), float(ov.get('h') or 0), bc)
-                )
-            sc_rw.commit()
-            sc_rw.close()
+    _try_save_dim_overrides(dim_overrides)
 
     if not orders:
         return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
@@ -1350,16 +1365,7 @@ def sorting_batch_plan():
     sc.close()
 
     # 将补录的尺寸回写到 jdy_products（下次生成无需再补）
-    if dim_overrides:
-        sc_rw = _get_sales_conn_rw()
-        if sc_rw:
-            for bc, ov in dim_overrides.items():
-                sc_rw.execute(
-                    "UPDATE jdy_products SET length=?, width=?, height=? WHERE barcode=?",
-                    (float(ov.get('l') or 0), float(ov.get('w') or 0), float(ov.get('h') or 0), bc)
-                )
-            sc_rw.commit()
-            sc_rw.close()
+    _try_save_dim_overrides(dim_overrides)
 
     if not orders:
         return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
