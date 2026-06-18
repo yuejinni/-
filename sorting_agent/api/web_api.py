@@ -139,12 +139,14 @@ def rush_scan():
     body    = request.get_json() or {}
     orderno = body.get('orderno', '').strip()
     barcode = body.get('barcode', '').strip()
+    box_no  = int(body.get('box_no') or 1)
     if not orderno or not barcode:
         return jsonify({"ok": False, "msg": "orderno 和 barcode 不能为空"}), 400
 
     db = get_db_conn()
     rows = qall(db,
-        "SELECT id, qty, scanned_qty FROM rush_items WHERE orderno=? AND barcode=?",
+        "SELECT id, qty, scanned_qty, goodsno, goodsmodel, unit "
+        "FROM rush_items WHERE orderno=? AND barcode=?",
         (orderno, barcode))
     if not rows:
         return jsonify({"ok": False, "msg": "条码不在加急单中"})
@@ -160,6 +162,22 @@ def rush_scan():
             "UPDATE rush_items SET scanned_qty=scanned_qty+1 "
             "WHERE orderno=? AND barcode=?",
             (orderno, barcode))
+        # 记录本次扫码归入哪一箱
+        db.cursor().execute("""
+            MERGE rush_box_items AS target
+            USING (SELECT ? AS orderno, ? AS box_no, ? AS barcode,
+                          ? AS goodsno, ? AS goodsmodel, ? AS unit) AS src
+            ON target.orderno=src.orderno
+               AND target.box_no=src.box_no
+               AND target.barcode=src.barcode
+            WHEN MATCHED THEN
+                UPDATE SET qty=qty+1
+            WHEN NOT MATCHED THEN
+                INSERT (orderno, box_no, barcode, goodsno, goodsmodel, unit, qty)
+                VALUES (src.orderno, src.box_no, src.barcode,
+                        src.goodsno, src.goodsmodel, src.unit, 1);
+        """, (orderno, box_no, barcode,
+              r.get('goodsno') or '', r.get('goodsmodel') or '', r.get('unit') or ''))
         remaining = qval(db,
             "SELECT SUM(qty - scanned_qty) FROM rush_items "
             "WHERE orderno=? AND qty > scanned_qty",
@@ -193,6 +211,36 @@ def rush_scan():
         "done":    new_anum >= qty,
         "all_done": all_done,
         "msg":     f"已扫 {new_anum}/{qty}",
+    })
+
+
+# ── 1g. 加急单装箱明细查询 ────────────────────────────────────────────────────
+@app.get('/api/rush/boxes')
+def rush_boxes():
+    """
+    GET /api/rush/boxes?orderno=X
+    返回该加急单按箱号分组的装箱明细（面单生成用）。
+    """
+    orderno = request.args.get('orderno', '').strip()
+    if not orderno:
+        return jsonify({"ok": False, "msg": "orderno 不能为空"}), 400
+    db = get_db_conn()
+    rows = qall(db, """
+        SELECT box_no, barcode, goodsno, goodsmodel, unit, qty
+        FROM rush_box_items WHERE orderno=?
+        ORDER BY box_no, goodsmodel
+    """, (orderno,))
+    boxes: dict = {}
+    for r in rows:
+        bn = r['box_no']
+        if bn not in boxes:
+            boxes[bn] = []
+        boxes[bn].append(dict(r))
+    return jsonify({
+        "ok": True,
+        "orderno": orderno,
+        "box_count": len(boxes),
+        "boxes": [{"box_no": k, "items": v} for k, v in sorted(boxes.items())]
     })
 
 

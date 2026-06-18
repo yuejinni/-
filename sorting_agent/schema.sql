@@ -179,6 +179,20 @@ CREATE TABLE rush_items (
 );
 CREATE INDEX IX_rush_items_orderno ON rush_items(orderno);
 
+-- 加急单装箱明细（换箱时记录每箱放了哪些货，面单生成用）
+CREATE TABLE rush_box_items (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    orderno     NVARCHAR(100) NOT NULL,
+    box_no      INT NOT NULL DEFAULT 1,
+    barcode     NVARCHAR(100) NOT NULL,
+    goodsno     NVARCHAR(100),
+    goodsmodel  NVARCHAR(200),
+    unit        NVARCHAR(50),
+    qty         INT DEFAULT 0,
+    CONSTRAINT UQ_rush_box_items UNIQUE(orderno, box_no, barcode)
+);
+CREATE INDEX IX_rush_box_orderno ON rush_box_items(orderno);
+
 -- 验证：SELECT COUNT(*) FROM sort_ports  → 200
 --        SELECT COUNT(*) FROM port_lights → 200
 --        SELECT COUNT(*) FROM sys_config  → 15

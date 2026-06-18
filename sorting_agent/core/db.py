@@ -76,6 +76,22 @@ def ensure_runtime_schema(conn) -> None:
             CREATE INDEX IX_rush_items_orderno ON rush_items(orderno)
         END
     """)
+    cur.execute("""
+        IF OBJECT_ID('rush_box_items','U') IS NULL BEGIN
+            CREATE TABLE rush_box_items (
+                id          INT IDENTITY(1,1) PRIMARY KEY,
+                orderno     NVARCHAR(100) NOT NULL,
+                box_no      INT NOT NULL DEFAULT 1,
+                barcode     NVARCHAR(100) NOT NULL,
+                goodsno     NVARCHAR(100),
+                goodsmodel  NVARCHAR(200),
+                unit        NVARCHAR(50),
+                qty         INT DEFAULT 0,
+                CONSTRAINT UQ_rush_box_items UNIQUE(orderno, box_no, barcode)
+            );
+            CREATE INDEX IX_rush_box_orderno ON rush_box_items(orderno)
+        END
+    """)
     conn.commit()
 
 
