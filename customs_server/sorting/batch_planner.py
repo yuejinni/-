@@ -9,16 +9,18 @@ sorting/batch_planner.py — 分拣批次规划与分箱算法
 
 
 def floor_from_goodsmodel(goodsmodel: str) -> int:
-    """楼层推算（goodsmodel 第二段首字母，对应原系统 Proc_Sendsorting IF/ELSE 逻辑）。"""
+    """楼层推算：扫所有空格分段，找第一个首字母在楼层映射里的段。
+    支持格式：'Mi18'、'15(1*10) Mi18'、'Mi18 S码'、'15(1*10) Mi18 20 Ha07' 等。
+    """
     _FLOOR_MAP = {}
     for c in 'ABCDabcd': _FLOOR_MAP[c] = 1
     for c in 'EFGefg':   _FLOOR_MAP[c] = 2
     for c in 'HIJhij':   _FLOOR_MAP[c] = 3
     for c in 'KLMNklmn': _FLOOR_MAP[c] = 4
-    segs = (goodsmodel or '').split()
-    if len(segs) < 2:
-        return 0
-    return _FLOOR_MAP.get(segs[1][0], 0)
+    for seg in (goodsmodel or '').split():
+        if seg and seg[0] in _FLOOR_MAP:
+            return _FLOOR_MAP[seg[0]]
+    return 0
 
 
 def _next_port(p: int) -> int:
