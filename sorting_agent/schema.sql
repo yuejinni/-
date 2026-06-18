@@ -31,6 +31,7 @@ CREATE TABLE sorting_rules (
     floor       INT DEFAULT 0,           -- 由 goodsmodel 第二段首字母推算
     serialnum   INT DEFAULT 0,           -- 写PLC byte 8-9
     label_data  NVARCHAR(200),           -- 面单数据（账号-CTN序号），打印用
+    unit        NVARCHAR(50),            -- 货品单位（PAC / DZ / 双 等，来自 JDY 订单）
     box_type    INT DEFAULT 1,
     queue_seq   INT DEFAULT 0,           -- 排队序号（1=最先上机；>100 时 innerport=0 等候）
     status      INT DEFAULT 0,           -- 0=待扫 1=等待拣货 2=可上机 3=已落包 4=格口已清 5=批次已完成

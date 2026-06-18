@@ -65,6 +65,7 @@ def _emit_box(rules: list, order: dict, goods_list: list,
                 'picktype':         g.get('picktype', 0),
                 'entry_id':         g.get('entry_id', 0),
                 'store_delivery':   g.get('store_delivery', 0),
+                'unit':             g.get('unit', ''),
                 'label_data':       box_no,
                 # 排队调度用（不写 DB，仅供 _assign_queue_seq 读取）
                 'payment_priority': order.get('payment_priority', 2),

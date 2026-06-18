@@ -29,12 +29,19 @@ def get_db_conn() -> pyodbc.Connection:
 
 def ensure_runtime_schema(conn) -> None:
     """补齐可向后兼容的运行时字段；语句必须保持幂等。"""
-    conn.cursor().execute("""
+    cur = conn.cursor()
+    cur.execute("""
         IF COL_LENGTH('sorting_rules', 'queue_seq') IS NULL
         BEGIN
             ALTER TABLE sorting_rules
             ADD queue_seq INT NOT NULL
                 CONSTRAINT DF_sorting_rules_queue_seq DEFAULT(0) WITH VALUES
+        END
+    """)
+    cur.execute("""
+        IF COL_LENGTH('sorting_rules', 'unit') IS NULL
+        BEGIN
+            ALTER TABLE sorting_rules ADD unit NVARCHAR(50) NULL
         END
     """)
     conn.commit()

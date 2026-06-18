@@ -51,14 +51,15 @@ def sync_rules_from_cloud(db_conn, cloud_url: str, current_ver: int):
                 INSERT INTO sorting_rules
                     (rule_ver, batchno, barcode, slot_seq, portno, innerport,
                      customer, goodsno, goodsmodel, floor, serialnum,
-                     label_data, box_type, queue_seq, status, synced_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,GETDATE())
+                     label_data, unit, box_type, queue_seq, status, synced_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,GETDATE())
             """, (
                 r["ver"], r["batchno"], r["barcode"], r.get("slot_seq", 1),
                 r["portno"], innerport,
                 r.get("customer"), r.get("goodsno"), r.get("goodsmodel"),
                 r.get("floor", 0), r["serialnum"],
                 r.get("label_data"),    # 云端 allocate_ports 返回（格式：orderno-box_num）
+                r.get("unit", ""),
                 r.get("box_type", 1), queue_seq
             ))
             if innerport != 0:
@@ -75,6 +76,7 @@ def sync_rules_from_cloud(db_conn, cloud_url: str, current_ver: int):
                     MAX(floor)      AS floor,
                     MAX(goodsno)    AS goodsnum,
                     MAX(goodsmodel) AS model,
+                    MAX(unit)       AS unit,
                     COUNT(*)        AS num,
                     0               AS picktype,
                     MAX(portno)     AS port
@@ -85,12 +87,12 @@ def sync_rules_from_cloud(db_conn, cloud_url: str, current_ver: int):
             WHEN MATCHED THEN
                 UPDATE SET num=src.num, anum=0, floor=src.floor,
                            goodsnum=src.goodsnum, model=src.model,
-                           picktype=src.picktype, port=src.port,
+                           unit=src.unit, picktype=src.picktype, port=src.port,
                            updated_at=GETDATE()
             WHEN NOT MATCHED THEN
-                INSERT (batchno, barcode, floor, goodsnum, model, num, anum, picktype, port)
+                INSERT (batchno, barcode, floor, goodsnum, model, unit, num, anum, picktype, port)
                 VALUES (src.batchno, src.barcode, src.floor, src.goodsnum, src.model,
-                        src.num, 0, src.picktype, src.port);
+                        src.unit, src.num, 0, src.picktype, src.port);
         """, (new_batchno,))
 
         execute(db_conn,

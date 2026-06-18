@@ -268,11 +268,12 @@ def _build_sorting_orders_from_cache(sc, order_nos, account, order_box_types, di
                 l = float((prod or {}).get('length') or 0)
                 w = float((prod or {}).get('width') or 0)
                 h = float((prod or {}).get('height') or 0)
+            unit = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
             machine_goods.append({
                 'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
                 'customer': customer, 'l': l, 'w': w, 'h': h,
                 'qty': qty, 'serialnum': 0, 'picktype': picktype,
-                'entry_id': entry_id, 'store_delivery': 0,
+                'entry_id': entry_id, 'store_delivery': 0, 'unit': unit,
             })
 
         if store_goods:
@@ -498,6 +499,8 @@ def _ensure_tables():
         "ALTER TABLE cloud_sorting_rules ADD COLUMN store_delivery INTEGER DEFAULT 0",
         # 排队序号（queue_seq=0 表示未分配，1=最先上机）
         "ALTER TABLE cloud_sorting_rules ADD COLUMN queue_seq INTEGER DEFAULT 0",
+        # 货品单位（双字、PAC、DZ 等，来自 JDY 订单行）
+        "ALTER TABLE cloud_sorting_rules ADD COLUMN unit TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(ddl)
@@ -712,8 +715,8 @@ def sorting_batch_assign():
             INSERT INTO cloud_sorting_rules
                 (ver, batchno, barcode, slot_seq, portno, innerport,
                  customer, goodsno, goodsmodel, floor, serialnum, label_data, box_type, picktype, entry_id,
-                 queue_seq)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 queue_seq, unit)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             new_ver, batchno,
             r['barcode'], r['slot_seq'],
@@ -721,7 +724,7 @@ def sorting_batch_assign():
             r.get('customer'), r.get('goodsno'), r.get('goodsmodel'),
             r['floor'], r['serialnum'],
             r['label_data'], r['box_type'], r.get('picktype', 0), r.get('entry_id', 0),
-            r.get('queue_seq', 0)
+            r.get('queue_seq', 0), r.get('unit', '')
         ))
     conn.execute("UPDATE cloud_rule_version SET ver=? WHERE id=1", (new_ver,))
     conn.close()
@@ -1270,11 +1273,12 @@ def sorting_batch_plan():
                 l = float(prod['length'] or 0) if prod and prod['length'] else 0.0
                 w = float(prod['width']  or 0) if prod and prod['width']  else 0.0
                 h = float(prod['height'] or 0) if prod and prod['height'] else 0.0
+            unit = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
             machine_goods.append({
                 'barcode': barcode, 'goodsno': goodsno, 'goodsmodel': goodsmodel,
                 'customer': customer, 'l': l, 'w': w, 'h': h,
                 'qty': qty, 'serialnum': 0, 'picktype': picktype,
-                'entry_id': entry_id, 'store_delivery': 0,
+                'entry_id': entry_id, 'store_delivery': 0, 'unit': unit,
             })
         # 有店补货 → 暂存，稍后建任务
         if store_goods:
