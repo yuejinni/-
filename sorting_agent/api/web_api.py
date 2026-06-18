@@ -135,57 +135,83 @@ def pda_unscan():
 
 
 # ── 1c. 当前活跃批次回退拣货 ───────────────────────────────────────────────────
+def _rollback_batch_records(db, batchno: str) -> dict | None:
+    """强制回退批次，并清除本地落包事件；调用方负责提交或回滚事务。"""
+    rule_count = qval(db,
+        "SELECT COUNT(*) FROM sorting_rules WHERE batchno=?",
+        (batchno,)) or 0
+    if not rule_count:
+        return None
+
+    scanned_rules = qval(db,
+        "SELECT COUNT(*) FROM sorting_rules WHERE batchno=? AND status>=3",
+        (batchno,)) or 0
+    scan_events = qval(db,
+        "SELECT COUNT(*) FROM scan_events WHERE batchno=?",
+        (batchno,)) or 0
+
+    # 可上机、已落包、格口已清全部恢复为等待拣货；已归档(status=5)不回退。
+    execute(db,
+        "UPDATE sorting_rules SET status=1 "
+        "WHERE batchno=? AND status IN (2,3,4)",
+        (batchno,))
+    execute(db,
+        "DELETE FROM scan_events WHERE batchno=?",
+        (batchno,))
+    execute(db,
+        "UPDATE pick_progress SET anum=0, updated_at=GETDATE() WHERE batchno=?",
+        (batchno,))
+
+    # 保留格口分配，重置落包数量和超时计时。
+    execute(db, """
+        UPDATE sort_ports
+        SET fj_num=0, modified_at=GETDATE()
+        WHERE portno IN (
+            SELECT DISTINCT innerport FROM sorting_rules
+            WHERE batchno=? AND innerport!=0
+        )
+    """, (batchno,))
+
+    # 重新统计每个格口应落数量；规则仍完整保留。
+    execute(db, """
+        UPDATE sp SET sp.init_num = cnt.c
+        FROM sort_ports sp
+        JOIN (
+            SELECT innerport, COUNT(*) AS c
+            FROM sorting_rules
+            WHERE batchno=? AND status IN (1,2,3,4) AND innerport!=0
+            GROUP BY innerport
+        ) cnt ON sp.portno = cnt.innerport
+    """, (batchno,))
+    return {
+        "rule_count": rule_count,
+        "scanned_rules": scanned_rules,
+        "scan_events": scan_events,
+    }
+
+
 @app.post('/api/batch/active/rollback')
 def rollback_active_batch():
     """
-    活跃批次回退拣货：status=2→1，anum 归零，格口计数重置。
-    规则保留（不删除）。已实际落包（status>=3 或 scan_events）时拒绝。
+    活跃批次强制回退：规则恢复等待拣货，清除本地落包事件并重置格口。
     """
     db = get_db_conn()
     active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
     if not active:
         return jsonify({"ok": False, "msg": "当前无活跃批次"}), 400
-    scanned_rules = qval(db,
-        "SELECT COUNT(*) FROM sorting_rules WHERE batchno=? AND status>=3",
-        (active,)) or 0
-    scan_events = qval(db,
-        "SELECT COUNT(*) FROM scan_events WHERE batchno=?",
-        (active,)) or 0
-    if scanned_rules or scan_events:
-        return jsonify({
-            "ok": False,
-            "msg": (f"批次已有实际落包记录（规则 {scanned_rules} 条，"
-                    f"扫码事件 {scan_events} 条），不能回退拣货完成"),
-        }), 409
     try:
-        execute(db,
-            "UPDATE sorting_rules SET status=1 WHERE batchno=? AND status=2",
-            (active,))
-        execute(db,
-            "UPDATE pick_progress SET anum=0, updated_at=GETDATE() WHERE batchno=?",
-            (active,))
-        execute(db, """
-            UPDATE sort_ports SET fj_num=0, modified_at=GETDATE()
-            WHERE portno IN (
-                SELECT DISTINCT innerport FROM sorting_rules
-                WHERE batchno=? AND innerport!=0
-            )
-        """, (active,))
-        execute(db, """
-            UPDATE sp SET sp.init_num = cnt.c
-            FROM sort_ports sp
-            JOIN (
-                SELECT innerport, COUNT(*) AS c
-                FROM sorting_rules
-                WHERE batchno=? AND status IN (1,2) AND innerport!=0
-                GROUP BY innerport
-            ) cnt ON sp.portno = cnt.innerport
-        """, (active,))
+        result = _rollback_batch_records(db, active)
+        if result is None:
+            return jsonify({"ok": False, "msg": f"批次 {active} 不存在"}), 404
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return jsonify({"ok": True, "msg": f"批次 {active} 已回退为等待拣货，规则均已保留"})
+    return jsonify({
+        "ok": True,
+        "msg": (f"批次 {active} 已回退为等待拣货；"
+                f"已清除本地落包记录 {result['scan_events']} 条")
+    })
 
 
 # ── 2. PDA 扫码确认拣货 ────────────────────────────────────────────────────────
@@ -757,72 +783,27 @@ def hard_delete_batch(batchno):
 @app.post('/api/batch/<batchno>/rollback')
 def rollback_batch(batchno):
     """
-    将“已完成拣货/一键上机”安全回退为“等待拣货”：
-      ① sorting_rules status=2 → status=1（保留规则，不删除）
+    将批次强制回退为“等待拣货”：
+      ① sorting_rules status=2/3/4 → status=1（保留规则）
       ② pick_progress anum → 0
-      ③ 保留格口分配，重置该批次相关格口的已落数量和计时
+      ③ 删除该批次本地 scan_events
+      ④ 保留格口分配，重置该批次相关格口的已落数量和计时
 
-    已经实际落包（status>=3 或存在 scan_events）的批次拒绝回退，
-    避免 PLC 已执行而数据库被倒退。
+    注意：已经推送到云端的历史事件不会由此接口自动删除。
     """
     db = get_db_conn()
     try:
-        scanned_rules = qval(db,
-            "SELECT COUNT(*) FROM sorting_rules "
-            "WHERE batchno=? AND status>=3",
-            (batchno,)) or 0
-        scan_events = qval(db,
-            "SELECT COUNT(*) FROM scan_events WHERE batchno=?",
-            (batchno,)) or 0
-        if scanned_rules or scan_events:
-            return jsonify({
-                "ok": False,
-                "msg": (f"批次已有实际落包记录（规则 {scanned_rules} 条，"
-                        f"扫码事件 {scan_events} 条），不能回退拣货完成")
-            }), 409
-
-        rule_count = qval(db,
-            "SELECT COUNT(*) FROM sorting_rules WHERE batchno=?",
-            (batchno,)) or 0
-        if not rule_count:
+        result = _rollback_batch_records(db, batchno)
+        if result is None:
             return jsonify({"ok": False, "msg": f"批次 {batchno} 不存在"}), 404
-
-        execute(db,
-            "UPDATE sorting_rules SET status=1 "
-            "WHERE batchno=? AND status=2",
-            (batchno,))
-        execute(db,
-            "UPDATE pick_progress SET anum=0, updated_at=GETDATE() WHERE batchno=?",
-            (batchno,))
-
-        # 保留格口分配，只重置该批次相关格口的落包数和超时计时。
-        execute(db, """
-            UPDATE sort_ports
-            SET fj_num=0, modified_at=GETDATE()
-            WHERE portno IN (
-                SELECT DISTINCT innerport FROM sorting_rules
-                WHERE batchno=? AND innerport!=0
-            )
-        """, (batchno,))
-
-        # 重新统计应落数量；规则仍完整保留。
-        execute(db, """
-            UPDATE sp SET sp.init_num = cnt.c
-            FROM sort_ports sp
-            JOIN (
-                SELECT innerport, COUNT(*) AS c
-                FROM sorting_rules
-                WHERE batchno=? AND status IN (1,2) AND innerport!=0
-                GROUP BY innerport
-            ) cnt ON sp.portno = cnt.innerport
-        """, (batchno,))
         db.commit()
     except Exception:
         db.rollback()
         raise
     return jsonify({
         "ok": True,
-        "msg": f"批次 {batchno} 已回退为等待拣货，订单和规则均已保留"
+        "msg": (f"批次 {batchno} 已回退为等待拣货，订单和规则均已保留；"
+                f"已清除本地落包记录 {result['scan_events']} 条")
     })
 
 

@@ -622,8 +622,9 @@ async function rollbackPicking() {
     return;
   }
   if (!confirm(
-    `回退批次 ${batchno} 的拣货完成状态？\n\n` +
-    '订单、规则和格口分配会保留，货品恢复为“等待拣货”。'
+    `强制回退批次 ${batchno}？\n\n` +
+    '订单、规则和格口分配会保留；本地落包记录会清除，货品恢复为“等待拣货”。\n' +
+    '已推送到云端的历史记录不会自动删除。'
   )) return;
   const res = await fetch(`/api/batch/${encodeURIComponent(batchno)}/rollback`, {
     method:'POST'

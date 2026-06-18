@@ -758,7 +758,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
     <div class="ep-empty">加载中...</div>
   </div>
   <div class="ep-footer">
-    <button id="ep-reset-btn" class="ep-reset-btn" onclick="batchRollback()">重置批次（清空已拣记录）</button>
+    <button id="ep-reset-btn" class="ep-reset-btn" onclick="batchRollback()">重置批次（清空拣货/落包记录）</button>
   </div>
 </div>
 
@@ -1279,18 +1279,18 @@ function batchRollback() {
   const btn = document.getElementById('ep-reset-btn');
   _rollbackTaps++;
   if (_rollbackTaps === 1) {
-    btn.textContent = '⚠️ 再次点击确认重置（不可撤销）';
+    btn.textContent = '⚠️ 再次点击：清除本地拣货/落包记录';
     btn.classList.add('confirm-1');
     if (_rollbackTimer) clearTimeout(_rollbackTimer);
     _rollbackTimer = setTimeout(() => {
       _rollbackTaps = 0;
-      btn.textContent = '重置批次（清空已拣记录）';
+      btn.textContent = '重置批次（清空拣货/落包记录）';
       btn.classList.remove('confirm-1');
     }, 3000);
   } else if (_rollbackTaps >= 2) {
     _rollbackTaps = 0;
     if (_rollbackTimer) clearTimeout(_rollbackTimer);
-    btn.textContent = '重置批次（清空已拣记录）';
+    btn.textContent = '重置批次（清空拣货/落包记录）';
     btn.classList.remove('confirm-1');
     doRollback();
   }

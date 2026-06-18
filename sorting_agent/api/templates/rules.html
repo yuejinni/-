@@ -355,8 +355,9 @@ async function oneKey() {
 async function rollbackBatch() {
   if (!_currentBatchno) return;
   if (!confirm(
-    `回退批次 ${_currentBatchno} 的拣货完成状态？\n\n` +
-    '订单、规则和格口分配会保留，货品恢复为“等待拣货”。'
+    `强制回退批次 ${_currentBatchno}？\n\n` +
+    '订单、规则和格口分配会保留；本地落包记录会清除，货品恢复为“等待拣货”。\n' +
+    '已推送到云端的历史记录不会自动删除。'
   )) return;
   const res = await fetch(`/api/batch/${_currentBatchno}/rollback`, {method:'POST'});
   const data = await res.json();

@@ -12,7 +12,7 @@ class RollbackPickingTests(unittest.TestCase):
         with (
             app.test_request_context(),
             patch("api.web_api.get_db_conn", return_value=self.db),
-            patch("api.web_api.qval", side_effect=[0, 0, 9]),
+            patch("api.web_api.qval", side_effect=[9, 0, 0]),
             patch("api.web_api.execute") as execute,
         ):
             response = rollback_batch("BATCH001")
@@ -31,6 +31,10 @@ class RollbackPickingTests(unittest.TestCase):
             "DELETE FROM sorting_rules" in sql
             for sql in sql_calls
         ))
+        self.assertTrue(any(
+            "DELETE FROM scan_events" in sql
+            for sql in sql_calls
+        ))
         self.assertIn(
             call(
                 self.db,
@@ -41,19 +45,31 @@ class RollbackPickingTests(unittest.TestCase):
             execute.call_args_list,
         )
 
-    def test_rejects_rollback_after_real_scan(self):
+    def test_allows_rollback_after_real_scan_and_clears_events(self):
         with (
             app.test_request_context(),
             patch("api.web_api.get_db_conn", return_value=self.db),
-            patch("api.web_api.qval", side_effect=[1, 1]),
+            patch("api.web_api.qval", side_effect=[9, 9, 9]),
             patch("api.web_api.execute") as execute,
         ):
-            response, status = rollback_batch("BATCH001")
+            response = rollback_batch("BATCH001")
 
-        self.assertEqual(409, status)
-        self.assertFalse(response.get_json()["ok"])
-        execute.assert_not_called()
-        self.db.commit.assert_not_called()
+        self.assertTrue(response.get_json()["ok"])
+        self.assertIn("已清除本地落包记录 9 条", response.get_json()["msg"])
+        sql_calls = [args[1] for args, _ in execute.call_args_list]
+        self.assertTrue(any(
+            "status IN (2,3,4)" in sql
+            for sql in sql_calls
+        ))
+        self.assertIn(
+            call(
+                self.db,
+                "DELETE FROM scan_events WHERE batchno=?",
+                ("BATCH001",),
+            ),
+            execute.call_args_list,
+        )
+        self.db.commit.assert_called_once_with()
 
 
 if __name__ == "__main__":
