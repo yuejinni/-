@@ -1147,7 +1147,8 @@ def _sorting_batch_plan_fast():
     finally:
         sc.close()
 
-    _try_save_dim_overrides(dim_overrides)
+    # ⚠️ 尺寸回写暂时关闭（测试数据不准，每次手填即可）
+    # _try_save_dim_overrides(dim_overrides)
 
     if not orders:
         return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
@@ -1365,7 +1366,8 @@ def sorting_batch_plan():
     sc.close()
 
     # 将补录的尺寸回写到 jdy_products（下次生成无需再补）
-    _try_save_dim_overrides(dim_overrides)
+    # ⚠️ 尺寸回写暂时关闭（测试数据不准，每次手填即可）
+    # _try_save_dim_overrides(dim_overrides)
 
     if not orders:
         return jsonify({"ok": False, "msg": "所选销货单无有效商品（缓存未同步或条码为空）"}), 400
