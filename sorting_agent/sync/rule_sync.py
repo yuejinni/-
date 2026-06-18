@@ -160,6 +160,83 @@ def check_revoke_requests(db_conn, cloud_url: str):
             logger.warning(f"[revoke_check] 撤回 {batchno} 失败: {e}")
 
 
+def sync_rush_orders(db_conn, cloud_url: str):
+    """
+    从云端拉取 pending 加急单，同步到本地 rush_orders + rush_items。
+    - MERGE rush_orders（不覆盖 scanned_qty）
+    - 云端已消失的 pending 单在本地标记为 done
+    """
+    try:
+        resp = requests.get(f"{cloud_url}/agent/rush-orders", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.debug(f"[rush_sync] 拉取失败（忽略）: {e}")
+        return
+
+    orders = data.get("orders", [])
+    cloud_ordernos = [o['orderno'] for o in orders if o.get('orderno')]
+
+    try:
+        for order in orders:
+            orderno  = (order.get('orderno') or '').strip()
+            customer = (order.get('customer') or '').strip()
+            items    = order.get('items') or []
+            if not orderno:
+                continue
+            # Upsert rush_orders
+            db_conn.cursor().execute("""
+                MERGE rush_orders AS target
+                USING (SELECT ? AS orderno, ? AS customer) AS src
+                ON target.orderno = src.orderno
+                WHEN MATCHED THEN
+                    UPDATE SET customer=src.customer, status='pending', synced_at=GETDATE()
+                WHEN NOT MATCHED THEN
+                    INSERT (orderno, customer, status, synced_at)
+                    VALUES (src.orderno, src.customer, 'pending', GETDATE());
+            """, (orderno, customer))
+            for item in items:
+                bc  = (item.get('barcode') or '').strip()
+                if not bc:
+                    continue
+                gno  = (item.get('goodsno') or '').strip()
+                gmod = (item.get('goodsmodel') or '').strip()
+                unit = (item.get('unit') or '').strip()
+                qty  = int(item.get('qty') or 0)
+                # Upsert rush_items，不覆盖 scanned_qty
+                db_conn.cursor().execute("""
+                    MERGE rush_items AS target
+                    USING (SELECT ? AS orderno, ? AS barcode,
+                                  ? AS goodsno, ? AS goodsmodel,
+                                  ? AS unit, ? AS qty) AS src
+                    ON target.orderno=src.orderno AND target.barcode=src.barcode
+                    WHEN MATCHED THEN
+                        UPDATE SET goodsno=src.goodsno, goodsmodel=src.goodsmodel,
+                                   unit=src.unit, qty=src.qty
+                    WHEN NOT MATCHED THEN
+                        INSERT (orderno, barcode, goodsno, goodsmodel, unit, qty, scanned_qty)
+                        VALUES (src.orderno, src.barcode, src.goodsno, src.goodsmodel,
+                                src.unit, src.qty, 0);
+                """, (orderno, bc, gno, gmod, unit, qty))
+
+        # 云端已消失的 pending 单在本地标记 done
+        if cloud_ordernos:
+            placeholders = ','.join('?' * len(cloud_ordernos))
+            execute(db_conn,
+                f"UPDATE rush_orders SET status='done' "
+                f"WHERE status='pending' AND orderno NOT IN ({placeholders})",
+                tuple(cloud_ordernos))
+        else:
+            execute(db_conn,
+                "UPDATE rush_orders SET status='done' WHERE status='pending'")
+
+        db_conn.commit()
+        logger.info(f"[rush_sync] 加急单同步完成，pending={len(orders)}")
+    except Exception as e:
+        db_conn.rollback()
+        logger.warning(f"[rush_sync] 同步异常: {e}")
+
+
 def rule_sync_loop():
     """
     每 30s 从云端拉取规则差量（替代原 C# 手工导入按钮）。
@@ -175,7 +252,8 @@ def rule_sync_loop():
                 "SELECT value FROM sys_config WHERE [key]='rule_version'") or 0)
             if cloud_url:
                 sync_rules_from_cloud(db, cloud_url, current_ver)
-                check_revoke_requests(db, cloud_url)   # ← 新增：撤回检查
+                check_revoke_requests(db, cloud_url)
+                sync_rush_orders(db, cloud_url)         # ← 加急单同步
         except Exception as e:
             logger.warning(f"[rule_sync_loop] 同步失败（30s后重试）: {e}")
         time.sleep(30)

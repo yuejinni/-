@@ -71,27 +71,23 @@ def get_pick_list():
             d['wave_num'] = math.ceil(min_qs / 100) if min_qs > 0 else 1
             result.append(d)
     elif picktype == 2:
-        # 单票分拣：按 orderno（label_data 前缀）过滤，不限楼层
+        # 单票分拣：查 rush_items，返回全部行（含已扫完），前端按 anum/num 判断 done 样式
         orderno = request.args.get('orderno', '').strip()
-        if not orderno or not active:
+        if not orderno:
             return jsonify([])
-        pattern = orderno + '-%'
-        barcode_rows = qall(db, """
-            SELECT DISTINCT barcode FROM sorting_rules
-            WHERE batchno=? AND (label_data LIKE ? OR label_data=?)
-        """, (active, pattern, orderno))
-        barcode_list = [r['barcode'] for r in barcode_rows]
-        if not barcode_list:
-            return jsonify([])
-        placeholders = ','.join('?' * len(barcode_list))
-        rows = qall(db, f"""
-            SELECT pp.barcode, pp.port AS portno, pp.goodsnum, pp.model,
-                   pp.unit, pp.quantity, pp.num, pp.anum,
-                   0 AS min_queue_seq
-            FROM pick_progress pp
-            WHERE pp.batchno=? AND pp.num > pp.anum
-              AND pp.barcode IN ({placeholders})
-        """, tuple([active] + barcode_list))
+        rows = qall(db, """
+            SELECT barcode,
+                   COALESCE(goodsno,'')    AS goodsnum,
+                   COALESCE(goodsmodel,'') AS model,
+                   COALESCE(unit,'')       AS unit,
+                   0 AS quantity,
+                   qty  AS num,
+                   scanned_qty AS anum,
+                   0 AS min_queue_seq,
+                   0 AS portno
+            FROM rush_items
+            WHERE orderno = ?
+        """, (orderno,))
         result = [dict(r) for r in rows]
     else:
         # 手工分拣：直接按 pick_progress 返回，不过滤 sorting_rules
@@ -113,47 +109,127 @@ def get_pick_list():
     return jsonify(result)
 
 
-# ── 1d. 单票分拣：订单列表 ────────────────────────────────────────────────────
+# ── 1d. 单票分拣：订单列表（来自加急单 rush_orders）────────────────────────────
 @app.get('/api/single-ticket/orders')
 def single_ticket_orders():
-    """单票分拣：返回当前批次所有有剩余货品的订单列表。"""
+    """单票分拣：返回所有 pending 加急单（来自 rush_orders 本地缓存）。"""
     db = get_db_conn()
-    active = qval(db, "SELECT value FROM sys_config WHERE [key]='active_batchno'") or ''
-    if not active:
-        return jsonify([])
+    rows = qall(db, """
+        SELECT ro.orderno, COALESCE(ro.customer,'') AS customer,
+               SUM(ri.qty - ri.scanned_qty) AS remaining
+        FROM rush_orders ro
+        JOIN rush_items ri ON ri.orderno = ro.orderno
+        WHERE ro.status = 'pending'
+        GROUP BY ro.orderno, ro.customer
+        HAVING SUM(ri.qty - ri.scanned_qty) > 0
+        ORDER BY ro.orderno
+    """)
+    return jsonify([dict(r) for r in rows])
 
-    # 获取 label_data（格式 orderno-N）和 customer
-    ld_rows = qall(db, """
-        SELECT DISTINCT label_data, COALESCE(customer, '') AS customer
-        FROM sorting_rules WHERE batchno=? AND COALESCE(label_data,'') != ''
-        ORDER BY label_data
-    """, (active,))
 
-    # Python 侧按真实 orderno（去掉最后 -N）去重
-    seen = {}
-    for r in ld_rows:
-        ld = r['label_data'] or ''
-        orderno = ld.rsplit('-', 1)[0] if '-' in ld else ld
-        if orderno not in seen:
-            seen[orderno] = r['customer']
+# ── 1e. 加急单扫码 ────────────────────────────────────────────────────────────
+@app.post('/api/rush/scan')
+def rush_scan():
+    """
+    加急单扫码确认（单票分拣 tab=2）。
+    body: {"orderno": str, "barcode": str}
+    本地 rush_items.scanned_qty+1，异步推云端 POST /agent/rush-scan。
+    """
+    import threading
+    body    = request.get_json() or {}
+    orderno = body.get('orderno', '').strip()
+    barcode = body.get('barcode', '').strip()
+    if not orderno or not barcode:
+        return jsonify({"ok": False, "msg": "orderno 和 barcode 不能为空"}), 400
 
-    # 查各订单剩余件数
-    result = []
-    for orderno, customer in seen.items():
-        pattern = orderno + '-%'
-        row = qall(db, f"""
-            SELECT SUM(pp.num - pp.anum) AS remaining
-            FROM pick_progress pp
-            WHERE pp.batchno=? AND pp.num > pp.anum
-              AND pp.barcode IN (
-                  SELECT DISTINCT barcode FROM sorting_rules
-                  WHERE batchno=? AND (label_data LIKE ? OR label_data=?)
-              )
-        """, (active, active, pattern, orderno))
-        remaining = int((row[0]['remaining'] or 0) if row else 0)
-        if remaining > 0:
-            result.append({'orderno': orderno, 'customer': customer, 'remaining': remaining})
-    return jsonify(result)
+    db = get_db_conn()
+    rows = qall(db,
+        "SELECT id, qty, scanned_qty FROM rush_items WHERE orderno=? AND barcode=?",
+        (orderno, barcode))
+    if not rows:
+        return jsonify({"ok": False, "msg": "条码不在加急单中"})
+
+    r    = dict(rows[0])
+    qty  = int(r.get('qty') or 0)
+    anum = int(r.get('scanned_qty') or 0)
+    if anum >= qty:
+        return jsonify({"ok": False, "done": True, "msg": "该条码已全部扫完"})
+
+    try:
+        execute(db,
+            "UPDATE rush_items SET scanned_qty=scanned_qty+1 "
+            "WHERE orderno=? AND barcode=?",
+            (orderno, barcode))
+        remaining = qval(db,
+            "SELECT SUM(qty - scanned_qty) FROM rush_items "
+            "WHERE orderno=? AND qty > scanned_qty",
+            (orderno,)) or 0
+        all_done = (int(remaining) <= 0)
+        if all_done:
+            execute(db, "UPDATE rush_orders SET status='done' WHERE orderno=?", (orderno,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    new_anum  = anum + 1
+    cloud_url = qval(db, "SELECT value FROM sys_config WHERE [key]='cloud_url'") or ''
+
+    if cloud_url:
+        def _push_scan(url, on, bc):
+            try:
+                import requests as _req
+                _req.post(f"{url}/agent/rush-scan",
+                          json={"orderno": on, "barcode": bc, "qty": 1},
+                          timeout=5)
+            except Exception:
+                pass
+        threading.Thread(
+            target=_push_scan, args=(cloud_url, orderno, barcode), daemon=True
+        ).start()
+
+    return jsonify({
+        "ok":      True,
+        "done":    new_anum >= qty,
+        "all_done": all_done,
+        "msg":     f"已扫 {new_anum}/{qty}",
+    })
+
+
+# ── 1f. 加急单完成确认 ─────────────────────────────────────────────────────────
+@app.post('/api/rush/done')
+def rush_done():
+    """
+    手动确认完成加急单配货，更新本地状态并异步推云端。
+    body: {"orderno": str}
+    """
+    import threading
+    body    = request.get_json() or {}
+    orderno = body.get('orderno', '').strip()
+    if not orderno:
+        return jsonify({"ok": False, "msg": "orderno 不能为空"}), 400
+
+    db = get_db_conn()
+    try:
+        execute(db, "UPDATE rush_orders SET status='done' WHERE orderno=?", (orderno,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    cloud_url = qval(db, "SELECT value FROM sys_config WHERE [key]='cloud_url'") or ''
+    if cloud_url:
+        def _push_done(url, on):
+            try:
+                import requests as _req
+                _req.post(f"{url}/sorting/rush/order/{on}/done", timeout=5)
+            except Exception:
+                pass
+        threading.Thread(
+            target=_push_done, args=(cloud_url, orderno), daemon=True
+        ).start()
+
+    return jsonify({"ok": True})
 
 
 # ── 1b. PDA 撤销上一次拣货扫码 ────────────────────────────────────────────────

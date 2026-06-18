@@ -50,6 +50,32 @@ def ensure_runtime_schema(conn) -> None:
             ALTER TABLE pick_progress ADD unit NVARCHAR(50) NULL
         END
     """)
+    # 加急单缓存表（懒建，幂等）
+    cur.execute("""
+        IF OBJECT_ID('rush_orders','U') IS NULL
+            CREATE TABLE rush_orders (
+                orderno     NVARCHAR(100) PRIMARY KEY,
+                customer    NVARCHAR(200),
+                status      NVARCHAR(20) DEFAULT 'pending',
+                synced_at   DATETIME
+            )
+    """)
+    cur.execute("""
+        IF OBJECT_ID('rush_items','U') IS NULL BEGIN
+            CREATE TABLE rush_items (
+                id          INT IDENTITY(1,1) PRIMARY KEY,
+                orderno     NVARCHAR(100) NOT NULL,
+                barcode     NVARCHAR(100) NOT NULL,
+                goodsno     NVARCHAR(100),
+                goodsmodel  NVARCHAR(200),
+                unit        NVARCHAR(50),
+                qty         INT DEFAULT 0,
+                scanned_qty INT DEFAULT 0,
+                CONSTRAINT UQ_rush_items_ob UNIQUE(orderno, barcode)
+            );
+            CREATE INDEX IX_rush_items_orderno ON rush_items(orderno)
+        END
+    """)
     conn.commit()
 
 

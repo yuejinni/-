@@ -506,6 +506,24 @@ def _ensure_tables():
             conn.execute(ddl)
         except Exception:
             pass
+    # 加急单单票扫码跟踪表（独立于批次 rush_items）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cloud_rush_order_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            orderno     TEXT NOT NULL,
+            barcode     TEXT NOT NULL,
+            goodsno     TEXT,
+            goodsmodel  TEXT,
+            unit        TEXT,
+            qty         INTEGER DEFAULT 0,
+            scanned_qty INTEGER DEFAULT 0,
+            updated_at  TEXT,
+            UNIQUE(orderno, barcode)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS IX_croi_orderno ON cloud_rush_order_items(orderno)
+    """)
     conn.close()
 
 
@@ -1819,6 +1837,115 @@ def sorting_rush_order_delete(orderno):
     conn.execute("DELETE FROM cloud_rush_orders WHERE orderno=?", (orderno,))
     conn.close()
     return jsonify({"ok": True, "orderno": orderno})
+
+
+# ── Agent：加急单列表下发 ─────────────────────────────────────────────────────
+@sorting_bp.get('/agent/rush-orders')
+def agent_rush_orders():
+    """
+    GET /agent/rush-orders
+    返回所有 pending 加急单及其产品明细（从 sales_cache 解析）。
+    同时将 qty 写入 cloud_rush_order_items 供后续扫码完成判定。
+    """
+    conn = _get_conn()
+    sc   = _get_sales_conn()
+
+    pending_rows = conn.execute(
+        "SELECT orderno, customer_name FROM cloud_rush_orders WHERE status='pending' ORDER BY id"
+    ).fetchall()
+
+    orders = []
+    for row in pending_rows:
+        orderno  = row['orderno']
+        customer = row['customer_name'] or ''
+        items    = []
+
+        if sc:
+            sc_row = _select_order_detail_row(sc, orderno)
+            if sc_row:
+                try:
+                    order_data = json.loads(sc_row['data_json'] or '{}')
+                    if not customer:
+                        customer = str(order_data.get('customerName') or '').strip()
+                    entries    = order_data.get('entries') or []
+                    barcode_map: dict = {}
+                    for entry in entries:
+                        if not isinstance(entry, dict):
+                            continue
+                        bc  = str(_fv(entry, ['barcode', 'barCode', 'productBarcode']) or '').strip()
+                        qty = int(_num(_fv(entry, ['qty', 'quantity', 'baseQty', 'mainQty'], 0)))
+                        if not bc or qty <= 0:
+                            continue
+                        gno   = str(_fv(entry, ['code', 'productNumber', 'number']) or '').strip()
+                        gmod  = str(_fv(entry, ['spec', 'specification', 'model', 'goodsModel']) or '').strip()
+                        unit  = str(_fv(entry, ['unit', 'unitName', 'baseUnitName']) or '').strip()
+                        if bc in barcode_map:
+                            barcode_map[bc]['qty'] += qty
+                        else:
+                            barcode_map[bc] = {
+                                'barcode': bc, 'goodsno': gno,
+                                'goodsmodel': gmod, 'unit': unit, 'qty': qty,
+                            }
+                    items = list(barcode_map.values())
+                    # 将 qty 缓存进 cloud_rush_order_items（不覆盖 scanned_qty）
+                    for it in items:
+                        conn.execute("""
+                            INSERT INTO cloud_rush_order_items
+                                (orderno, barcode, goodsno, goodsmodel, unit, qty, scanned_qty, updated_at)
+                            VALUES (?,?,?,?,?,?,0,datetime('now','localtime'))
+                            ON CONFLICT(orderno, barcode) DO UPDATE SET
+                                goodsno=excluded.goodsno, goodsmodel=excluded.goodsmodel,
+                                unit=excluded.unit, qty=excluded.qty,
+                                updated_at=datetime('now','localtime')
+                        """, (orderno, it['barcode'], it['goodsno'],
+                              it['goodsmodel'], it['unit'], it['qty']))
+                except Exception as ex:
+                    logger.warning(f"[rush-orders] 解析 {orderno} 失败: {ex}")
+
+        orders.append({'orderno': orderno, 'customer': customer, 'items': items})
+
+    if sc:
+        sc.close()
+    conn.close()
+    return jsonify({"orders": orders})
+
+
+# ── Agent：加急单扫码上报 ──────────────────────────────────────────────────────
+@sorting_bp.post('/agent/rush-scan')
+def agent_rush_scan():
+    """
+    POST /agent/rush-scan
+    body: {"orderno": str, "barcode": str, "qty": int = 1}
+    增加 cloud_rush_order_items.scanned_qty，若该单全部完成则自动标记 done。
+    """
+    data    = request.get_json() or {}
+    orderno = (data.get('orderno') or '').strip()
+    barcode = (data.get('barcode') or '').strip()
+    qty_add = max(1, int(_num(data.get('qty', 1), 1)))
+    if not orderno or not barcode:
+        return jsonify({"ok": False, "msg": "orderno 和 barcode 不能为空"}), 400
+
+    conn = _get_conn()
+    conn.execute("""
+        INSERT INTO cloud_rush_order_items (orderno, barcode, scanned_qty, updated_at)
+        VALUES (?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(orderno, barcode) DO UPDATE SET
+            scanned_qty = MIN(scanned_qty + ?, CASE WHEN qty>0 THEN qty ELSE scanned_qty+? END),
+            updated_at  = datetime('now','localtime')
+    """, (orderno, barcode, qty_add, qty_add, qty_add))
+
+    rows = conn.execute(
+        "SELECT qty, scanned_qty FROM cloud_rush_order_items WHERE orderno=? AND qty > 0",
+        (orderno,)
+    ).fetchall()
+    all_done = bool(rows) and all(r['scanned_qty'] >= r['qty'] for r in rows)
+    if all_done:
+        conn.execute(
+            "UPDATE cloud_rush_orders SET status='done', done_at=datetime('now','localtime') "
+            "WHERE orderno=?", (orderno,)
+        )
+    conn.close()
+    return jsonify({"ok": True, "all_done": all_done})
 
 
 # ── 扫码事件列表 ────────────────────────────────────────────────────────────────

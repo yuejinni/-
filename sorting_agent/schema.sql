@@ -154,6 +154,31 @@ INSERT INTO sys_config([key], value) VALUES
     ('stat_day_date',    ''),
     ('auto_running',     '0');
 
+-- ============================================================
+-- 加急单（单票分拣）本地缓存表
+-- 由 sync/rule_sync.py sync_rush_orders() 从云端同步填充
+-- ============================================================
+
+CREATE TABLE rush_orders (
+    orderno     NVARCHAR(100) PRIMARY KEY,
+    customer    NVARCHAR(200),
+    status      NVARCHAR(20) DEFAULT 'pending',
+    synced_at   DATETIME
+);
+
+CREATE TABLE rush_items (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    orderno     NVARCHAR(100) NOT NULL,
+    barcode     NVARCHAR(100) NOT NULL,
+    goodsno     NVARCHAR(100),
+    goodsmodel  NVARCHAR(200),
+    unit        NVARCHAR(50),
+    qty         INT DEFAULT 0,
+    scanned_qty INT DEFAULT 0,
+    CONSTRAINT UQ_rush_items_ob UNIQUE(orderno, barcode)
+);
+CREATE INDEX IX_rush_items_orderno ON rush_items(orderno);
+
 -- 验证：SELECT COUNT(*) FROM sort_ports  → 200
 --        SELECT COUNT(*) FROM port_lights → 200
 --        SELECT COUNT(*) FROM sys_config  → 15

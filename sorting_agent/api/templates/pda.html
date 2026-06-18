@@ -171,7 +171,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   color: #34d399; font-size: 13px; padding: 4px 10px; cursor: pointer; flex-shrink: 0;
 }
 .st-back-btn:active { background: rgba(52,211,153,.15); }
-.st-order-label { font-size: 13px; color: #34d399; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-order-label { font-size: 13px; color: #34d399; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.rush-done-btn {
+  margin-left: auto; flex-shrink: 0;
+  background: var(--green); border: none; border-radius: 8px;
+  color: #fff; font-size: 13px; font-weight: 600; padding: 5px 12px; cursor: pointer;
+}
+.rush-done-btn:active { opacity: .8; }
 
 /* 扫码区 */
 .scan-area {
@@ -733,6 +739,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   <div id="st-order-bar" class="st-order-bar" style="display:none">
     <button class="st-back-btn" onclick="clearOrderSelection()">← 票据</button>
     <span class="st-order-label" id="st-order-label"></span>
+    <button id="rush-done-btn" class="rush-done-btn" onclick="rushDone()" style="display:none">✅ 完成配货</button>
   </div>
 
   <!-- 订单列表（单票分拣模式）-->
@@ -852,11 +859,13 @@ function switchTab(t) {
   if (t === 2) {
     state.selectedOrder = null;
     document.getElementById('st-order-bar').style.display = 'none';
+    document.getElementById('rush-done-btn').style.display = 'none';
     loadOrderList();
   } else {
     document.getElementById('order-list').style.display = 'none';
     document.getElementById('pick-list').style.display = '';
     document.getElementById('st-order-bar').style.display = 'none';
+    document.getElementById('rush-done-btn').style.display = 'none';
     loadList();
   }
   focusScan();
@@ -956,7 +965,20 @@ function selectOrder(orderno, customer) {
 function clearOrderSelection() {
   state.selectedOrder = null;
   document.getElementById('st-order-bar').style.display = 'none';
+  document.getElementById('rush-done-btn').style.display = 'none';
   loadOrderList();
+}
+
+async function rushDone() {
+  if (!state.selectedOrder) return;
+  try {
+    await fetch('/api/rush/done', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({orderno: state.selectedOrder})
+    });
+  } catch(e) {}
+  clearOrderSelection();
 }
 
 // ── 库位提取（与后端 _location_sort_key 一致） ────────────────────
@@ -981,9 +1003,16 @@ function renderList(items) {
   if (!items.length) {
     const msgs = ['本楼层暂无待上机货物', '本楼层暂无待手工拣货', '该票据已全部拣完'];
     el.innerHTML = `<div class="empty-tip"><div class="empty-icon">✅</div>${msgs[state.tab] || msgs[0]}</div>`;
+    if (state.tab === 2) {
+      document.getElementById('rush-done-btn').style.display = '';
+    }
     return;
   }
   el.innerHTML = items.map(item => buildCard(item)).join('');
+  if (state.tab === 2) {
+    const allDone = items.every(it => (it.anum || 0) >= (it.num || 0));
+    document.getElementById('rush-done-btn').style.display = allDone ? '' : 'none';
+  }
 }
 
 function buildCard(item) {
@@ -1100,6 +1129,29 @@ async function doScan(barcode) {
   }
   if (state.tab === 2 && !state.selectedOrder) {
     showResult('err', '⚠️', '请先点选票据', barcode);
+    return;
+  }
+  if (state.tab === 2) {
+    // 加急单扫码：调 /api/rush/scan
+    try {
+      const res = await fetch('/api/rush/scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({orderno: state.selectedOrder, barcode: barcode})
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showResult('ok', '✅', data.msg || '扫码成功', barcode);
+        if (data.all_done) {
+          document.getElementById('rush-done-btn').style.display = '';
+        }
+      } else {
+        showResult('err', data.done ? '✅' : '❌', data.msg || '扫码失败', barcode);
+      }
+      loadList();
+    } catch(e) {
+      showResult('err', '⚠️', '网络错误', barcode);
+    }
     return;
   }
   try {
