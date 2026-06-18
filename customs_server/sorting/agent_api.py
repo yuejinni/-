@@ -612,7 +612,26 @@ def sorting_order_requests():
         result.append(item)
 
     sc.close()
-    return jsonify({"ok": True, "list": result, "count": len(result)})
+
+    # 查询当天已入批次的订单号
+    batched_numbers = []
+    try:
+        conn = _get_conn()
+        rows_b = conn.execute(
+            "SELECT order_numbers FROM cloud_sorting_batches WHERE date = ?",
+            (date_str[:10] if date_str else '',)
+        ).fetchall()
+        for rb in rows_b:
+            try:
+                batched_numbers.extend(json.loads(rb['order_numbers'] or '[]'))
+            except Exception:
+                pass
+        conn.close()
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "list": result, "count": len(result),
+                    "batched_numbers": batched_numbers})
 
 
 # ── 手动触发 JDY 销货订单同步 ────────────────────────────────────────────────────

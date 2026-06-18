@@ -11642,10 +11642,10 @@ function _renderSortingOrders() {
   const wrap = document.getElementById('sorting-order-list');
   const raw  = window._sortingOrdersRaw;
 
-  // 客户端补充过滤：未生成批次 → 同时排除已入加急的单
+  // 客户端补充过滤：未生成批次 → 排除已入批次 + 已入加急的单
   const sortFilter = (document.getElementById('sorting-sort-filter') || {}).value || 'all';
   const list = (sortFilter === 'unmatched')
-    ? raw.filter(o => !window._rushOrders.has(o.number))
+    ? raw.filter(o => !window._rushOrders.has(o.number) && !window._batchedOrders.has(o.number))
     : raw;
 
   // 显示/隐藏全选栏
