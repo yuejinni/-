@@ -77,8 +77,8 @@ def _fv(d: dict, keys: list, default=''):
 
 def _unit_text(entry=None, raw_entry=None, product=None) -> str:
     """提取单位名称：订单标准字段、原始字段、商品缓存依次兜底。"""
-    keys = ['unitName', 'unit_name', 'baseUnitName', 'unit']
-    for source in (entry, raw_entry, product):
+    keys = ['unit_name', 'unitName', 'baseUnitName', 'unit']
+    for source in (product, entry, raw_entry):
         if not isinstance(source, dict):
             continue
         value = _fv(source, keys)
