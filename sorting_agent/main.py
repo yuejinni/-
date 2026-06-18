@@ -49,12 +49,18 @@ def main():
 
     from plc.plc_client import connect_plc
     from plc.plc_reader import read_car_status_loop, read_button_loop
-    from core.db import get_db_conn
+    from core.db import get_db_conn, ensure_runtime_schema
     from core.port_manager import port_monitor_loop
     from sync.rule_sync import rule_sync_loop
     from sync.event_push import event_push_loop
     from api.web_api import run_flask_app
     from tcp.tcp_server import start_tcp_server
+
+    schema_db = get_db_conn()
+    try:
+        ensure_runtime_schema(schema_db)
+    finally:
+        schema_db.close()
 
     plc = connect_plc(config['plc_ip'])
 

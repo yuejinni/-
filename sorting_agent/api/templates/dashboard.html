@@ -292,6 +292,7 @@
   <div class="stat-item"><span class="val" id="statAlert" style="color:var(--yellow)">0</span><span class="lbl">超时格口</span></div>
   <span class="spacer"></span>
   <button class="btn secondary" onclick="if(confirm('确认重置所有格口计数？')) resetAll()">重置格口</button>
+  <button class="btn secondary" onclick="rollbackPicking()">回退拣货</button>
   <button class="btn primary" onclick="oneKey()">一键上机</button>
 </div>
 
@@ -571,6 +572,24 @@ function forceSync() {
 function oneKey() {
   if (!confirm('一键上机：将所有"等待拣货"的条码改为可上机状态？')) return;
   fetch('/api/batch/onekey', {method:'POST'}).then(() => refresh());
+}
+async function rollbackPicking() {
+  const sys = await fetch('/api/system').then(r => r.json());
+  const batchno = sys.active_batchno;
+  if (!batchno) {
+    alert('当前没有活跃批次');
+    return;
+  }
+  if (!confirm(
+    `回退批次 ${batchno} 的拣货完成状态？\n\n` +
+    '订单、规则和格口分配会保留，货品恢复为“等待拣货”。'
+  )) return;
+  const res = await fetch(`/api/batch/${encodeURIComponent(batchno)}/rollback`, {
+    method:'POST'
+  });
+  const data = await res.json();
+  alert(data.msg || (data.ok ? '回退完成' : '回退失败'));
+  refresh();
 }
 function resetAll() {
   fetch('/api/batch/reset', {method:'POST'}).then(() => refresh());

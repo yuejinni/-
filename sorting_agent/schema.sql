@@ -72,8 +72,7 @@ CREATE TABLE sort_ports (
     is_enable   INT DEFAULT 1,
     modified_at DATETIME DEFAULT GETDATE()
     -- 格口已满可清：init_num != 0 AND init_num = fj_num AND remark = 0
-    -- 格口超时告警：DATEADD(MINUTE,40,modified_at) < GETDATE() AND init_num!=0
-    --               AND fj_num!=0 AND init_num!=fj_num AND remark=0
+    -- 格口超时告警：超过 port_timeout_min 分钟无落包且任务未完成
 );
 
 -- 扫码事件表（替代 Wcs_iparcel + Wcs_tparcelb）
@@ -144,7 +143,7 @@ INSERT INTO sys_config([key], value) VALUES
     ('box_vol_offset',   '200'),
     ('port_max',         '102'),
     ('port_error',       '51'),
-    ('port_timeout_min', '40'),
+    ('port_timeout_min', '30'),
     ('cloud_url',        'http://gongdashuai.top:5008'),
     ('rule_version',     '0'),
     ('active_batchno',   ''),

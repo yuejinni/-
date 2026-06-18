@@ -160,7 +160,7 @@
       <span class="spacer"></span>
       <button class="btn secondary" onclick="exportRules()">导出</button>
       <button class="btn primary" onclick="oneKey()">一键上机</button>
-      <button class="btn danger" onclick="rollbackBatch()">回滚批次</button>
+      <button class="btn danger" onclick="rollbackBatch()">回退拣货</button>
     </div>
 
     <div class="stats-row" id="statsRow" style="display:none">
@@ -354,11 +354,16 @@ async function oneKey() {
 }
 async function rollbackBatch() {
   if (!_currentBatchno) return;
-  if (!confirm(`回滚批次 ${_currentBatchno}？此操作将清除该批次所有分拣数据。`)) return;
-  await fetch(`/api/batch/${_currentBatchno}/rollback`, {method:'POST'});
-  _currentBatchno = null;
-  loadBatches();
-  document.getElementById('rulesContent').innerHTML = '<div class="empty">批次已回滚</div>';
+  if (!confirm(
+    `回退批次 ${_currentBatchno} 的拣货完成状态？\n\n` +
+    '订单、规则和格口分配会保留，货品恢复为“等待拣货”。'
+  )) return;
+  const res = await fetch(`/api/batch/${_currentBatchno}/rollback`, {method:'POST'});
+  const data = await res.json();
+  alert(data.msg || (data.ok ? '回退完成' : '回退失败'));
+  if (data.ok) {
+    await selectBatch(_currentBatchno);
+  }
 }
 function exportRules() {
   if (!_currentBatchno) return;
