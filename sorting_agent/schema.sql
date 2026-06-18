@@ -35,7 +35,8 @@ CREATE TABLE sorting_rules (
     status      INT DEFAULT 0,           -- 0=待扫 1=等待拣货 2=可上机 3=已落包 4=格口已清 5=批次已完成
     created_at  DATETIME DEFAULT GETDATE(),
     synced_at   DATETIME,
-    CONSTRAINT UQ_rules_batch_barcode_slot UNIQUE (batchno, barcode, slot_seq)
+    CONSTRAINT UQ_rules_batch_barcode_slot_label UNIQUE
+        (batchno, barcode, slot_seq, label_data)
 );
 CREATE INDEX IX_sorting_rules_barcode ON sorting_rules(barcode);
 CREATE INDEX IX_sorting_rules_status  ON sorting_rules(status);
