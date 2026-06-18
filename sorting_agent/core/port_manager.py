@@ -16,7 +16,6 @@ from plc.plc_client import (
     LIGHT_GREEN,
     LIGHT_RED,
     LIGHT_YELLOW,
-    LIGHT_YELLOW_FLASH,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,21 +115,23 @@ def get_port_status(db_conn) -> list[dict]:
     返回需要处理的格口列表（已满=1，超时告警=2）。
     替代原 Proc_PortStatus。
     """
+    timeout_min = int(qval(db_conn,
+        "SELECT value FROM sys_config WHERE [key]='port_timeout_min'") or 30)
     cursor = db_conn.cursor()
     cursor.execute("""
         SELECT portno, init_num, fj_num, remark,
                CASE
                  WHEN init_num != 0 AND init_num = fj_num AND remark = 0
                    THEN 1
-                 WHEN DATEADD(MINUTE, 40, modified_at) < GETDATE()
-                      AND init_num != 0 AND fj_num != 0
+                 WHEN DATEADD(MINUTE, ?, modified_at) < GETDATE()
+                      AND init_num != 0
                       AND init_num != fj_num AND remark = 0
                    THEN 2
                  ELSE 0
                END AS port_status
         FROM sort_ports
         WHERE init_num != 0
-    """)
+    """, (timeout_min,))
     cols = [c[0] for c in cursor.description]
     rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
     return [r for r in rows if r["port_status"] > 0]
@@ -143,17 +144,23 @@ def _desired_light(port: dict) -> int:
         return LIGHT_OFF
     if port.get("fj_num", 0) >= port.get("init_num", 0):
         return LIGHT_GREEN
-    return LIGHT_YELLOW_FLASH
+    if port.get("is_timed_out", 0):
+        return LIGHT_YELLOW
+    return LIGHT_OFF
 
 
 def sync_port_lights(db_conn, plc):
+    timeout_min = int(qval(db_conn,
+        "SELECT value FROM sys_config WHERE [key]='port_timeout_min'") or 30)
     ports = qall(db_conn, """
         SELECT sp.portno, sp.init_num, sp.fj_num, sp.remark, sp.is_enable,
-               ISNULL(pl.light_val, 0) AS light_val
+               ISNULL(pl.light_val, 0) AS light_val,
+               CASE WHEN DATEADD(MINUTE, ?, sp.modified_at) < GETDATE()
+                    THEN 1 ELSE 0 END AS is_timed_out
         FROM sort_ports sp
         LEFT JOIN port_lights pl ON pl.portno = sp.portno
         ORDER BY sp.portno
-    """)
+    """, (timeout_min,))
     for port in ports:
         desired = _desired_light(port)
         if port["light_val"] == desired:
@@ -171,8 +178,9 @@ def port_monitor_loop(plc):
     """
     每 5s 检查格口超时告警，触发黄灯控制。
     替代原 C# 定时轮询。
-    同步 C# HandleLightSignListen 灯控规则：
-      有任务未完成 -> 黄闪；全部扫完 -> 绿灯；关闭/停用 -> 红灯；空闲 -> 灭灯。
+    灯控规则：
+      未完成且未超时 -> 灭灯；超过配置时间未落包 -> 黄灯常亮；
+      全部扫完 -> 绿灯；关闭/停用 -> 红灯；空闲 -> 灭灯。
     """
     while True:
         try:
@@ -183,7 +191,6 @@ def port_monitor_loop(plc):
                 if a["port_status"] == 2:   # 超时告警
                     logger.warning(f"[port_monitor] 格口 {a['portno']} 超时告警（"
                                    f"init={a['init_num']}, fj={a['fj_num']}）")
-                    write_port_light(db, plc, a["portno"], LIGHT_YELLOW)
         except Exception as e:
             logger.warning(f"[port_monitor_loop] 异常: {e}")
         time.sleep(5)

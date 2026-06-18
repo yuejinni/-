@@ -1,5 +1,6 @@
 # Runtime secrets and local configuration
 ai_config.json
+sorting_agent/config.json
 server_secret.key
 auth_users.sqlite3
 *.env
@@ -40,8 +41,15 @@ dist*/
 # Python and OS noise
 __pycache__/
 *.py[cod]
+.python_packages/
+.venv/
+venv/
 .DS_Store
 Thumbs.db
+
+# Local diagnostics and machine-specific launch helpers
+/work/
+/init.bat
 
 # Runtime counters and generated history
 .pi_counter.json

@@ -643,39 +643,66 @@ def hard_delete_batch(batchno):
     return jsonify({"ok": True, "msg": f"批次 {batchno} 已彻底删除"})
 
 
-# ── 11. 批次回滚 ───────────────────────────────────────────────────────────────
+# ── 11. 回退拣货完成 ───────────────────────────────────────────────────────────
 @app.post('/api/batch/<batchno>/rollback')
 def rollback_batch(batchno):
     """
-    按批次回滚（替代 Proc_Rollbacksorting）
-    ① 删除 status>=2 的规则行（保留 status=1 待拣）
-    ② pick_progress anum 清零
-    ③ sort_ports 格口计数按本批次重置
-    scan_events 保留（审计用）
+    将“已完成拣货/一键上机”安全回退为“等待拣货”：
+      ① sorting_rules status=2 → status=1（保留规则，不删除）
+      ② pick_progress anum → 0
+      ③ 保留格口分配，重置该批次相关格口的已落数量和计时
+
+    已经实际落包（status>=3 或存在 scan_events）的批次拒绝回退，
+    避免 PLC 已执行而数据库被倒退。
     """
     db = get_db_conn()
     try:
+        scanned_rules = qval(db,
+            "SELECT COUNT(*) FROM sorting_rules "
+            "WHERE batchno=? AND status>=3",
+            (batchno,)) or 0
+        scan_events = qval(db,
+            "SELECT COUNT(*) FROM scan_events WHERE batchno=?",
+            (batchno,)) or 0
+        if scanned_rules or scan_events:
+            return jsonify({
+                "ok": False,
+                "msg": (f"批次已有实际落包记录（规则 {scanned_rules} 条，"
+                        f"扫码事件 {scan_events} 条），不能回退拣货完成")
+            }), 409
+
+        rule_count = qval(db,
+            "SELECT COUNT(*) FROM sorting_rules WHERE batchno=?",
+            (batchno,)) or 0
+        if not rule_count:
+            return jsonify({"ok": False, "msg": f"批次 {batchno} 不存在"}), 404
+
         execute(db,
-            "DELETE FROM sorting_rules WHERE batchno=? AND status>=2",
+            "UPDATE sorting_rules SET status=1 "
+            "WHERE batchno=? AND status=2",
             (batchno,))
         execute(db,
             "UPDATE pick_progress SET anum=0, updated_at=GETDATE() WHERE batchno=?",
             (batchno,))
-        # 只清本批次相关格口（⚠️ 加 WHERE，避免误清其他批次数据）
+
+        # 保留格口分配，只重置该批次相关格口的落包数和超时计时。
         execute(db, """
-            UPDATE sort_ports SET fj_num=0, modified_at=GETDATE()
+            UPDATE sort_ports
+            SET fj_num=0, modified_at=GETDATE()
             WHERE portno IN (
                 SELECT DISTINCT innerport FROM sorting_rules
                 WHERE batchno=? AND innerport!=0
             )
         """, (batchno,))
-        # 重新统计 init_num（按回滚后剩余 status=1 的行数）
+
+        # 重新统计应落数量；规则仍完整保留。
         execute(db, """
             UPDATE sp SET sp.init_num = cnt.c
             FROM sort_ports sp
             JOIN (
                 SELECT innerport, COUNT(*) AS c
-                FROM sorting_rules WHERE batchno=? AND status=1 AND innerport!=0
+                FROM sorting_rules
+                WHERE batchno=? AND status IN (1,2) AND innerport!=0
                 GROUP BY innerport
             ) cnt ON sp.portno = cnt.innerport
         """, (batchno,))
@@ -683,18 +710,27 @@ def rollback_batch(batchno):
     except Exception:
         db.rollback()
         raise
-    return jsonify({"ok": True,
-                    "msg": f"批次 {batchno} 回滚完成（已上机记录已删，待拣记录保留）"})
+    return jsonify({
+        "ok": True,
+        "msg": f"批次 {batchno} 已回退为等待拣货，订单和规则均已保留"
+    })
 
 
-# ── 12. 管理界面首页 ───────────────────────────────────────────────────────────
+# ── 12. 管理界面页面 ───────────────────────────────────────────────────────────
 @app.get('/')
+@app.get('/dashboard')
 def dashboard():
     return render_template('dashboard.html')
 
 
+@app.get('/rules')
+def rules_page():
+    return render_template('rules.html')
+
+
 # ── 13. PDA 拣货 H5 页面 ───────────────────────────────────────────────────────
 @app.get('/pda')
+@app.get('/pick')
 def pda():
     return render_template('pda.html')
 
