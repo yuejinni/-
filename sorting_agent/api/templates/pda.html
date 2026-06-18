@@ -20,13 +20,12 @@
   --text:    #f1f5f9;
   --muted:   #94a3b8;
   --radius:  12px;
-  /* 波次颜色（wave_num区分） */
-  --wave1-border: #334155;          /* 默认边框 */
-  --wave2-border: #d97706;          /* wave2 橙色 */
+  /* 波次颜色 */
+  --wave2-border: #d97706;
   --wave2-bg:     rgba(217,119,6,.08);
-  --wave3-border: #3b82f6;          /* wave3 蓝色 */
+  --wave3-border: #3b82f6;
   --wave3-bg:     rgba(59,130,246,.08);
-  --wave4-border: #a855f7;          /* wave4+ 紫色 */
+  --wave4-border: #a855f7;
   --wave4-bg:     rgba(168,85,247,.08);
 }
 
@@ -111,6 +110,44 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 }
 .tb-switch:active { background: var(--border); }
 
+/* Tab 栏 */
+.tab-bar {
+  display: flex;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tab-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 0;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all .15s;
+}
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-btn .tab-badge {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 0 6px;
+  margin-left: 4px;
+  min-width: 18px;
+  text-align: center;
+}
+.tab-btn.tab-manual.active { color: var(--yellow); border-bottom-color: var(--yellow); }
+.tab-btn.tab-manual .tab-badge { background: var(--yellow); }
+
 /* 扫码区 */
 .scan-area {
   padding: 12px 16px;
@@ -133,6 +170,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 }
 .scan-input::placeholder { color: var(--muted); }
 .scan-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59,130,246,.2); }
+.tab-manual-active .scan-input { border-color: var(--yellow); caret-color: var(--yellow); }
+.tab-manual-active .scan-input:focus { box-shadow: 0 0 0 3px rgba(245,158,11,.2); }
 
 /* 统计栏 */
 .stat-bar {
@@ -156,49 +195,43 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 }
 .stat-refresh:active { background: var(--border); }
 
-/* 列表 */
+/* 拣货列表 */
 .pick-list {
   flex: 1;
   overflow-y: auto;
   padding: 0 16px 16px;
   -webkit-overflow-scrolling: touch;
 }
+
+/* 拣货卡片 */
 .pick-item {
   background: var(--card);
-  border: 1px solid var(--wave1-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 12px 14px;
   margin-top: 10px;
 }
-/* 第二波：橙色边框 */
-.pick-item.wave2 {
-  border-color: var(--wave2-border);
-  background: var(--wave2-bg);
+/* 波次颜色 */
+.pick-item.wave2 { border-color: var(--wave2-border); background: var(--wave2-bg); }
+.pick-item.wave3 { border-color: var(--wave3-border); background: var(--wave3-bg); }
+.pick-item.wave4plus { border-color: var(--wave4-border); background: var(--wave4-bg); }
+
+.pi-row1 {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 5px;
 }
-/* 第三波：蓝色边框 */
-.pick-item.wave3 {
-  border-color: var(--wave3-border);
-  background: var(--wave3-bg);
+.pi-goodsno {
+  font-size: 17px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
 }
-/* 第四波及以上：紫色边框 */
-.pick-item.wave4plus {
-  border-color: var(--wave4-border);
-  background: var(--wave4-bg);
-}
-/* 波次标签 */
-.wave-tag {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
-  margin-left: 6px;
-  vertical-align: middle;
-}
-.wave-tag.w2 { background: rgba(217,119,6,.25); color: #fbbf24; }
-.wave-tag.w3 { background: rgba(59,130,246,.25); color: #93c5fd; }
-.wave-tag.w4 { background: rgba(168,85,247,.25); color: #d8b4fe; }
-.pi-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
-.pi-goodsno { font-size: 17px; font-weight: 700; }
 .pi-progress {
   background: var(--bg);
   border-radius: 20px;
@@ -209,19 +242,72 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   flex-shrink: 0;
 }
 .pi-progress.done { color: var(--green); }
-.pi-barcode { font-size: 13px; color: var(--muted); margin-bottom: 6px; font-family: monospace; }
+
+/* 库位 + 规格 + 单位 行 */
+.pi-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+.pi-loc {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--green);
+  background: rgba(34,197,94,.1);
+  border-radius: 6px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+.pi-spec {
+  font-size: 13px;
+  color: var(--muted);
+}
+.pi-unit {
+  font-size: 13px;
+  color: var(--accent);
+  background: rgba(59,130,246,.1);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.pi-barcode {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: monospace;
+  margin-bottom: 4px;
+}
+
+/* 格口标签（手工模式） */
 .pi-port {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(59,130,246,.15);
-  border: 1px solid rgba(59,130,246,.3);
+  background: rgba(245,158,11,.15);
+  border: 1px solid rgba(245,158,11,.4);
   border-radius: 8px;
   padding: 4px 10px;
   font-size: 14px;
   font-weight: 700;
-  color: #60a5fa;
+  color: var(--yellow);
+  margin-top: 2px;
 }
+
+/* 波次小标签 */
+.wave-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.wave-tag.w2 { background: rgba(217,119,6,.25); color: #fbbf24; }
+.wave-tag.w3 { background: rgba(59,130,246,.25); color: #93c5fd; }
+.wave-tag.w4 { background: rgba(168,85,247,.25); color: #d8b4fe; }
 
 .empty-tip {
   text-align: center;
@@ -230,6 +316,280 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   padding: 48px 0;
 }
 .empty-icon { font-size: 48px; margin-bottom: 12px; }
+
+/* ══════════════════════════════
+   手工：货品扫码遮罩
+══════════════════════════════ */
+#manual-overlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 800;
+  background: var(--bg);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px 24px;
+}
+#manual-overlay.active { display: flex; }
+.mo-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.mo-label { font-size: 15px; color: var(--muted); }
+.mo-dismiss {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.mo-port-num {
+  font-size: 80px;
+  font-weight: 900;
+  color: var(--yellow);
+  letter-spacing: 3px;
+  text-align: center;
+  line-height: 1.1;
+}
+.mo-port-hint { font-size: 16px; color: var(--muted); text-align: center; }
+.mo-item-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  width: 100%;
+}
+.mo-goodsno { font-size: 19px; font-weight: 700; margin-bottom: 4px; }
+.mo-spec    { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.mo-qty-row { display: flex; align-items: center; gap: 8px; }
+.mo-qty-label { font-size: 14px; color: var(--muted); }
+.mo-qty-num   { font-size: 24px; font-weight: 700; color: var(--yellow); }
+.mo-hint {
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px 16px;
+  width: 100%;
+}
+.mo-hint strong { color: var(--yellow); }
+.mo-btn-row { display: flex; gap: 12px; width: 100%; }
+.mo-confirm-btn {
+  flex: 1;
+  background: var(--green);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 16px 0;
+  cursor: pointer;
+}
+.mo-confirm-btn:active { opacity: .8; }
+.mo-cancel-btn2 {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 16px 20px;
+  cursor: pointer;
+}
+.mo-cancel-btn2:active { background: var(--border); }
+
+/* ══════════════════════════════
+   手工：格口货品面板
+══════════════════════════════ */
+#port-panel {
+  display: none;
+  position: fixed; inset: 0; z-index: 800;
+  background: var(--bg);
+  flex-direction: column;
+}
+#port-panel.active { display: flex; }
+.pp-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.pp-back {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 6px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pp-port-label {
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--yellow);
+  flex: 1;
+  text-align: center;
+}
+.pp-spacer { width: 56px; }
+.pp-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.pp-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pp-item-info { flex: 1; min-width: 0; }
+.pp-goodsno { font-size: 16px; font-weight: 700; }
+.pp-spec    { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.pp-barcode { font-size: 11px; color: var(--muted); font-family: monospace; margin-top: 3px; }
+.pp-qty {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+.pp-qty.done { color: var(--green); }
+.pp-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 48px 0;
+  font-size: 15px;
+}
+
+/* ══════════════════════════════
+   查件 / 异常处理面板
+══════════════════════════════ */
+#exception-panel {
+  display: none;
+  position: fixed; inset: 0; z-index: 790;
+  background: var(--bg);
+  flex-direction: column;
+}
+#exception-panel.active { display: flex; }
+.ep-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.ep-back {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 6px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ep-title { font-size: 17px; font-weight: 700; flex: 1; text-align: center; }
+.ep-count { font-size: 13px; color: var(--muted); flex-shrink: 0; }
+.ep-search-area {
+  padding: 10px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ep-search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 16px;
+  padding: 10px 14px;
+  outline: none;
+}
+.ep-search-input:focus { border-color: var(--accent); }
+.ep-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  padding-left: 2px;
+}
+.ep-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 16px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.ep-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ep-item-info { flex: 1; min-width: 0; }
+.ep-goodsno { font-size: 16px; font-weight: 700; margin-bottom: 3px; }
+.ep-detail   { font-size: 13px; color: var(--muted); margin-bottom: 6px;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-tag-row  { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ep-tag {
+  font-size: 11px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px;
+}
+.ep-tag-auto   { background: rgba(59,130,246,.2);  color: var(--accent); }
+.ep-tag-manual { background: rgba(245,158,11,.2); color: var(--yellow); }
+.ep-port-tag {
+  font-size: 14px; font-weight: 700;
+  color: var(--yellow);
+  background: rgba(245,158,11,.1);
+  border-radius: 6px; padding: 2px 8px;
+}
+.ep-right {
+  display: flex; flex-direction: column;
+  align-items: flex-end; gap: 8px;
+  flex-shrink: 0;
+}
+.ep-remaining { font-size: 28px; font-weight: 700; color: var(--yellow); }
+.ep-remaining.done { color: var(--green); }
+.ep-confirm-btn {
+  background: var(--green); border: none;
+  border-radius: 8px; color: #fff;
+  font-size: 13px; font-weight: 700;
+  padding: 7px 12px; cursor: pointer;
+}
+.ep-confirm-btn:active { opacity: .8; }
+.ep-empty { text-align: center; color: var(--muted); padding: 48px 0; font-size: 15px; }
+
+/* 顶栏查件按钮 */
+.tb-lookup {
+  background: rgba(245,158,11,.15);
+  border: 1px solid rgba(245,158,11,.4);
+  border-radius: 8px;
+  color: var(--yellow);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tb-lookup:active { background: rgba(245,158,11,.3); }
 
 /* ══════════════════════════════
    结果遮罩
@@ -279,21 +639,35 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 
 <!-- ══ 拣货主页 ══ -->
 <div id="s-pick" class="screen">
+  <!-- 顶栏 -->
   <div class="topbar">
     <span class="tb-floor" id="tb-floor">1楼</span>
     <span class="tb-batch" id="tb-batch">加载中...</span>
+    <button class="tb-lookup" onclick="openExceptionPanel()">查件</button>
     <button class="tb-switch" onclick="switchFloor()">换楼层</button>
   </div>
 
-  <div class="scan-area">
+  <!-- Tab 栏 -->
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-auto" onclick="switchTab(0)">
+      上机分拣<span class="tab-badge" id="badge-auto">—</span>
+    </button>
+    <button class="tab-btn tab-manual" id="tab-manual" onclick="switchTab(1)">
+      手工分拣<span class="tab-badge" id="badge-manual">—</span>
+    </button>
+  </div>
+
+  <!-- 扫码区 -->
+  <div class="scan-area" id="scan-area">
     <div class="scan-row">
-      <span class="scan-icon">🔍</span>
+      <span class="scan-icon" id="scan-icon">🔍</span>
       <input id="scan-input" class="scan-input" type="text"
              placeholder="扫描或输入条码..." autocomplete="off"
              autocorrect="off" autocapitalize="off" spellcheck="false">
     </div>
   </div>
 
+  <!-- 统计栏 -->
   <div class="stat-bar">
     <span class="stat-pending">待拣</span>
     <span class="stat-num" id="stat-num">—</span>
@@ -301,8 +675,61 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
     <button class="stat-refresh" onclick="loadList()">刷新</button>
   </div>
 
+  <!-- 列表 -->
   <div class="pick-list" id="pick-list">
     <div class="empty-tip"><div class="empty-icon">⏳</div>加载中...</div>
+  </div>
+</div>
+
+<!-- ══ 手工：货品扫码遮罩 ══ -->
+<div id="manual-overlay">
+  <div class="mo-top-row">
+    <span class="mo-label">放入格口</span>
+    <button class="mo-dismiss" onclick="manualCancel()">取消</button>
+  </div>
+  <div class="mo-port-num" id="mo-port-num">GK001</div>
+  <div class="mo-port-hint">请将货品放入此格口后扫格口标签</div>
+  <div class="mo-item-card">
+    <div class="mo-goodsno" id="mo-goodsno">—</div>
+    <div class="mo-spec"    id="mo-spec"></div>
+    <div class="mo-qty-row">
+      <span class="mo-qty-label">待拣</span>
+      <span class="mo-qty-num" id="mo-qty">0/0</span>
+      <span class="mo-qty-label">件</span>
+    </div>
+  </div>
+  <div class="mo-hint">扫 <strong id="mo-expect-label">GK001</strong> 的标签即可确认放入</div>
+  <div class="mo-btn-row">
+    <button class="mo-confirm-btn" onclick="confirmManualItem()">✅ 已放入</button>
+    <button class="mo-cancel-btn2" onclick="manualCancel()">返回</button>
+  </div>
+</div>
+
+<!-- ══ 手工：格口货品面板 ══ -->
+<div id="port-panel">
+  <div class="pp-header">
+    <button class="pp-back" onclick="manualCancel()">← 返回</button>
+    <span class="pp-port-label" id="pp-port-label">GK001</span>
+    <span class="pp-spacer"></span>
+  </div>
+  <div class="pp-items" id="pp-items"></div>
+</div>
+
+<!-- ══ 查件 / 异常处理面板 ══ -->
+<div id="exception-panel">
+  <div class="ep-header">
+    <button class="ep-back" onclick="closeExceptionPanel()">← 返回</button>
+    <span class="ep-title">查件 / 异常处理</span>
+    <span class="ep-count" id="ep-count">—</span>
+  </div>
+  <div class="ep-search-area">
+    <input id="ep-search-input" class="ep-search-input"
+           type="text" placeholder="输入货号或条码搜索..."
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <div class="ep-hint">扫码枪扫条码可自动高亮 · 扫 GK051 触发此面板</div>
+  </div>
+  <div class="ep-list" id="ep-list">
+    <div class="ep-empty">加载中...</div>
   </div>
 </div>
 
@@ -315,14 +742,20 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 
 <script>
 // ── 状态 ────────────────────────────────────────────────────────
-const state = { floor: 0, batchno: '', refreshTimer: null };
+const state = {
+  floor: 0,
+  batchno: '',
+  tab: 0,          // 0=上机, 1=手工
+  refreshTimer: null,
+  inException: false,
+};
 
 // ── 楼层选择 ─────────────────────────────────────────────────────
 function selectFloor(f) {
   state.floor = f;
   document.getElementById('tb-floor').textContent = f + '楼';
   show('s-pick');
-  document.getElementById('scan-input').focus();
+  focusScan();
   loadBatch();
   loadList();
   if (state.refreshTimer) clearInterval(state.refreshTimer);
@@ -339,12 +772,22 @@ function show(id) {
   document.getElementById(id).classList.add('active');
 }
 
+// ── Tab 切换 ─────────────────────────────────────────────────────
+function switchTab(t) {
+  state.tab = t;
+  document.getElementById('tab-auto').classList.toggle('active', t === 0);
+  document.getElementById('tab-manual').classList.toggle('active', t === 1);
+  const scanArea = document.getElementById('scan-area');
+  scanArea.classList.toggle('tab-manual-active', t === 1);
+  loadList();
+  focusScan();
+}
+
 // ── 加载批次信息 ──────────────────────────────────────────────────
 async function loadBatch() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
-    // active_batchno 在 stats 里
     const batchno = (data.stats && data.stats.active_batchno) ? data.stats.active_batchno : '';
     state.batchno = batchno;
     document.getElementById('tb-batch').textContent = batchno ? '批次 ' + batchno : '暂无批次';
@@ -356,49 +799,93 @@ async function loadBatch() {
 // ── 加载拣货列表 ──────────────────────────────────────────────────
 async function loadList() {
   try {
-    const res = await fetch('/api/pick?floor=' + state.floor + '&type=0');
+    const res = await fetch(`/api/pick?floor=${state.floor}&type=${state.tab}`);
     const items = await res.json();
     renderList(items);
+    // 更新对应 badge
+    const badgeId = state.tab === 0 ? 'badge-auto' : 'badge-manual';
+    document.getElementById(badgeId).textContent = items.length;
+    // 预加载另一个 tab 的数量
+    loadBadge(state.tab === 0 ? 1 : 0);
   } catch(e) {
     document.getElementById('pick-list').innerHTML =
       '<div class="empty-tip"><div class="empty-icon">⚠️</div>网络错误，请刷新</div>';
   }
 }
 
+async function loadBadge(t) {
+  try {
+    const res = await fetch(`/api/pick?floor=${state.floor}&type=${t}`);
+    const items = await res.json();
+    const badgeId = t === 0 ? 'badge-auto' : 'badge-manual';
+    document.getElementById(badgeId).textContent = items.length;
+  } catch(e) {}
+}
+
+// ── 库位提取（与后端 _location_sort_key 一致） ────────────────────
+const LOC_CHARS = new Set('ABCDabcdEFGefgHIJhijKLMNklmn');
+function extractLocation(model) {
+  if (!model) return '';
+  for (const seg of model.split(/\s+/)) {
+    if (seg && LOC_CHARS.has(seg[0])) return seg.toUpperCase();
+  }
+  return '';
+}
+function extractSpec(model, loc) {
+  if (!model) return '';
+  if (!loc) return model.trim();
+  return model.replace(new RegExp('\\b' + loc + '\\b', 'i'), '').trim();
+}
+
+// ── 渲染列表 ─────────────────────────────────────────────────────
 function renderList(items) {
   const el = document.getElementById('pick-list');
   document.getElementById('stat-num').textContent = items.length;
   if (!items.length) {
-    el.innerHTML = '<div class="empty-tip"><div class="empty-icon">✅</div>本楼层暂无待拣货物</div>';
+    el.innerHTML = state.tab === 0
+      ? '<div class="empty-tip"><div class="empty-icon">✅</div>本楼层暂无待上机货物</div>'
+      : '<div class="empty-tip"><div class="empty-icon">✅</div>本楼层暂无待手工拣货</div>';
     return;
   }
-  el.innerHTML = items.map(item => {
-    const remaining = item.num - item.anum;
-    const done = remaining <= 0;
+  el.innerHTML = items.map(item => buildCard(item)).join('');
+}
+
+function buildCard(item) {
+  const remaining = item.num - item.anum;
+  const done = remaining <= 0;
+  const loc  = extractLocation(item.model || '');
+  const spec = extractSpec(item.model || '', loc);
+  const unit = item.unit || '';
+
+  // 波次样式（仅上机模式）
+  let waveClass = '';
+  let waveTag   = '';
+  if (state.tab === 0) {
     const wave = item.wave_num || 1;
-    // 波次样式
-    let waveClass = '';
-    let waveTag = '';
-    if (wave === 2) {
-      waveClass = ' wave2';
-      waveTag = '<span class="wave-tag w2">第二波</span>';
-    } else if (wave === 3) {
-      waveClass = ' wave3';
-      waveTag = '<span class="wave-tag w3">第三波</span>';
-    } else if (wave >= 4) {
-      waveClass = ' wave4plus';
-      waveTag = `<span class="wave-tag w4">第${wave}波</span>`;
-    }
-    return `
-    <div class="pick-item${waveClass}">
-      <div class="pi-top">
-        <div class="pi-goodsno">${escHtml(item.goodsnum || item.barcode)}${waveTag}</div>
-        <div class="pi-progress${done ? ' done' : ''}">${item.anum}/${item.num}</div>
-      </div>
-      <div class="pi-barcode">${escHtml(item.barcode)}</div>
-      <div class="pi-port">📦 格口 ${item.portno}</div>
-    </div>`;
-  }).join('');
+    if (wave === 2)      { waveClass = ' wave2'; waveTag = '<span class="wave-tag w2">第二波</span>'; }
+    else if (wave === 3) { waveClass = ' wave3'; waveTag = '<span class="wave-tag w3">第三波</span>'; }
+    else if (wave >= 4)  { waveClass = ' wave4plus'; waveTag = `<span class="wave-tag w4">第${wave}波</span>`; }
+  }
+
+  // 格口行（仅手工模式）
+  const portHtml = (state.tab === 1 && item.portno)
+    ? `<div class="pi-port">📦 格口 ${item.portno}</div>`
+    : '';
+
+  return `
+  <div class="pick-item${waveClass}">
+    <div class="pi-row1">
+      <div class="pi-goodsno">${escHtml(item.goodsnum || item.barcode)}${waveTag}</div>
+      <div class="pi-progress${done ? ' done' : ''}">${item.anum}/${item.num}</div>
+    </div>
+    <div class="pi-row2">
+      ${loc ? `<span class="pi-loc">${escHtml(loc)}</span>` : ''}
+      ${spec ? `<span class="pi-spec">${escHtml(spec)}</span>` : ''}
+      ${unit ? `<span class="pi-unit">${escHtml(unit)}</span>` : ''}
+    </div>
+    <div class="pi-barcode">${escHtml(item.barcode)}</div>
+    ${portHtml}
+  </div>`;
 }
 
 // ── 扫码处理 ──────────────────────────────────────────────────────
@@ -414,10 +901,25 @@ scanInput.addEventListener('keydown', async (e) => {
   scanInput.value = '';
   await doScan(barcode);
   scanLock = false;
-  scanInput.focus();
+  focusScan();
 });
 
 async function doScan(barcode) {
+  // GK051（错误格口）：任意状态下都进查件面板
+  if (/^GK051$/i.test(barcode.trim())) {
+    openExceptionPanel();
+    return;
+  }
+  // 查件面板开着：扫码直接过滤列表
+  if (state.inException) {
+    document.getElementById('ep-search-input').value = barcode;
+    fetchExceptionItems(barcode);
+    return;
+  }
+  if (state.tab === 1) {
+    await doManualScan(barcode);
+    return;
+  }
   try {
     const res = await fetch(
       `/api/pda/scan?barcode=${encodeURIComponent(barcode)}&floor=${state.floor}`
@@ -434,6 +936,237 @@ async function doScan(barcode) {
   }
 }
 
+// ── 手工分拣状态机 ────────────────────────────────────────────────
+const manual = {
+  mode: 'list',   // 'list' | 'item' | 'port'
+  portno: 0,
+  portLabel: '',
+  barcode: '',
+  num: 0,
+  anum: 0,
+};
+
+function isPortLabel(s) { return /^GK\d{3}$/i.test(s.trim()); }
+
+async function doManualScan(barcode) {
+  if (isPortLabel(barcode)) {
+    if (manual.mode === 'item') {
+      // 在等待放入状态扫到格口标签
+      const scannedPortno = parseInt(barcode.slice(2), 10);
+      if (scannedPortno === manual.portno) {
+        await confirmManualItem();
+      } else {
+        showResult('err', '❌', `应放入 ${manual.portLabel}，扫到了 ${barcode.toUpperCase()}`, '');
+        focusScan();
+      }
+    } else {
+      // 从列表页扫格口 → 查该格口货品
+      await fetchPortItems(barcode.toUpperCase());
+    }
+  } else {
+    // 扫货品条码
+    await fetchItemInfo(barcode);
+  }
+}
+
+async function fetchItemInfo(barcode) {
+  try {
+    const res  = await fetch(`/api/manual/item-info?barcode=${encodeURIComponent(barcode)}`);
+    const data = await res.json();
+    if (!data.ok) {
+      showResult('err', '❌', data.msg || '条码不在手工列表', barcode);
+      return;
+    }
+    manual.mode      = 'item';
+    manual.portno    = data.portno;
+    manual.portLabel = data.port_label;
+    manual.barcode   = barcode;
+    manual.num       = data.num;
+    manual.anum      = data.anum;
+    document.getElementById('mo-port-num').textContent      = data.port_label;
+    document.getElementById('mo-expect-label').textContent  = data.port_label;
+    document.getElementById('mo-goodsno').textContent       = data.goodsnum || barcode;
+    const loc  = extractLocation(data.model || '');
+    const spec = extractSpec(data.model || '', loc);
+    document.getElementById('mo-spec').textContent = [loc, spec].filter(Boolean).join('  ');
+    document.getElementById('mo-qty').textContent  = `${data.num - data.anum}件`;
+    document.getElementById('manual-overlay').classList.add('active');
+    focusScan();
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', barcode);
+  }
+}
+
+async function fetchPortItems(portLabel) {
+  try {
+    const res  = await fetch(`/api/manual/port-items?port=${encodeURIComponent(portLabel)}`);
+    const data = await res.json();
+    if (!data.ok) {
+      showResult('err', '❌', data.msg || '格口查询失败', portLabel);
+      return;
+    }
+    manual.mode      = 'port';
+    manual.portno    = data.portno;
+    manual.portLabel = data.port_label;
+    document.getElementById('pp-port-label').textContent = data.port_label;
+    const el = document.getElementById('pp-items');
+    if (!data.items.length) {
+      el.innerHTML = '<div class="pp-empty">该格口暂无待放货品</div>';
+    } else {
+      el.innerHTML = data.items.map(item => {
+        const remaining = item.remaining;
+        const done = remaining <= 0;
+        const loc  = extractLocation(item.model || '');
+        const spec = extractSpec(item.model || '', loc);
+        return `
+        <div class="pp-item">
+          <div class="pp-item-info">
+            <div class="pp-goodsno">${escHtml(item.goodsnum || item.barcode)}</div>
+            ${spec ? `<div class="pp-spec">${escHtml(spec)}</div>` : ''}
+            <div class="pp-barcode">${escHtml(item.barcode)}</div>
+          </div>
+          <div class="pp-qty${done ? ' done' : ''}">${remaining}</div>
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('port-panel').classList.add('active');
+    focusScan();
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', portLabel);
+  }
+}
+
+async function confirmManualItem() {
+  try {
+    const res  = await fetch('/api/manual/confirm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({barcode: manual.barcode, portno: manual.portno}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const icon = data.done ? '✅' : '✔️';
+      const msg  = data.done ? '全部放入完成！' : `已放入 ${data.anum}/${data.num}`;
+      manualCancel();
+      showResult('ok', icon, msg, manual.portLabel);
+      loadList();
+    } else {
+      showResult('err', '❌', data.msg || '确认失败', '');
+      focusScan();
+    }
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', '');
+    focusScan();
+  }
+}
+
+function manualCancel() {
+  manual.mode = 'list';
+  document.getElementById('manual-overlay').classList.remove('active');
+  document.getElementById('port-panel').classList.remove('active');
+  focusScan();
+}
+
+// ── 查件 / 异常处理面板 ──────────────────────────────────────────
+function openExceptionPanel() {
+  state.inException = true;
+  document.getElementById('exception-panel').classList.add('active');
+  document.getElementById('ep-search-input').value = '';
+  fetchExceptionItems('');
+  // 焦点留在 scan-input，方便扫码枪直接扫
+  focusScan();
+}
+
+function closeExceptionPanel() {
+  state.inException = false;
+  document.getElementById('exception-panel').classList.remove('active');
+  focusScan();
+}
+
+let epSearchTimer = null;
+document.getElementById('ep-search-input').addEventListener('input', (e) => {
+  clearTimeout(epSearchTimer);
+  epSearchTimer = setTimeout(() => fetchExceptionItems(e.target.value.trim()), 280);
+});
+
+async function fetchExceptionItems(q) {
+  try {
+    const url = `/api/exception/items?floor=${state.floor}&q=${encodeURIComponent(q)}`;
+    const res  = await fetch(url);
+    const items = await res.json();
+    renderExceptionItems(items);
+  } catch(e) {
+    document.getElementById('ep-list').innerHTML =
+      '<div class="ep-empty">网络错误，请重试</div>';
+  }
+}
+
+function renderExceptionItems(items) {
+  const el = document.getElementById('ep-list');
+  document.getElementById('ep-count').textContent = items.length + '件';
+  if (!items.length) {
+    el.innerHTML = '<div class="ep-empty">暂无待处理货品 ✅</div>';
+    return;
+  }
+  el.innerHTML = items.map((item, idx) => {
+    const loc      = extractLocation(item.model || '');
+    const spec     = extractSpec(item.model || '', loc);
+    const detail   = [loc, spec].filter(Boolean).join('  ') || item.barcode;
+    const typeTag  = item.picktype === 0
+      ? '<span class="ep-tag ep-tag-auto">上机</span>'
+      : '<span class="ep-tag ep-tag-manual">手工</span>';
+    const rem      = item.remaining;
+    const remClass = rem <= 0 ? ' done' : '';
+    return `
+    <div class="ep-item" id="ep-item-${idx}" data-barcode="${escHtml(item.barcode)}">
+      <div class="ep-item-info">
+        <div class="ep-goodsno">${escHtml(item.goodsnum || item.barcode)}</div>
+        <div class="ep-detail">${escHtml(detail)}</div>
+        <div class="ep-tag-row">
+          ${typeTag}
+          <span class="ep-port-tag">${escHtml(item.port_label)}</span>
+        </div>
+      </div>
+      <div class="ep-right">
+        <div class="ep-remaining${remClass}" id="ep-rem-${idx}">${rem}</div>
+        <button class="ep-confirm-btn"
+          onclick="exceptionConfirm('${escHtml(item.barcode)}', ${idx})">确认放入</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function exceptionConfirm(barcode, idx) {
+  try {
+    const res  = await fetch('/api/exception/confirm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({barcode}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const card = document.getElementById(`ep-item-${idx}`);
+      if (data.done) {
+        if (card) card.remove();
+        const remaining = document.querySelectorAll('.ep-item').length;
+        document.getElementById('ep-count').textContent = remaining + '件';
+        if (remaining === 0) {
+          document.getElementById('ep-list').innerHTML =
+            '<div class="ep-empty">暂无待处理货品 ✅</div>';
+        }
+      } else {
+        const remEl = document.getElementById(`ep-rem-${idx}`);
+        if (remEl) { remEl.textContent = data.num - data.anum; remEl.classList.remove('done'); }
+      }
+    } else {
+      showResult('err', '❌', data.msg || '确认失败', barcode);
+    }
+  } catch(e) {
+    showResult('err', '⚠️', '网络错误', barcode);
+  }
+  focusScan();
+}
+
 // ── 结果遮罩 ──────────────────────────────────────────────────────
 let maskTimer = null;
 function showResult(type, icon, msg, sub) {
@@ -443,20 +1176,19 @@ function showResult(type, icon, msg, sub) {
   document.getElementById('rm-sub').textContent  = sub || '';
   mask.className = '';
   mask.style.display = 'flex';
-  void mask.offsetWidth; // reflow
+  void mask.offsetWidth;
   mask.classList.add(type);
   if (maskTimer) clearTimeout(maskTimer);
   maskTimer = setTimeout(() => {
     mask.style.display = 'none';
-    scanInput.focus();
+    focusScan();
   }, 1500);
 }
 
-// 点击遮罩提前关闭
 document.getElementById('result-mask').addEventListener('click', () => {
   if (maskTimer) clearTimeout(maskTimer);
   document.getElementById('result-mask').style.display = 'none';
-  scanInput.focus();
+  focusScan();
 });
 
 // ── 工具 ─────────────────────────────────────────────────────────
@@ -464,11 +1196,16 @@ function escHtml(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function focusScan() {
+  setTimeout(() => scanInput.focus(), 0);
+}
+
 // 保持输入框焦点（扫码枪需要）
 document.addEventListener('click', (e) => {
+  const epInput = document.getElementById('ep-search-input');
   if (document.getElementById('s-pick').classList.contains('active') &&
-      e.target !== scanInput) {
-    setTimeout(() => scanInput.focus(), 0);
+      e.target !== scanInput && e.target !== epInput) {
+    focusScan();
   }
 });
 </script>
